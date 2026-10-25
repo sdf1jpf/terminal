@@ -17,6 +17,7 @@ import { product, products } from "./products";
 import { po, pos, vendors } from "./purchasing";
 import { menu } from "./menu";
 import { report } from "./report";
+import { skusearch } from "./skusearch";
 import { MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
 import type { Input, Next, Program, State } from "./program";
 
@@ -25,7 +26,7 @@ export const requestKeys = [
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
-	menu, browse, detail, report, help, activity, event, jobs, joblog, products, product, invoices, invoice, edi, edidoc,
+	menu, browse, detail, report, help, activity, event, jobs, joblog, products, product, invoices, invoice, skusearch, edi, edidoc,
 	pos, po, vendors,
 };
 

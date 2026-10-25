@@ -17,7 +17,7 @@ const help: Record<string, FieldHelp> = {
 		lines: [
 			"Type an option number or name from the list and press Enter.",
 			"",
-			"Options 2, 5 and 6 take a customer number, so 2 105 or 5 000105 jumps",
+			"Options 2, 5 and 9 take a customer number, so 2 105 or 5 000105 jumps",
 			"straight to that customer. Option 1 takes the start of a name, so",
 			"1 KEY browses the customers whose name begins with KEY.",
 		],
@@ -198,6 +198,9 @@ const help: Record<string, FieldHelp> = {
 			"The SKU of a product to add to the invoice, such as BRG-6204. The line",
 			"is priced at the product's unit price and its quantity comes out of",
 			"stock. Discontinued products cannot be sold.",
+			"",
+			"Not sure of the SKU? Press PF4, or type part of a SKU or description",
+			"with a ? (such as GLOVE?) and press Enter, to search the product file.",
 		],
 	},
 	"invoice.qty": {
@@ -211,6 +214,21 @@ const help: Record<string, FieldHelp> = {
 	"invoice.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type D beside a line and press Enter to remove it and return its stock."],
+	},
+	"skusearch.q": {
+		title: "SKU OR DESCRIPTION",
+		lines: [
+			"Lists the active products whose SKU or description contains these",
+			"letters, such as BRG or GLOVE. Leave it blank to list them all.",
+			"Press Enter to search.",
+		],
+	},
+	"skusearch.sel": {
+		title: "SELECTION CODE",
+		lines: [
+			"Type S beside a product and press Enter to take its SKU back to the",
+			"invoice's add line, then enter a quantity and press Enter to add it.",
+		],
 	},
 	po: {
 		title: "PO NUMBER",
