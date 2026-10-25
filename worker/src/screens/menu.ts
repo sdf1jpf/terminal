@@ -3,6 +3,7 @@ import { newAdd, newInquiry } from "./detail";
 import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
 import { newPOs } from "./purchasing";
+import { newShipments } from "./shipping";
 import { invalidKey, header, keys, label, message, newScreen, right, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program } from "./program";
 
@@ -19,6 +20,7 @@ const options = [
 	["9", "INVOICES", "Build, bill, collect"],
 	["E", "EDI", "EDI mailbox"],
 	["P", "PURCHASING", "Purchase orders, vendors"],
+	["S", "SHIPPING", "Pick, pack and ship"],
 	["O", "OPERATOR", "Console, SYSLOG, schedule"],
 	["T", "TUTORIAL", "Keyboard and PF keys"],
 	["X", "EXIT", "Log off"],
@@ -132,6 +134,9 @@ export const menu: Program<MenuState> = {
 			case "LOG":
 			case "SYSLOG":
 				return { p: "console", back: m };
+			case "S":
+			case "SHIPPING":
+				return newShipments(m, arg);
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };

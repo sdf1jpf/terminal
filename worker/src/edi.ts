@@ -7,6 +7,7 @@
 //	850 purchase order  in   opens an invoice for the sender and adds its lines,
 //	                         taking the stock; any bad line rejects the whole PO
 //	997 acknowledgment  out  for every inbound interchange we can trace to a customer
+//	856 ship notice     out  sent when an invoice that came from an 850 ships
 //	810 invoice         out  sent when an invoice that came from an 850 is billed
 //	820 remittance      in   marks each invoice it names paid, if the amounts agree
 //
@@ -321,11 +322,16 @@ export async function bill(db: D1Database, user: string, id: string): Promise<{ 
 	return edi ? { ...billed, edi } : billed;
 }
 
-async function sendInvoice(db: D1Database, inv: Invoice): Promise<Interchange | undefined> {
-	const from850 = await db.prepare(
+// fromEDIOrder reports whether an invoice was opened by a customer's 850.
+export async function fromEDIOrder(db: D1Database, inv: Invoice): Promise<boolean> {
+	const row = await db.prepare(
 		"SELECT 1 FROM edi WHERE direction = 'I' AND type = '850' AND status = 'ACCEPTED' AND partner = ? AND reference = ?",
 	).bind(inv.customer_id, `PO ${inv.po_number} ${inv.id}`).first();
-	if (!from850) return undefined;
+	return row !== null;
+}
+
+async function sendInvoice(db: D1Database, inv: Invoice): Promise<Interchange | undefined> {
+	if (!(await fromEDIOrder(db, inv))) return undefined;
 	const { lines } = await getInvoice(db, inv.id);
 	const cust = await getCustomer(db, inv.customer_id).catch(() => undefined);
 	const billed = new Date(inv.billed);

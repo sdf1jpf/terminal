@@ -378,6 +378,7 @@ end. Menu option `E` (`E 000105` for one customer) opens the **EDI MAILBOX**
 | --- | --- | --- |
 | 850 purchase order | in | Opens an invoice for the sender and adds its lines, taking the stock. If any line can't be filled, the whole order is rejected and the stock returned. |
 | 997 acknowledgment | out | Sent for every inbound interchange from a known customer: accepted, or rejected with the reason kept on the mailbox. |
+| 856 ship notice | out | Sent when an invoice that came from an 850 ships. |
 | 810 invoice | out | Sent when an invoice that came from an 850 is billed (PF10). |
 | 820 remittance | in | Marks each invoice it names paid, if the amounts agree. |
 
@@ -418,6 +419,27 @@ and their traffic shows on the EDI mailbox (`E V00002`).
 
 The same steps are in the API under `/v1/vendors` and `/v1/purchase-orders`.
 
+## Shipping
+
+An invoice ships before it is billed. On an open invoice, **PF6 releases it
+to the warehouse**: a shipment opens in `PICKING` and the invoice's lines are
+frozen (cancelling the shipment unfreezes them). Menu option `S` (`S P` for
+just one status) opens **SHIPPING** (CUSS01), and `S` beside a shipment
+opens **SHIPMENT** (CUSS02): its pick ticket, with each line's bin, in bin
+order.
+
+- **Pack:** type the cartons and weight and press PF10 (`PACKED`).
+- **Ship:** type the carrier (`UPS`, `FDX` or `TRK`) and press PF10
+  (`SHIPPED`, with a tracking number). A customer that ordered by EDI is
+  sent an **856 ship notice** with the cartons, carrier, tracking number and
+  lines.
+- **Bill:** PF11 on the shipment, or PF10 on the invoice. Billing an
+  invoice that has not shipped is refused.
+
+PF6 on the list submits **CUSPICK**, which prints a pick ticket for every
+shipment still in picking. Releases and shipments show in the customer's
+event history. The API is under `/v1/shipments`.
+
 ## Batch jobs
 
 Batch work runs the way it would under JES. Submitting a job records it as
@@ -437,6 +459,7 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `EDISIM` | EDI trading partner simulator: customers send 850 purchase orders and pay invoices sent as 810s with 820 remittances. |
 | `CUSREORD` | Reorder: purchase orders to vendors for every product at or below its reorder point, sent as 850s. RC 0004 if a low product has no vendor. |
 | `VENDSIM` | EDI vendor simulator: STEP010 vendors confirm sent POs with 855s, STEP020 they ship confirmed ones with 856s. |
+| `CUSPICK` | Pick tickets for every shipment waiting in the warehouse, lines in bin order. |
 
 In the terminal, menu option 7 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,

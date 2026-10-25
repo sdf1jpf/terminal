@@ -12,6 +12,7 @@ import { HttpError } from "./http";
 import type { Env } from "./index";
 import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
 import { logStmt } from "./syslog";
+import { pickTickets } from "./shipping";
 
 export interface Job {
 	id: string;
@@ -76,6 +77,11 @@ export const jobLibrary: Record<string, JobDef> = {
 		title: "REORDER LOW STOCK FROM VENDORS",
 		short: "REORDER",
 		steps: [{ name: "STEP010", run: reorder }],
+	},
+	CUSPICK: {
+		title: "PICK TICKETS FOR THE WAREHOUSE",
+		short: "PICK TICKETS",
+		steps: [{ name: "STEP010", run: pickTickets }],
 	},
 	VENDSIM: {
 		title: "EDI VENDOR SIMULATOR",

@@ -134,6 +134,7 @@ const help: Record<string, FieldHelp> = {
 			"            orders and pay the invoices we sent them",
 			"  CUSREORD  reorder: purchase orders to vendors for low stock",
 			"  VENDSIM   EDI vendors: confirm (855) and ship (856) our orders",
+			"  CUSPICK   pick tickets for shipments waiting in the warehouse",
 			"",
 			"Press PF5 to refresh the list as the job runs.",
 		],
@@ -283,6 +284,37 @@ const help: Record<string, FieldHelp> = {
 			"How many units of the line came in, up to the quantity still due.",
 			"Press Enter to put them in stock. PF11 receives everything still due.",
 			"The order is RECEIVED once every line is in.",
+		],
+	},
+	"shipments.status": {
+		title: "STATUS",
+		lines: [
+			"Lists only the shipments in this status:",
+			"  P  picking: released to the warehouse, pick ticket printed",
+			"  K  packed: cartons and weight recorded",
+			"  S  shipped: gone with a carrier",
+			"Leave it blank to list them all.",
+		],
+	},
+	"shipments.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type S beside a shipment and press Enter to see its pick ticket."],
+	},
+	cartons: {
+		title: "CARTONS",
+		lines: ["How many cartons the order was packed in, 1 to 999. PF10 records it."],
+	},
+	weight: {
+		title: "WEIGHT",
+		lines: ["The shipment's total weight in whole pounds, 1 to 99999."],
+	},
+	carrier: {
+		title: "CARRIER",
+		lines: [
+			"Who takes the shipment: UPS, FDX (FedEx Freight) or TRK (our own",
+			"truck). PF10 ships it, gives it a tracking number and, if the customer",
+			"ordered by EDI, sends its system an 856 ship notice. The invoice can",
+			"be billed once it has shipped: PF11 here, or PF10 on the invoice.",
 		],
 	},
 	"vendors.sel": {

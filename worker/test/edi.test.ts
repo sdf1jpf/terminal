@@ -7,6 +7,7 @@ import {
 import { getInvoice } from "../src/invoices";
 import { customerEvents } from "../src/events";
 import { accessJWT } from "./access";
+import { shipInvoice } from "./ship";
 
 const db = env.DB;
 const worker = (exports as unknown as { default: Fetcher }).default;
@@ -61,6 +62,10 @@ describe("EDI with customers' systems", () => {
 		expect(await onHand("BRG-6204")).toBe(bearings - 50);
 		expect(await ack(po.id)).toMatch(/AK5\*A~/);
 
+		const shipped = await shipInvoice(db, id);
+		expect(shipped.edi).toMatchObject({ direction: "O", type: "856", partner: "000109", reference: `${shipped.shipment.id} ${id}` });
+		expect(shipped.edi!.raw).toContain(`PRF*4500017*****${id}~`);
+		expect(shipped.edi!.raw).toContain("SN1**50*EA~");
 		const billed = await bill(db, "IBMUSER", id);
 		expect(billed.edi).toMatchObject({ direction: "O", type: "810", partner: "000109", status: "SENT", reference: id });
 		const x810 = parse(billed.edi!.raw);
@@ -121,7 +126,10 @@ describe("EDI with customers' systems", () => {
 		expect(orders.lines.at(-1)).toMatch(/^3 ORDERS SENT, \d REJECTED$/);
 		const accepted = (await listInterchanges(db)).filter((x) => x.type === "850" && x.status === "ACCEPTED" && x.created_by === "EDISIM");
 		expect(accepted.length).toBeGreaterThan(0);
-		for (const x of accepted) await bill(db, "IBMUSER", x.reference.split(" ")[2]);
+		for (const x of accepted) {
+			await shipInvoice(db, x.reference.split(" ")[2]);
+			await bill(db, "IBMUSER", x.reference.split(" ")[2]);
+		}
 
 		const pay = await partnersPay(db, job);
 		expect(pay.lines.some((l) => / PAID INV\d{5}.* ACCEPTED$/.test(l))).toBe(true);

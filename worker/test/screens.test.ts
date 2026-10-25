@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { partnerPO, processInterchange, receive } from "../src/edi";
 import { addLine, billInvoice, createInvoice, payInvoice } from "../src/invoices";
 import { accessJWT } from "./access";
+import { shipInvoice } from "./ship";
 
 const worker = (exports as unknown as { default: Fetcher }).default;
 
@@ -265,15 +266,18 @@ describe("activity and history screens", () => {
 
 		const inv = await createInvoice(env.DB, "IBMUSER", "000104", "AUDIT-1");
 		await addLine(env.DB, inv.id, "BRG-6310", 4);
+		const { shipment } = await shipInvoice(env.DB, inv.id);
 		await billInvoice(env.DB, "IBMUSER", inv.id);
 		await payInvoice(env.DB, "IBMUSER", inv.id);
 		await t.send("ENTER");
 		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* PAYMENT  ${inv.id} +-\\$124 IBMUSER`));
 		expect(t.row(12)).toMatch(new RegExp(`^ +2 .* BILLED   ${inv.id} +\\$124 IBMUSER`));
-		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* OPENED   ${inv.id} PO AUDIT-1`));
+		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* SHIPPED  ${shipment.id} TRK PRO`));
+		expect(t.row(14)).toMatch(new RegExp(`^ +4 .* RELEASED ${shipment.id} ${inv.id} +IBMUSER`));
+		expect(t.row(15)).toMatch(new RegExp(`^ +5 .* OPENED   ${inv.id} PO AUDIT-1`));
 
 		await t.fill("line", "9").send("ENTER");
-		expect(t.message).toBe("CUS0246E LINE MUST BE 1 TO 3");
+		expect(t.message).toBe("CUS0246E LINE MUST BE 1 TO 5");
 		expect(t.scr.cursor).toEqual({ field: "line" });
 		await t.fill("line", "2").send("ENTER");
 		expect(t.scr.map).toBe("CUSM05");
@@ -290,6 +294,14 @@ describe("activity and history screens", () => {
 		expect(t.scr.map).toBe("CUSM03");
 
 		await t.fill("line", "3").send("ENTER");
+		expect(t.row(6)).toContain("SHIPPED");
+		expect(t.row(10)).toMatch(/CARRIER .* TRK +PRO\d+ +1 CTN 10 LB/);
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSS02");
+		await t.send("PF3");
+		await t.send("PF3");
+
+		await t.fill("line", "5").send("ENTER");
 		expect(t.row(6)).toContain("INVOICE OPENED");
 		expect(t.row(10)).toContain(`INVOICE ${inv.id}`);
 		await t.send("PF3");
@@ -476,6 +488,28 @@ describe("invoice screens", () => {
 		expect(t.scr.map).toBe("CUSI02");
 
 		await t.send("PF10");
+		expect(t.message).toBe("CUS0000W PF10 IS NOT ACTIVE ON THIS SCREEN");
+		await t.send("PF6");
+		expect(t.message).toMatch(new RegExp(`^CUS0515I INVOICE ${id} RELEASED TO THE WAREHOUSE ON SHP\\d{5}`));
+		expect(t.field("sku")).toBeUndefined();
+		expect(t.row(8)).toContain("PICKING - PF6 SHOWS IT");
+		await t.send("PF10");
+		expect(t.message).toBe(`CUS0510E INVOICE ${id} HAS NOT SHIPPED - ${t.row(8).match(/SHP\d{5}/)![0]} IS STILL IN THE WAREHOUSE`);
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSS02");
+		await t.fill("cartons", "2", "weight", "x").send("PF10");
+		expect(t.message).toBe("CUS0811E WEIGHT MUST BE WHOLE POUNDS FROM 1 TO 99999");
+		expect(t.scr.cursor).toEqual({ field: "weight" });
+		await t.fill("weight", "35").send("PF10");
+		expect(t.message).toMatch(/^CUS0807I SHP\d{5} PACKED: 2 CARTONS, 35 LB/);
+		await t.fill("carrier", "dhl").send("PF10");
+		expect(t.message).toBe("CUS0812E CARRIER MUST BE ONE OF UPS, FDX, TRK");
+		await t.fill("carrier", "ups").send("PF10");
+		expect(t.message).toMatch(/^CUS0808I SHP\d{5} SHIPPED VIA UPS 1Z\w+ - PF11 BILLS IT$/);
+		await t.send("PF4");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.row(8)).toMatch(/SHIPPED ON SHP\d{5} VIA UPS 1Z/);
+		await t.send("PF10");
 		expect(t.message).toMatch(new RegExp(`^CUS0507I INVOICE ${id} BILLED, \\$[\\d,]+ POSTED TO 000110$`));
 		expect(t.row(4)).toContain("BILLED");
 		expect(t.field("sku")).toBeUndefined();
@@ -495,6 +529,7 @@ describe("invoice screens", () => {
 	it("marks a billed invoice paid from the list", async () => {
 		const inv = await createInvoice(env.DB, "IBMUSER", "000119", "");
 		await addLine(env.DB, inv.id, "PLT-4848", 10);
+		await shipInvoice(env.DB, inv.id);
 		await billInvoice(env.DB, "IBMUSER", inv.id);
 		const t = await Terminal.logon();
 		await t.fill("option", "9 119").send("ENTER");
