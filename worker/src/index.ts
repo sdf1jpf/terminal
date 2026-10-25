@@ -20,8 +20,11 @@
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
 //
-// Everything except health is behind Cloudflare Access; see auth.ts.
+// Routing is Hono. Everything except health is behind Cloudflare Access,
+// applied per route by the signedOn middleware (auth.ts). The browser
+// terminal at / is static assets (public/) and never reaches this code.
 
+import { Hono, type MiddlewareHandler } from "hono";
 import { customerHistory, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
@@ -42,121 +45,105 @@ export interface Env {
 
 export { JobRunner } from "./jobs";
 
+type App = { Bindings: Env; Variables: { user: string } };
+
+// signedOn verifies the Access JWT and sets "user" to the logged-on userid,
+// or throws 401. It runs per route, so unknown paths and wrong methods get
+// 404 and 405 without signing on, as before.
+const signedOn: MiddlewareHandler<App> = async (c, next) => {
+	c.set("user", await authenticate(c.env, c.req.raw));
+	await next();
+};
+
+const app = new Hono<App>({ strict: false });
+
+app.onError((e) => {
+	if (e instanceof HttpError) return errorResponse(e);
+	console.error(e);
+	return errorResponse(new HttpError(500, "internal", "internal error"));
+});
+app.notFound(() => errorResponse(new HttpError(404, "not_found", "no such endpoint")));
+
+app.get("/v1/health", () => json(200, { status: "ok" }));
+
+app.post("/v1/session", signedOn, (c) => json(201, { userid: c.get("user") }));
+
+app.post("/v1/screen", signedOn, async (c) =>
+	json(200, await screen(c.env, c.get("user"), new URL(c.req.url), await readJSON(c.req.raw, requestKeys))),
+);
+
+app.get("/v1/customers", signedOn, async (c) => {
+	const q = (k: string) => c.req.query(k) ?? "";
+	return json(200, await listCustomers(c.env.DB, q("prefix"), { city: q("city"), state: q("state"), status: q("status") }));
+});
+app.post("/v1/customers", signedOn, async (c) => {
+	const { fields } = parseEditable(await readJSON(c.req.raw, customerFields));
+	return json(201, await createCustomer(c.env.DB, fields, c.get("user")));
+});
+app.get("/v1/customers/:id", signedOn, async (c) => json(200, await getCustomer(c.env.DB, c.req.param("id"))));
+app.put("/v1/customers/:id", signedOn, async (c) => {
+	const { fields, version } = parseEditable(await readJSON(c.req.raw, customerFields));
+	return json(200, await updateCustomer(c.env.DB, c.req.param("id"), fields, version, c.get("user")));
+});
+app.delete("/v1/customers/:id", signedOn, async (c) => {
+	await deleteCustomer(c.env.DB, c.req.param("id"), c.get("user"));
+	return noContent();
+});
+app.get("/v1/customers/:id/transactions", signedOn, async (c) => {
+	const list = await listTransactions(c.env.DB, c.req.param("id"));
+	if (!list) throw notFound();
+	return json(200, list);
+});
+app.post("/v1/customers/:id/transactions", signedOn, async (c) =>
+	json(201, await postTransaction(c.env.DB, c.get("user"), c.req.param("id"), parsePosting(await readJSON(c.req.raw, transactionFields)))),
+);
+app.get("/v1/customers/:id/history", signedOn, async (c) => json(200, await customerHistory(c.env.DB, c.req.param("id"))));
+
+app.get("/v1/products", signedOn, async (c) => json(200, await listProducts(c.env.DB, c.req.query("prefix") ?? "")));
+app.post("/v1/products", signedOn, async (c) => {
+	const { fields } = parseProduct(await readJSON(c.req.raw, productFields));
+	return json(201, await createProduct(c.env.DB, fields, c.get("user")));
+});
+app.get("/v1/products/:sku", signedOn, async (c) => json(200, await getProduct(c.env.DB, c.req.param("sku").toUpperCase())));
+app.put("/v1/products/:sku", signedOn, async (c) => {
+	const sku = c.req.param("sku").toUpperCase();
+	const { fields, version } = parseProduct({ ...(await readJSON(c.req.raw, productFields)), sku });
+	return json(200, await updateProduct(c.env.DB, sku, fields, version, c.get("user")));
+});
+
+app.get("/v1/jobs", signedOn, async (c) => json(200, await listJobs(c.env.DB)));
+app.post("/v1/jobs", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["name"]);
+	return json(202, await submitJob(c.env.DB, c.env.JOBS, c.get("user"), str(body, "name")));
+});
+app.get("/v1/jobs/:id", signedOn, async (c) => {
+	const job = await getJob(c.env.DB, c.req.param("id"));
+	if (!job) throw notFound();
+	return json(200, job);
+});
+
+// A known path with a method it does not take is 405, not 404. Registered
+// after the real routes, so it only runs when none of them matched.
+for (const path of [
+	"/v1/health",
+	"/v1/session",
+	"/v1/screen",
+	"/v1/customers",
+	"/v1/customers/:id",
+	"/v1/customers/:id/transactions",
+	"/v1/customers/:id/history",
+	"/v1/products",
+	"/v1/products/:sku",
+	"/v1/jobs",
+	"/v1/jobs/:id",
+]) {
+	app.all(path, (c) => {
+		throw new HttpError(405, "method_not_allowed", `${c.req.method} is not allowed on ${c.req.path.replace(/\/+$/, "")}`);
+	});
+}
+
+// The queue consumer and the JobRunner workflow stay outside Hono.
 export default {
-	async fetch(req, env): Promise<Response> {
-		try {
-			return await route(req, env);
-		} catch (e) {
-			if (e instanceof HttpError) return errorResponse(e);
-			console.error(e);
-			return errorResponse(new HttpError(500, "internal", "internal error"));
-		}
-	},
+	fetch: app.fetch,
 	queue: startJobs,
 } satisfies ExportedHandler<Env, JobMessage>;
-
-async function route(req: Request, env: Env): Promise<Response> {
-	const url = new URL(req.url);
-	const path = url.pathname.replace(/\/+$/, "");
-	const m = req.method;
-
-	if (path === "/v1/health") {
-		if (m === "GET") return json(200, { status: "ok" });
-	} else if (path === "/v1/session") {
-		if (m === "POST") return json(201, { userid: await authenticate(env, req) });
-	} else if (path === "/v1/screen") {
-		if (m === "POST") return json(200, await screen(env, await authenticate(env, req), url, await readJSON(req, requestKeys)));
-	} else if (path === "/v1/customers") {
-		if (m === "GET") {
-			await authenticate(env, req);
-			const q = (k: string) => url.searchParams.get(k) ?? "";
-			return json(200, await listCustomers(env.DB, q("prefix"), { city: q("city"), state: q("state"), status: q("status") }));
-		}
-		if (m === "POST") return create(req, env, await authenticate(env, req));
-	} else if (path.startsWith("/v1/customers/") && path.split("/").length === 4) {
-		const id = decodeURIComponent(path.slice("/v1/customers/".length));
-		if (m === "GET") {
-			await authenticate(env, req);
-			return json(200, await getCustomer(env.DB, id));
-		}
-		if (m === "PUT") return update(req, env, await authenticate(env, req), id);
-		if (m === "DELETE") {
-			await deleteCustomer(env.DB, id, await authenticate(env, req));
-			return noContent();
-		}
-	} else if (path.startsWith("/v1/customers/") && path.split("/").length === 5) {
-		const [, , , rawId, sub] = path.split("/");
-		const id = decodeURIComponent(rawId);
-		if (sub === "transactions") {
-			if (m === "GET") {
-				await authenticate(env, req);
-				const list = await listTransactions(env.DB, id);
-				if (!list) throw notFound();
-				return json(200, list);
-			}
-			if (m === "POST") return post(req, env, await authenticate(env, req), id);
-		} else if (sub === "history") {
-			if (m === "GET") {
-				await authenticate(env, req);
-				return json(200, await customerHistory(env.DB, id));
-			}
-		} else {
-			throw new HttpError(404, "not_found", "no such endpoint");
-		}
-	} else if (path === "/v1/products") {
-		if (m === "GET") {
-			await authenticate(env, req);
-			return json(200, await listProducts(env.DB, url.searchParams.get("prefix") ?? ""));
-		}
-		if (m === "POST") {
-			const user = await authenticate(env, req);
-			const { fields } = parseProduct(await readJSON(req, productFields));
-			return json(201, await createProduct(env.DB, fields, user));
-		}
-	} else if (path.startsWith("/v1/products/") && path.split("/").length === 4) {
-		const sku = decodeURIComponent(path.slice("/v1/products/".length)).toUpperCase();
-		if (m === "GET") {
-			await authenticate(env, req);
-			return json(200, await getProduct(env.DB, sku));
-		}
-		if (m === "PUT") {
-			const user = await authenticate(env, req);
-			const { fields, version } = parseProduct({ ...(await readJSON(req, productFields)), sku });
-			return json(200, await updateProduct(env.DB, sku, fields, version, user));
-		}
-	} else if (path === "/v1/jobs") {
-		if (m === "GET") {
-			await authenticate(env, req);
-			return json(200, await listJobs(env.DB));
-		}
-		if (m === "POST") {
-			const user = await authenticate(env, req);
-			const body = await readJSON(req, ["name"]);
-			return json(202, await submitJob(env.DB, env.JOBS, user, str(body, "name")));
-		}
-	} else if (path.startsWith("/v1/jobs/") && path.split("/").length === 4) {
-		if (m === "GET") {
-			await authenticate(env, req);
-			const job = await getJob(env.DB, decodeURIComponent(path.slice("/v1/jobs/".length)));
-			if (!job) throw notFound();
-			return json(200, job);
-		}
-	} else {
-		throw new HttpError(404, "not_found", "no such endpoint");
-	}
-	throw new HttpError(405, "method_not_allowed", `${m} is not allowed on ${path}`);
-}
-
-async function create(req: Request, env: Env, user: string): Promise<Response> {
-	const { fields } = parseEditable(await readJSON(req, customerFields));
-	return json(201, await createCustomer(env.DB, fields, user));
-}
-
-async function update(req: Request, env: Env, user: string, id: string): Promise<Response> {
-	const { fields, version } = parseEditable(await readJSON(req, customerFields));
-	return json(200, await updateCustomer(env.DB, id, fields, version, user));
-}
-
-async function post(req: Request, env: Env, user: string, id: string): Promise<Response> {
-	return json(201, await postTransaction(env.DB, user, id, parsePosting(await readJSON(req, transactionFields))));
-}

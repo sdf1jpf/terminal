@@ -239,6 +239,24 @@ describe("routing", () => {
 		const res = await call("PATCH", "/v1/customers");
 		expect(res.status).toBe(405);
 	});
+
+	it("answers 404 and 405 before asking for a logon", async () => {
+		expect(await call("GET", "/v1/customers/000001/nope")).toEqual({
+			status: 404,
+			body: { error: { code: "not_found", message: "no such endpoint" } },
+		});
+		expect(await call("POST", "/v1/jobs/JOB00001/")).toEqual({
+			status: 405,
+			body: { error: { code: "method_not_allowed", message: "POST is not allowed on /v1/jobs/JOB00001" } },
+		});
+		expect((await call("GET", "/v1/customers/000001")).status).toBe(401);
+	});
+
+	it("ignores a trailing slash", async () => {
+		expect((await call("GET", "/v1/health/")).status).toBe(200);
+		const token = await logon();
+		expect((await call("GET", "/v1/customers/000101/", { token })).body.id).toBe("000101");
+	});
 });
 
 describe("browser terminal", () => {
