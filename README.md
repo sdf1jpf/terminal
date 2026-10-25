@@ -307,9 +307,29 @@ right edge, and the browse list and the credit report show as many rows as
 fit. Anything you have typed but not yet sent survives a resize. If the window
 changes while the host is busy, the screen is redrawn when the reply arrives.
 
+## The menu
+
+The primary option menu (CUSM00) lists one option per module, and each opens
+its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
+
+| Option | Submenu | Options |
+| --- | --- | --- |
+| 1 | CUSTOMERS | 1 Browse, 2 Inquiry, 3 Add, 4 Event history |
+| 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox |
+| 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
+| 4 | ACCOUNTING | 1 General ledger, 2 Credit exposure report |
+| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output |
+| T, X | | Tutorial, log off |
+
+A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
+and option names (`INQUIRY`, `EDI`, `SYSLOG`, ...) work anywhere too. A second
+word is passed to the option, so `1.2 000105` shows that customer. `=` alone
+goes back to the primary menu, and `=X` logs off. An option returns to its own
+submenu when you leave it.
+
 ## Searching and help
 
-The browse list (menu option 1) searches by name, city, state and status
+The browse list (menu option 1.1) searches by name, city, state and status
 together: fill in any of the fields and press Enter. Clear empties them all.
 The API takes the same search as `GET /v1/customers?prefix=&city=&state=&status=`.
 
@@ -318,7 +338,7 @@ again, or PF1 anywhere else, shows the keyboard tutorial. PF3 goes back.
 
 ## Products and stock
 
-Menu option 8 opens the **PRODUCT LIST** (CUSP01): the product file with
+Menu option 3.1 opens the **PRODUCT LIST** (CUSP01): the product file with
 price, quantity on hand and reorder point, searchable by SKU. Active products
 at or below their reorder point are flagged `LOW` in yellow, and discontinued
 products show in pink. `S` shows a product and `U` updates it, and PF5 adds
@@ -327,7 +347,7 @@ one (CUSP02). Products are never deleted, only discontinued (status `D`).
 
 ## Invoices
 
-Menu option 9 (`9 000105`), or the selection code `I` on the browse list,
+Menu option 2.1 (`2.1 000105`), or the selection code `I` on the browse list,
 opens the **INVOICE LIST** (CUSI01) for a customer, newest first, with the
 account's balance, credit limit, available credit and unpaid invoices; leave
 the customer number blank to list every invoice. `S` shows an invoice and
@@ -359,23 +379,23 @@ customer's balance always move together.
 
 ## Event history
 
-From the menu, option 5 (`5 000105`) opens the customer's **EVENT HISTORY**
+From the menu, option 1.4 (`1.4 000105`) opens the customer's **EVENT HISTORY**
 (CUSM03): every record change (including credit limit and status changes),
 invoice opened, invoice billed, payment posted and EDI interchange, newest first, with the account's balance, limit and available
 credit above. Each line is numbered: type a number in `SHOW LINE` and press
 Enter to see that event on **EVENT DETAIL** (CUSM05), including the
 invoice and its lines; PF4 there opens the invoice. The screen is read only:
-charges and payments come from the invoice screens (option 9).
+charges and payments come from the invoice screens (option 2.1).
 
 It also works for a deleted customer, whose events outlive the record. On
 the inquiry screen it is PF5 (PF6 is the customer's invoices), and on the
 browse list the selection code `A`. It replaces the old change history:
-option 6 and the code `H` still lead here.
+the command `HISTORY` and the code `H` still lead here.
 
 ## EDI with customers' systems
 
 Customers' systems can trade with us in ANSI X12 (004010), simulated end to
-end. Menu option `E` (`E 000105` for one customer) opens the **EDI MAILBOX**
+end. Menu option 2.3 (`2.3 000105` for one customer) opens the **EDI MAILBOX**
 (CUSE01): every interchange in and out, newest first. `S` shows one on
 **EDI INTERCHANGE** (CUSE02), segment by segment, with PF4 to its invoice.
 
@@ -399,9 +419,9 @@ customer's event history.
 ## Purchasing
 
 Stock is bought from vendors (simulated suppliers) on purchase orders, sent
-to them by EDI. Menu option `P` (`P V00002` for one vendor) opens **PURCHASE
+to them by EDI. Menu option 3.2 (`3.2 V00002` for one vendor) opens **PURCHASE
 ORDERS** (CUSV01), newest first; PF4 lists the **VENDORS** (CUSV03). Each
-product names its vendor and unit cost on the product screen (option 8),
+product names its vendor and unit cost on the product screen (option 3.1),
 which also shows how many are on order.
 
 - **PF5 opens a PO** for the vendor in the `VENDOR` field. On **PURCHASE
@@ -428,7 +448,7 @@ The same steps are in the API under `/v1/vendors` and `/v1/purchase-orders`.
 
 An invoice ships before it is billed. On an open invoice, **PF6 releases it
 to the warehouse**: a shipment opens in `PICKING` and the invoice's lines are
-frozen (cancelling the shipment unfreezes them). Menu option `S` (`S P` for
+frozen (cancelling the shipment unfreezes them). Menu option 2.2 (`2.2 P` for
 just one status) opens **SHIPPING** (CUSS01), and `S` beside a shipment
 opens **SHIPMENT** (CUSS02): its pick ticket, with each line's bin, in bin
 order.
@@ -447,7 +467,7 @@ event history. The API is under `/v1/shipments`.
 
 ## Accounts receivable and the general ledger
 
-Menu option `A` opens the **GENERAL LEDGER** (CUSA01): the trial balance
+Menu option 4.1 opens the **GENERAL LEDGER** (CUSA01): the trial balance
 for the open period (or any period typed at `PERIOD`), each account's
 balance as of the period's end and its activity in the period, and a check
 that the receivables control account agrees with what customers owe. `S`
@@ -503,7 +523,7 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSCLOSE` | Month-end close: STEP010 journal, STEP020 trial balance, STEP030 close the period and open the next. |
 | `CUSDUNN` | Dunning letters for invoices more than 30 days old; final notices put the account on hold. RC 0004 if any letters were printed. |
 
-In the terminal, menu option 7 opens **BATCH JOBS** (CUSJ01). Type a job name
+In the terminal, menu option 5.1 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,
 like SDSF. PF5 refreshes the list, and `S` beside a job opens its output listing
 (CUSJ02), which PF7 and PF8 scroll.
@@ -515,7 +535,7 @@ creates the workflow when it deploys.
 
 ## Operator console and job scheduler
 
-Menu option `O` opens the **OPERATOR CONSOLE** (CUSO01), which shows SYSLOG,
+Menu option 5.2 opens the **OPERATOR CONSOLE** (CUSO01), which shows SYSLOG,
 the system log: jobs being submitted, starting and ending (`$HASP100`,
 `$HASP373`, `$HASP395`), abends, the scheduler releasing jobs, logons and
 logoffs, and operator commands with their responses. While it shows the end
@@ -557,10 +577,10 @@ newest 10,000 lines.
 
 Job output and printed reports are held on the spool until someone deals
 with them, as under JES. Every job's output listing goes there under the
-job's ID when the job ends, and PF9 on the credit exposure summary (option 4)
+job's ID when the job ends, and PF9 on the credit exposure summary (option 4.2)
 prints the report to it under a TSU ID, as from a TSO session.
 
-Menu option `H` (`H CUS` for jobs starting CUS) opens the **HELD OUTPUT
+Menu option 5.4 (`5.4 CUS` for jobs starting CUS) opens the **HELD OUTPUT
 QUEUE** (CUSQ01), like SDSF's H panel. Beside an output group, `S` browses it
 (CUSQ02, where PF4 prints it), `O` prints it on `PRT1`, and `P` purges it.
 Printed output stays on the spool marked `PRINTED` with a copy count, so `O`
