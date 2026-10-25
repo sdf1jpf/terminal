@@ -7,8 +7,6 @@ import (
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
-func nowHHMM() string { return time.Now().Format("15:04:05") }
-
 // menu is the ISPF-style primary option menu.
 type menu struct {
 	option string
@@ -43,7 +41,7 @@ func (m *menu) Render(s *Session) *t3.Screen {
 		{"TIME", time.Now().Format("15:04")},
 		{"TERMINAL", s.lu},
 		{"SYSTEM", s.cfg.SystemName},
-		{"APPLID", "CUSTINFO"},
+		{"HOST", truncate(strings.ToUpper(s.api().Host()), 14)},
 	}
 	for i, kv := range info {
 		label(scr, 6+i, 56, kv[0])
@@ -107,8 +105,9 @@ func (m *menu) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 	return m
 }
 
-func logoff(s *Session) Program {
-	user := s.user
-	s.user = ""
-	return &logon{msg: "IKJ56470I " + user + " LOGGED OFF AT " + nowHHMM()}
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }

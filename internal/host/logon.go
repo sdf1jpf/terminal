@@ -1,8 +1,10 @@
 package host
 
 import (
+	"errors"
 	"strings"
 
+	"github.com/sdf1jpf/terminal/internal/api"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
@@ -30,7 +32,7 @@ func (l *logon) Render(s *Session) *t3.Screen {
 
 	scr.Text(11, 12, "SYSTEM . . . . : "+s.cfg.SystemName, t3.WithColor(t3.Blue))
 	scr.Text(12, 12, "TERMINAL . . . : "+s.lu, t3.WithColor(t3.Blue))
-	scr.Text(13, 12, "APPLID . . . . : CUSTINFO", t3.WithColor(t3.Blue))
+	scr.Text(13, 12, "HOST . . . . . : "+strings.ToUpper(s.api().Host()), t3.WithColor(t3.Blue))
 
 	label(scr, 15, 12, "USERID   ===>")
 	scr.Input(15, 26, 8, "userid", l.userid)
@@ -63,21 +65,32 @@ func (l *logon) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 	}
 	f := scr.Fields()
 	user := strings.ToUpper(strings.TrimSpace(f["userid"]))
-	pass := strings.ToUpper(strings.TrimSpace(f["password"]))
+	pass := strings.TrimSpace(f["password"])
 	l.userid = user
 	switch {
 	case user == "":
 		l.msg = "IKJ56700A ENTER USERID"
+		return l
 	case pass == "":
 		l.msg = "IKJ56714A ENTER CURRENT PASSWORD FOR " + user
-	default:
-		want, ok := s.cfg.Users[user]
-		if !ok || want != pass {
-			l.msg = "IKJ56421I PASSWORD NOT AUTHORIZED FOR USERID " + user
-			return l
-		}
-		s.user = user
-		return &menu{msg: "IKJ56455I " + user + " LOGON IN PROGRESS AT " + nowHHMM()}
+		return l
 	}
-	return l
+	who, err := s.api().Logon(s.ctx(), user, pass)
+	switch {
+	case errors.Is(err, api.ErrBadLogon):
+		l.msg = "IKJ56421I PASSWORD NOT AUTHORIZED FOR USERID " + user
+		return l
+	case err != nil:
+		l.msg = s.fail(err)
+		return l
+	}
+	s.user = who
+	return &menu{msg: "IKJ56455I " + who + " LOGON IN PROGRESS AT " + nowHHMM()}
+}
+
+func logoff(s *Session) Program {
+	user := s.user
+	s.api().Logoff(s.ctx())
+	s.user = ""
+	return &logon{msg: "IKJ56470I " + user + " LOGGED OFF AT " + nowHHMM()}
 }

@@ -1,6 +1,5 @@
-// Package store holds the customer master file used by the sample
-// application. It is in memory, safe for concurrent sessions, and can be
-// persisted to a JSON file.
+// Package store is the API server's customer master file. It is in
+// memory, safe for concurrent requests, and can be persisted to a JSON file.
 package store
 
 import (
@@ -12,24 +11,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sdf1jpf/terminal/internal/customer"
 )
 
-type Customer struct {
-	ID      string    `json:"id"`
-	Name    string    `json:"name"`
-	Address string    `json:"address"`
-	City    string    `json:"city"`
-	State   string    `json:"state"`
-	Zip     string    `json:"zip"`
-	Phone   string    `json:"phone"`
-	Limit   int       `json:"credit_limit"`
-	Balance int       `json:"balance"`
-	Status  string    `json:"status"` // A=active, H=hold, C=closed
-	Updated time.Time `json:"updated"`
-	By      string    `json:"updated_by"`
-}
+// Customer is the stored record type.
+type Customer = customer.Customer
 
-var ErrNotFound = errors.New("record not found")
+var (
+	ErrNotFound = errors.New("record not found")
+	// ErrConflict means the record changed since the caller read it.
+	ErrConflict = errors.New("record was changed by another user")
+)
 
 type Store struct {
 	mu   sync.RWMutex
@@ -61,6 +54,7 @@ func Open(path string) (*Store, error) {
 		for _, c := range seed {
 			c.Updated = time.Date(1987, 3, 14, 9, 30, 0, 0, time.UTC)
 			c.By = "IBMUSER"
+			c.Version = 1
 			s.recs[c.ID] = c
 		}
 	}
@@ -102,17 +96,35 @@ func (s *Store) Get(id string) (Customer, error) {
 	return c, nil
 }
 
-// Put inserts or replaces a customer. A blank ID is assigned the next
-// number.
-func (s *Store) Put(c Customer, user string) (Customer, error) {
+// Create adds a customer under the next customer number. The balance of a
+// new account always starts at zero.
+func (s *Store) Create(c Customer, user string) (Customer, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c.ID == "" {
-		s.next++
-		c.ID = fmt.Sprintf("%06d", s.next)
+	s.next++
+	c.ID = fmt.Sprintf("%06d", s.next)
+	c.Balance, c.Version = 0, 1
+	c.Updated, c.By = time.Now().UTC(), user
+	s.recs[c.ID] = c
+	return c, s.save()
+}
+
+// Update replaces the editable fields of an existing customer. c.Version
+// must match the stored version, so that one user cannot silently
+// overwrite another's change.
+func (s *Store) Update(c Customer, user string) (Customer, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.recs[c.ID]
+	if !ok {
+		return Customer{}, ErrNotFound
 	}
-	c.Updated = time.Now().UTC()
-	c.By = user
+	if c.Version != old.Version {
+		return old, ErrConflict
+	}
+	c.Balance = old.Balance
+	c.Version = old.Version + 1
+	c.Updated, c.By = time.Now().UTC(), user
 	s.recs[c.ID] = c
 	return c, s.save()
 }
