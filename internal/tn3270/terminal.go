@@ -53,18 +53,20 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		t.width, t.height = msg.Width, msg.Height
+		t.fit()
 	case hostReply:
 		if msg.scr == nil {
 			return t, tea.Quit
 		}
 		t.scr = msg.scr
 		t.lock = LockNone
+		t.fit() // the window may have changed while the host was busy
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && t.lock == LockNone {
 			x0, y0 := t.origin()
 			row, col := msg.Y-y0, msg.X-x0
-			if row >= 0 && row < Rows && col >= 0 && col < Cols {
-				t.scr.MoveTo(row*Cols + col)
+			if row >= 0 && row < t.scr.Rows() && col >= 0 && col < t.scr.Cols() {
+				t.scr.MoveTo(row*t.scr.Cols() + col)
 			}
 		}
 	case tea.KeyMsg:
@@ -109,7 +111,7 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return t, t.send(AIDEnter)
 	case "ctrl+l":
-		t.scr = NewScreen()
+		t.scr = NewScreenSize(t.scr.Rows(), t.scr.Cols())
 		return t, t.send(AIDClear)
 	case "alt+1":
 		return t, t.send(AIDPA1)
@@ -171,24 +173,41 @@ func (t *Terminal) send(aid AID) tea.Cmd {
 	}
 }
 
+// fit asks the host to lay the current panel out again when the window
+// no longer matches the presentation space, keeping what has been typed.
+// The screen fills the window except for the status line and its rule.
+func (t *Terminal) fit() {
+	rows, cols := t.height-2, t.width
+	if t.lock == LockWait || t.width == 0 || rows < MinRows || cols < MinCols {
+		return
+	}
+	if rows == t.scr.Rows() && cols == t.scr.Cols() {
+		return
+	}
+	if next := t.host.Redraw(rows, cols); next != nil {
+		next.Carry(t.scr)
+		t.scr = next
+	}
+}
+
 // origin returns the top-left corner of the 3270 screen within the window.
 func (t *Terminal) origin() (int, int) {
-	x := (t.width - Cols) / 2
-	y := (t.height - (Rows + 2)) / 2
+	x := (t.width - t.scr.Cols()) / 2
+	y := (t.height - (t.scr.Rows() + 2)) / 2
 	return max(x, 0), max(y, 0)
 }
 
 func (t *Terminal) View() string {
-	if t.width > 0 && (t.width < Cols || t.height < Rows+2) {
+	if t.width > 0 && (t.width < MinCols || t.height < MinRows+2) {
 		return fmt.Sprintf("\n  Terminal too small: %dx%d.\n  A 3278 Model 2 needs at least %dx%d.\n",
-			t.width, t.height, Cols, Rows+2)
+			t.width, t.height, MinCols, MinRows+2)
 	}
 	var b strings.Builder
-	for row := 0; row < Rows; row++ {
+	for row := 0; row < t.scr.Rows(); row++ {
 		t.renderRow(&b, row)
 		b.WriteByte('\n')
 	}
-	b.WriteString(t.style(styleKey{fg: Blue}).Render(strings.Repeat("─", Cols)))
+	b.WriteString(t.style(styleKey{fg: Blue}).Render(strings.Repeat("─", t.scr.Cols())))
 	b.WriteByte('\n')
 	b.WriteString(t.oia())
 
@@ -200,15 +219,18 @@ func (t *Terminal) View() string {
 }
 
 func (t *Terminal) oia() string {
-	line := []rune(strings.Repeat(" ", Cols))
+	// The right-hand indicators keep their Model 2 places relative to the
+	// right edge, so they stay in the corner of a wider screen.
+	cols := t.scr.Cols()
+	line := []rune(strings.Repeat(" ", cols))
 	put := func(col int, s string) { copy(line[col-1:], []rune(s)) }
 	put(9, t.lock.String())
 	if t.insert {
-		put(52, "^")
+		put(cols-28, "^")
 	}
-	put(57, t.opts.LUName)
-	row, col := RowCol(t.scr.Cursor())
-	put(74, fmt.Sprintf("%03d/%03d", row, col))
+	put(cols-23, t.opts.LUName)
+	row, col := t.scr.RowCol(t.scr.Cursor())
+	put(cols-6, fmt.Sprintf("%03d/%03d", row, col))
 
 	base := t.style(styleKey{fg: Turquoise})
 	warn := t.style(styleKey{fg: White, bold: true})
@@ -287,8 +309,8 @@ func (t *Terminal) renderRow(b *strings.Builder, row int) {
 		}
 	}
 	cursor := t.scr.Cursor()
-	for col := 0; col < Cols; col++ {
-		addr := row*Cols + col
+	for col := 0; col < t.scr.Cols(); col++ {
+		addr := row*t.scr.Cols() + col
 		c := t.scr.buf[addr]
 		fa := t.scr.buf[t.scr.fieldAttr(addr)].attr
 		ch := ' '

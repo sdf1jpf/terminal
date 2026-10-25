@@ -3,6 +3,7 @@ package host
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sdf1jpf/terminal/internal/api"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
@@ -109,7 +110,7 @@ func TestPagingAndHelp(t *testing.T) {
 	b := s.prog.(*browse)
 	scr = s.Submit(t3.PF(8), scr)
 	// 24 records: the last page is clamped so it stays full.
-	want := 24 - pageRows
+	want := 24 - pageRows(s)
 	if b.top != want {
 		t.Fatalf("top = %d, want %d", b.top, want)
 	}
@@ -190,5 +191,34 @@ func TestExpiredSessionReturnsToLogon(t *testing.T) {
 	l, ok := s.prog.(*logon)
 	if !ok || !strings.HasPrefix(l.msg, "IKJ56400I") || s.user != "" {
 		t.Fatalf("expected logon with expiry message, got %T %+v", s.prog, s.prog)
+	}
+}
+
+func TestPanelsFillLargerScreen(t *testing.T) {
+	s, _ := login(t)
+	scr := s.Redraw(40, 132)
+	if scr.Rows() != 40 || scr.Cols() != 132 {
+		t.Fatalf("menu is %dx%d", scr.Rows(), scr.Cols())
+	}
+	if !strings.Contains(scr.Row(40), "PF3=LOGOFF") {
+		t.Fatalf("PF keys not on the last row: %q", scr.Row(40))
+	}
+	if !strings.HasSuffix(strings.TrimRight(scr.Row(1), " "), time.Now().Format("01/02/06")) {
+		t.Fatalf("date not at the right edge: %q", scr.Row(1))
+	}
+
+	scr = s.Submit(t3.PF(4), scr)
+	b := s.prog.(*browse)
+	if len(b.ids) != 24 || !strings.Contains(scr.Row(4), "ROW 1 TO 24 OF 24") {
+		t.Fatalf("browse shows %d rows: %q", len(b.ids), scr.Row(4))
+	}
+	if !strings.Contains(scr.Row(9+24), "BOTTOM OF DATA") {
+		t.Fatalf("no bottom marker: %q", scr.Row(9+24))
+	}
+
+	// Shrinking back gives the 24x80 page again.
+	scr = s.Redraw(24, 80)
+	if len(b.ids) != 13 || !strings.Contains(scr.Row(4), "ROW 1 TO 13 OF 24") {
+		t.Fatalf("browse shows %d rows after shrinking: %q", len(b.ids), scr.Row(4))
 	}
 }

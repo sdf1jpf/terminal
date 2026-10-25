@@ -1,15 +1,17 @@
 // Package tn3270 implements a block-mode, field-oriented display that
-// behaves like an IBM 3278 terminal: a fixed 24x80 presentation space made
-// of fields, each introduced by an attribute byte that occupies a screen
-// position and controls protection, intensity, color and data type.
+// behaves like an IBM 3278 terminal: a presentation space made of fields,
+// each introduced by an attribute byte that occupies a screen position and
+// controls protection, intensity, color and data type. The space is 24x80
+// (a Model 2) or larger, sized to the window the way emulators with a
+// dynamic screen size are.
 package tn3270
 
 import "strings"
 
+// MinRows and MinCols are the smallest presentation space, a 3278 Model 2.
 const (
-	Rows = 24
-	Cols = 80
-	Size = Rows * Cols
+	MinRows = 24
+	MinCols = 80
 )
 
 // Color is a 3270 extended-attribute color.
@@ -73,38 +75,47 @@ type cell struct {
 
 // Screen is a 3270 presentation space plus a cursor address.
 type Screen struct {
-	buf    [Size]cell
-	cursor int
+	rows, cols int
+	buf        []cell
+	cursor     int
 }
 
-// NewScreen returns a cleared, formatted screen. Position 0 holds a
-// protected attribute so the whole screen is protected until fields are
-// defined.
-func NewScreen() *Screen {
-	s := &Screen{}
+// NewScreen returns a cleared, formatted 24x80 screen.
+func NewScreen() *Screen { return NewScreenSize(MinRows, MinCols) }
+
+// NewScreenSize returns a cleared, formatted screen of the given size, no
+// smaller than 24x80. Position 0 holds a protected attribute so the whole
+// screen is protected until fields are defined.
+func NewScreenSize(rows, cols int) *Screen {
+	rows, cols = max(rows, MinRows), max(cols, MinCols)
+	s := &Screen{rows: rows, cols: cols, buf: make([]cell, rows*cols)}
 	s.buf[0] = cell{isAttr: true, attr: Attr{Protected: true}}
 	s.cursor = 1
 	return s
 }
 
+// Rows and Cols return the size of the presentation space.
+func (s *Screen) Rows() int { return s.rows }
+func (s *Screen) Cols() int { return s.cols }
+
 // Addr converts a 1-based row and column into a buffer address.
-func Addr(row, col int) int {
-	return wrap((row-1)*Cols + (col - 1))
+func (s *Screen) Addr(row, col int) int {
+	return s.wrap((row-1)*s.cols + (col - 1))
 }
 
-func wrap(a int) int {
-	a %= Size
+func (s *Screen) wrap(a int) int {
+	a %= len(s.buf)
 	if a < 0 {
-		a += Size
+		a += len(s.buf)
 	}
 	return a
 }
 
 // RowCol converts a buffer address into a 1-based row and column.
-func RowCol(addr int) (int, int) { return addr/Cols + 1, addr%Cols + 1 }
+func (s *Screen) RowCol(addr int) (int, int) { return addr/s.cols + 1, addr%s.cols + 1 }
 
 func (s *Screen) setAttr(addr int, a Attr) {
-	s.buf[wrap(addr)] = cell{isAttr: true, attr: a}
+	s.buf[s.wrap(addr)] = cell{isAttr: true, attr: a}
 }
 
 // Text places a protected field whose data begins at row/col. The
@@ -115,10 +126,10 @@ func (s *Screen) Text(row, col int, text string, opts ...Opt) {
 	for _, o := range opts {
 		o(&a)
 	}
-	start := Addr(row, col)
+	start := s.Addr(row, col)
 	s.setAttr(start-1, a)
 	for i, r := range []rune(text) {
-		s.buf[wrap(start+i)] = cell{ch: r}
+		s.buf[s.wrap(start+i)] = cell{ch: r}
 	}
 	s.stopper(start + len([]rune(text)))
 }
@@ -130,7 +141,7 @@ func (s *Screen) Input(row, col, length int, name, value string, opts ...Opt) {
 	for _, o := range opts {
 		o(&a)
 	}
-	start := Addr(row, col)
+	start := s.Addr(row, col)
 	s.setAttr(start-1, a)
 	v := []rune(value)
 	for i := 0; i < length; i++ {
@@ -138,27 +149,27 @@ func (s *Screen) Input(row, col, length int, name, value string, opts ...Opt) {
 		if i < len(v) {
 			c.ch = v[i]
 		}
-		s.buf[wrap(start+i)] = c
+		s.buf[s.wrap(start+i)] = c
 	}
 	s.stopper(start + length)
 }
 
 func (s *Screen) stopper(addr int) {
-	addr = wrap(addr)
+	addr = s.wrap(addr)
 	if !s.buf[addr].isAttr {
 		s.buf[addr] = cell{isAttr: true, attr: Attr{Protected: true}}
 	}
 }
 
 // SetCursor positions the cursor at a 1-based row and column.
-func (s *Screen) SetCursor(row, col int) { s.cursor = Addr(row, col) }
+func (s *Screen) SetCursor(row, col int) { s.cursor = s.Addr(row, col) }
 
 // CursorTo places the cursor at the first position of the named field.
 // It reports whether the field exists.
 func (s *Screen) CursorTo(name string) bool {
 	for i := range s.buf {
 		if s.buf[i].isAttr && s.buf[i].attr.name == name {
-			s.cursor = wrap(i + 1)
+			s.cursor = s.wrap(i + 1)
 			return true
 		}
 	}
@@ -168,7 +179,7 @@ func (s *Screen) CursorTo(name string) bool {
 // CursorHome moves the cursor to the first unprotected field, as the Home
 // key and the host's default cursor placement do.
 func (s *Screen) CursorHome() {
-	if a, ok := s.nextUnprotected(Size - 1); ok {
+	if a, ok := s.nextUnprotected(len(s.buf) - 1); ok {
 		s.cursor = a
 	}
 }
@@ -178,8 +189,8 @@ func (s *Screen) Cursor() int { return s.cursor }
 
 // fieldAttr returns the address of the attribute byte governing addr.
 func (s *Screen) fieldAttr(addr int) int {
-	for i := 0; i < Size; i++ {
-		a := wrap(addr - i)
+	for i := 0; i < len(s.buf); i++ {
+		a := s.wrap(addr - i)
 		if s.buf[a].isAttr {
 			return a
 		}
@@ -190,23 +201,23 @@ func (s *Screen) fieldAttr(addr int) int {
 // fieldBounds returns the first data address and the length of the field
 // governed by the attribute at fa.
 func (s *Screen) fieldBounds(fa int) (start, length int) {
-	start = wrap(fa + 1)
-	for i := 0; i < Size-1; i++ {
-		if s.buf[wrap(start+i)].isAttr {
+	start = s.wrap(fa + 1)
+	for i := 0; i < len(s.buf)-1; i++ {
+		if s.buf[s.wrap(start+i)].isAttr {
 			return start, i
 		}
 	}
-	return start, Size - 1
+	return start, len(s.buf) - 1
 }
 
 // nextUnprotected returns the first data address of the next unprotected
 // field strictly after addr.
 func (s *Screen) nextUnprotected(addr int) (int, bool) {
-	for i := 1; i <= Size; i++ {
-		a := wrap(addr + i)
+	for i := 1; i <= len(s.buf); i++ {
+		a := s.wrap(addr + i)
 		if s.buf[a].isAttr && !s.buf[a].attr.Protected {
 			if _, n := s.fieldBounds(a); n > 0 {
-				return wrap(a + 1), true
+				return s.wrap(a + 1), true
 			}
 		}
 	}
@@ -216,11 +227,11 @@ func (s *Screen) nextUnprotected(addr int) (int, bool) {
 // prevUnprotected returns the data start of the closest unprotected field
 // beginning strictly before addr.
 func (s *Screen) prevUnprotected(addr int) (int, bool) {
-	for i := 1; i <= Size; i++ {
-		a := wrap(addr - i)
-		if s.buf[a].isAttr && !s.buf[a].attr.Protected && wrap(a+1) != addr {
+	for i := 1; i <= len(s.buf); i++ {
+		a := s.wrap(addr - i)
+		if s.buf[a].isAttr && !s.buf[a].attr.Protected && s.wrap(a+1) != addr {
 			if _, n := s.fieldBounds(a); n > 0 {
-				return wrap(a + 1), true
+				return s.wrap(a + 1), true
 			}
 		}
 	}
@@ -258,7 +269,7 @@ func (s *Screen) fieldText(fa int) string {
 	start, n := s.fieldBounds(fa)
 	var b strings.Builder
 	for i := 0; i < n; i++ {
-		if r := s.buf[wrap(start+i)].ch; r != 0 {
+		if r := s.buf[s.wrap(start+i)].ch; r != 0 {
 			b.WriteRune(r)
 		}
 	}
@@ -269,4 +280,61 @@ func (s *Screen) fieldText(fa int) string {
 // input field.
 func (s *Screen) FieldName(addr int) string {
 	return s.buf[s.fieldAttr(addr)].attr.name
+}
+
+// Carry copies the operator's input from old into s: the contents and
+// modified tags of the named input fields old has changed, cut to fit, and
+// the cursor if it was in a named field. The terminal uses it when the host
+// lays out the current panel again for a new window size, so that a resize
+// does not lose anything already typed.
+func (s *Screen) Carry(old *Screen) {
+	fields := map[string]int{}
+	for i, c := range s.buf {
+		if c.isAttr && !c.attr.Protected && c.attr.name != "" {
+			fields[c.attr.name] = i
+		}
+	}
+	for i, c := range old.buf {
+		if !c.isAttr || !c.attr.modified || c.attr.name == "" {
+			continue
+		}
+		fa, ok := fields[c.attr.name]
+		if !ok {
+			continue
+		}
+		from, n := old.fieldBounds(i)
+		to, m := s.fieldBounds(fa)
+		for j := 0; j < m; j++ {
+			var ch rune
+			if j < n {
+				ch = old.buf[old.wrap(from+j)].ch
+			}
+			s.buf[s.wrap(to+j)].ch = ch
+		}
+		s.buf[fa].attr.modified = true
+	}
+	ofa := old.fieldAttr(old.cursor)
+	if name := old.buf[ofa].attr.name; name != "" && !old.buf[old.cursor].isAttr {
+		if fa, ok := fields[name]; ok {
+			off := old.wrap(old.cursor - ofa - 1)
+			to, m := s.fieldBounds(fa)
+			s.cursor = s.wrap(to + min(off, max(m-1, 0)))
+		}
+	}
+}
+
+// Row returns the text of a 1-based row, with attribute positions and
+// nulls shown as blanks and hidden fields left out.
+func (s *Screen) Row(row int) string {
+	var b strings.Builder
+	start := s.Addr(row, 1)
+	for i := 0; i < s.cols; i++ {
+		c := s.buf[start+i]
+		if c.isAttr || c.ch == 0 || s.buf[s.fieldAttr(start+i)].attr.Hidden {
+			b.WriteByte(' ')
+			continue
+		}
+		b.WriteRune(c.ch)
+	}
+	return b.String()
 }

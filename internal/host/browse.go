@@ -8,8 +8,6 @@ import (
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
-const pageRows = 13
-
 // browse is a scrollable list of customers with a selection column, in the
 // style of an ISPF member list.
 type browse struct {
@@ -31,27 +29,36 @@ func (b *browse) refresh(s *Session) {
 		return
 	}
 	b.list = list
-	b.top = min(b.top, max(len(list)-pageRows, 0))
+	b.top = min(b.top, max(len(list)-pageRows(s), 0))
 }
 
+// pageRows is how many customers fit between the column headings and the
+// message line: 13 on a 24x80 screen.
+func pageRows(s *Session) int { return s.rows - 11 }
+
 func (b *browse) Render(s *Session) *t3.Screen {
-	scr := t3.NewScreen()
+	scr := s.newScreen()
 	header(scr, s, "CUSM01", "CUSTOMER BROWSE")
+
+	page := pageRows(s)
+	// A wider screen gives the extra columns to the name and city.
+	extra := scr.Cols() - t3.MinCols
+	nameW, cityW := 24+extra*3/5, 15+extra-extra*3/5
 
 	label(scr, 4, 2, "NAME STARTS WITH ===>")
 	scr.Input(4, 24, 20, "filter", b.filter)
 	if len(b.list) > 0 {
-		end := min(b.top+pageRows, len(b.list))
-		scr.Text(4, 58, fmt.Sprintf("ROW %d TO %d OF %d", b.top+1, end, len(b.list)), t3.WithColor(t3.White))
+		end := min(b.top+page, len(b.list))
+		scr.Text(4, right(scr, 58), fmt.Sprintf("ROW %d TO %d OF %d", b.top+1, end, len(b.list)), t3.WithColor(t3.White))
 	}
 
 	scr.Text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE", t3.WithColor(t3.Blue))
-	scr.Text(7, 2, "S CUST NO  NAME                     CITY            ST      BALANCE STAT",
+	scr.Text(7, 2, fmt.Sprintf("S CUST NO  %-*s %-*s ST      BALANCE STAT", nameW, "NAME", cityW, "CITY"),
 		t3.WithColor(t3.White), t3.Bright)
-	scr.Text(8, 2, strings.Repeat("-", 77), t3.WithColor(t3.Blue))
+	scr.Text(8, 2, strings.Repeat("-", scr.Cols()-3), t3.WithColor(t3.Blue))
 
 	b.ids = b.ids[:0]
-	for i := 0; i < pageRows && b.top+i < len(b.list); i++ {
+	for i := 0; i < page && b.top+i < len(b.list); i++ {
 		c := b.list[b.top+i]
 		row := 9 + i
 		var opts []t3.Opt
@@ -66,14 +73,15 @@ func (b *browse) Render(s *Session) *t3.Screen {
 		case "C":
 			color = t3.Pink
 		}
-		scr.Text(row, 4, fmt.Sprintf("%-8s %-24.24s %-15.15s %-2s %12s %s",
-			c.ID, c.Name, c.City, c.State, money(c.Balance), c.Status), t3.WithColor(color))
+		scr.Text(row, 4, fmt.Sprintf("%-8s %-*.*s %-*.*s %-2s %12s %s",
+			c.ID, nameW, nameW, c.Name, cityW, cityW, c.City, c.State, money(c.Balance), c.Status), t3.WithColor(color))
 		b.ids = append(b.ids, c.ID)
 	}
 	if len(b.list) == 0 {
 		scr.Text(9, 4, "NO CUSTOMERS MATCH THE FILTER", t3.WithColor(t3.Yellow))
-	} else if b.top+pageRows >= len(b.list) {
-		bottom := strings.Repeat("*", 30) + " BOTTOM OF DATA " + strings.Repeat("*", 30)
+	} else if b.top+page >= len(b.list) {
+		stars := strings.Repeat("*", (scr.Cols()-20)/2)
+		bottom := stars + " BOTTOM OF DATA " + stars
 		scr.Text(9+len(b.ids), 4, bottom, t3.WithColor(t3.Blue))
 	}
 
@@ -113,12 +121,12 @@ func (b *browse) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		if b.top == 0 {
 			b.msg = "CUS0101W ALREADY AT TOP OF DATA"
 		}
-		b.top = max(b.top-pageRows, 0)
+		b.top = max(b.top-pageRows(s), 0)
 	case t3.PF(8):
-		if b.top+pageRows >= len(b.list) {
+		if page := pageRows(s); b.top+page >= len(b.list) {
 			b.msg = "CUS0102W ALREADY AT BOTTOM OF DATA"
 		} else {
-			b.top = min(b.top+pageRows, len(b.list)-pageRows) // keep the last page full
+			b.top = min(b.top+page, len(b.list)-page) // keep the last page full
 		}
 	case t3.AIDClear:
 		b.filter, b.top = "", 0

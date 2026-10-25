@@ -95,7 +95,7 @@ var detailFields = []fieldDef{
 func (d *detail) editable() bool { return d.mode == modeUpdate || d.mode == modeAdd }
 
 func (d *detail) Render(s *Session) *t3.Screen {
-	scr := t3.NewScreen()
+	scr := s.newScreen()
 	titles := map[mode]string{
 		modeInquiry: "CUSTOMER INQUIRY",
 		modeUpdate:  "CUSTOMER UPDATE",
@@ -181,21 +181,22 @@ func (d *detail) renderAccount(scr *t3.Screen) {
 		return
 	}
 	c := d.cust
-	label(scr, 6, 58, "BALANCE")
-	scr.Text(6, 68, fmt.Sprintf("%11s", money(c.Balance)), t3.WithColor(t3.White))
-	label(scr, 7, 58, "AVAILABLE")
+	col := right(scr, 58)
+	label(scr, 6, col, "BALANCE")
+	scr.Text(6, col+10, fmt.Sprintf("%11s", money(c.Balance)), t3.WithColor(t3.White))
+	label(scr, 7, col, "AVAILABLE")
 	avail := c.Limit - c.Balance
 	color := t3.Green
 	if avail < c.Limit/10 {
 		color = t3.Red
 	}
-	scr.Text(7, 68, fmt.Sprintf("%11s", money(avail)), t3.WithColor(color))
+	scr.Text(7, col+10, fmt.Sprintf("%11s", money(avail)), t3.WithColor(color))
 	if c.Limit > 0 {
 		pct := c.Balance * 100 / c.Limit
-		label(scr, 8, 58, "UTILIZED")
-		scr.Text(8, 68, fmt.Sprintf("%10d%%", pct), t3.WithColor(color))
+		label(scr, 8, col, "UTILIZED")
+		scr.Text(8, col+10, fmt.Sprintf("%10d%%", pct), t3.WithColor(color))
 		bar := min(pct*20/100, 20)
-		scr.Text(9, 58, "["+strings.Repeat("|", bar)+strings.Repeat(".", 20-bar)+"]", t3.WithColor(color))
+		scr.Text(9, col, "["+strings.Repeat("|", bar)+strings.Repeat(".", 20-bar)+"]", t3.WithColor(color))
 	}
 	if !c.Updated.IsZero() {
 		label(scr, 16, 4, dots("LAST UPDATED", 19))
