@@ -1,4 +1,4 @@
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { accessJWT } from "./access";
 
@@ -159,5 +159,23 @@ describe("routing", () => {
 		expect((await call("GET", "/nope")).body.error.code).toBe("not_found");
 		const res = await call("PATCH", "/v1/customers");
 		expect(res.status).toBe(405);
+	});
+});
+
+describe("browser terminal", () => {
+	// Static assets are served in front of the Worker, so ask them directly.
+	it("serves the page and its scripts", async () => {
+		for (const [path, type] of [
+			["/", "text/html"],
+			["/terminal.js", "javascript"],
+			["/screen.js", "javascript"],
+			["/protocol.js", "javascript"],
+			["/terminal.css", "text/css"],
+		]) {
+			const res = await env.ASSETS.fetch(`https://api.test${path}`);
+			expect(res.status, path).toBe(200);
+			expect(res.headers.get("Content-Type"), path).toContain(type);
+			await res.arrayBuffer();
+		}
 	});
 });
