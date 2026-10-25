@@ -8,6 +8,9 @@
 //	GET    /v1/customers/{id}
 //	PUT    /v1/customers/{id}       update; "version" must match
 //	DELETE /v1/customers/{id}
+//	GET    /v1/customers/{id}/transactions   activity, newest first
+//	POST   /v1/customers/{id}/transactions   post an invoice or payment
+//	GET    /v1/customers/{id}/history        change history, newest first
 //
 // Everything except health is behind Cloudflare Access (see access.go).
 // Errors are returned as {"error":{"code","message","field"}}.

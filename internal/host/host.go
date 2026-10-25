@@ -24,6 +24,9 @@ type Backend interface {
 	Create(ctx context.Context, c customer.Customer) (customer.Customer, error)
 	Update(ctx context.Context, c customer.Customer) (customer.Customer, error)
 	Delete(ctx context.Context, id string) error
+	Transactions(ctx context.Context, id string) ([]customer.Transaction, error)
+	Post(ctx context.Context, t customer.Transaction) (customer.Transaction, error)
+	History(ctx context.Context, id string) ([]customer.Change, error)
 }
 
 // Program is one transaction screen. Render draws its current state and

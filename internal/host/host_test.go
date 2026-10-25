@@ -222,3 +222,77 @@ func TestPanelsFillLargerScreen(t *testing.T) {
 		t.Fatalf("browse shows %d rows after shrinking: %q", len(b.ids), scr.Row(4))
 	}
 }
+
+func TestPostActivity(t *testing.T) {
+	s, scr := login(t)
+	fill(t, scr, "option", "5 104")
+	scr = s.Submit(t3.AIDEnter, scr)
+	a, ok := s.prog.(*activity)
+	if !ok || !a.loaded || a.cust.Balance != 10400 {
+		t.Fatalf("activity did not open 000104: %T %+v", s.prog, s.prog)
+	}
+
+	fill(t, scr, "type", "x", "amount", "500")
+	scr = s.Submit(t3.AIDEnter, scr)
+	if a.errField != "type" || !strings.HasPrefix(a.msg, "CUS0240E") {
+		t.Fatalf("expected type error, got %q %q", a.errField, a.msg)
+	}
+	fill(t, scr, "type", "i", "ref", "inv 1001")
+	scr = s.Submit(t3.AIDEnter, scr)
+	if !strings.HasPrefix(a.msg, "CUS0245I INVOICE OF $500") || a.cust.Balance != 10900 || len(a.list) != 1 {
+		t.Fatalf("invoice not posted: %q %+v", a.msg, a.list)
+	}
+	fill(t, scr, "type", "p", "amount", "900")
+	scr = s.Submit(t3.AIDEnter, scr)
+	if a.cust.Balance != 10000 || a.list[0].Type != "P" || !strings.Contains(scr.Row(13), "-$900") {
+		t.Fatalf("payment not shown first: %q", scr.Row(13))
+	}
+
+	// PF6 shows the history; PF5 comes back to the same activity screen.
+	scr = s.Submit(t3.PF(6), scr)
+	if _, ok := s.prog.(*history); !ok {
+		t.Fatalf("PF6 did not open history: %T", s.prog)
+	}
+	s.Submit(t3.PF(5), scr)
+	if s.prog != a {
+		t.Fatalf("PF5 did not return to activity: %T", s.prog)
+	}
+}
+
+func TestHistoryOutlivesTheCustomer(t *testing.T) {
+	s, scr := login(t)
+	fill(t, scr, "option", "2 101")
+	scr = s.Submit(t3.AIDEnter, scr)
+	scr = s.Submit(t3.PF(4), scr)
+	fill(t, scr, "city", "kettering")
+	scr = s.Submit(t3.AIDEnter, scr)
+	scr = s.Submit(t3.PF(9), scr)
+	scr = s.Submit(t3.PF(10), scr)
+
+	s.prog = &menu{}
+	fill(t, scr, "option", "6 101")
+	scr = s.Submit(t3.AIDEnter, scr)
+	h := s.prog.(*history)
+	if len(h.list) != 2 || h.list[0].Action != "DELETE" || !strings.HasPrefix(h.msg, "CUS0251I") {
+		t.Fatalf("history = %+v, msg %q", h.list, h.msg)
+	}
+	if row := scr.Row(9); !strings.Contains(row, "CITY") || !strings.Contains(row, "DAYTON > KETTERING") {
+		t.Fatalf("change not shown: %q", row)
+	}
+}
+
+func TestBrowseActivityAndHistoryCodes(t *testing.T) {
+	s, scr := login(t)
+	scr = s.Submit(t3.PF(4), scr)
+	fill(t, scr, "sel0", "a")
+	scr = s.Submit(t3.AIDEnter, scr)
+	if _, ok := s.prog.(*activity); !ok {
+		t.Fatalf("A did not open activity: %T", s.prog)
+	}
+	scr = s.Submit(t3.PF(3), scr)
+	fill(t, scr, "sel0", "h")
+	s.Submit(t3.AIDEnter, scr)
+	if _, ok := s.prog.(*history); !ok {
+		t.Fatalf("H did not open history: %T", s.prog)
+	}
+}
