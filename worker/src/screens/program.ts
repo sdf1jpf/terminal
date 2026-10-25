@@ -45,7 +45,7 @@ export interface EventState {
 	p: "event";
 	back: State;
 	id: string; // the customer
-	kind: "A" | "V" | "T" | "E" | "S"; // audit row, invoice, transaction, EDI interchange, shipment
+	kind: "A" | "V" | "T" | "E" | "S" | "D"; // audit row, invoice, transaction, EDI interchange, shipment, dunning letter
 	key: string;
 	line: number; // its line on the event history
 	msg?: string;
@@ -153,6 +153,16 @@ export interface ShipmentState {
 	errField?: string;
 	msg?: string;
 }
+export interface LedgerState {
+	p: "ledger";
+	back: State;
+	period?: string; // the period shown; "" for the open one
+	confirm?: boolean; // PF5 was pressed once: press it again to close the period
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface GLAccountState { p: "glaccount"; back: State; account: string; period: string; top?: number; msg?: string }
 export interface VendorsState { p: "vendors"; back: State; top?: number; errSel?: string; msg?: string }
 
 export interface ConsoleState {
@@ -190,7 +200,7 @@ export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
-	| ConsoleState | ScheduleState | SpoolState | OutputState;
+	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

@@ -46,6 +46,9 @@
 //	DELETE /v1/shipments/{id}       cancel one that has not shipped
 //	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}
 //	POST   /v1/shipments/{id}/ship  {"carrier"}: UPS, FDX or TRK; sends an 856 for EDI orders
+//	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
+//	GET    /v1/ledger/periods       accounting periods, newest first
+//	GET    /v1/ledger/accounts/{n}?period=X   an account's journal entries in a period
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
@@ -83,6 +86,7 @@ import { createProduct, getProduct, listProducts, parseProduct, productFields, s
 import {
 	addPOLine, cancelPO, createPO, deletePOLine, getPO, getVendor, listPOs, listVendors, receivePO, sendPO,
 } from "./purchasing";
+import { accountEntries, listPeriods, openPeriod, trialBalance } from "./ledger";
 import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
 import { requestKeys, screen } from "./screens";
 
@@ -262,6 +266,13 @@ app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
 	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase(), str(body, "carrier")));
 });
 
+app.get("/v1/ledger", signedOn, async (c) => json(200, await trialBalance(c.env.DB, c.req.query("period") ?? "")));
+app.get("/v1/ledger/periods", signedOn, async (c) => json(200, await listPeriods(c.env.DB)));
+app.get("/v1/ledger/accounts/:account", signedOn, async (c) => {
+	const period = c.req.query("period") || (await openPeriod(c.env.DB)).period;
+	return json(200, await accountEntries(c.env.DB, c.req.param("account"), period));
+});
+
 app.get("/v1/jobs", signedOn, async (c) => json(200, await listJobs(c.env.DB)));
 app.post("/v1/jobs", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["name"]);
@@ -335,6 +346,9 @@ for (const path of [
 	"/v1/shipments/:id",
 	"/v1/shipments/:id/pack",
 	"/v1/shipments/:id/ship",
+	"/v1/ledger",
+	"/v1/ledger/periods",
+	"/v1/ledger/accounts/:account",
 	"/v1/jobs",
 	"/v1/jobs/:id",
 	"/v1/syslog",

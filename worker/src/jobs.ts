@@ -14,6 +14,7 @@ import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
 import { outputLines, spoolStmts } from "./spool";
 import { logStmt } from "./syslog";
 import { pickTickets } from "./shipping";
+import { closeStep, dunningLetters, journalStep, trialBalanceStep } from "./ledger";
 
 export interface Job {
 	id: string;
@@ -83,6 +84,28 @@ export const jobLibrary: Record<string, JobDef> = {
 		title: "PICK TICKETS FOR THE WAREHOUSE",
 		short: "PICK TICKETS",
 		steps: [{ name: "STEP010", run: pickTickets }],
+	},
+	CUSCLOSE: {
+		title: "MONTH-END CLOSE",
+		short: "MONTH END",
+		steps: [
+			{ name: "STEP010", run: journalStep },
+			{ name: "STEP020", run: trialBalanceStep },
+			{ name: "STEP030", run: closeStep },
+		],
+	},
+	CUSTRIAL: {
+		title: "TRIAL BALANCE",
+		short: "TRIAL BAL",
+		steps: [
+			{ name: "STEP010", run: journalStep },
+			{ name: "STEP020", run: trialBalanceStep },
+		],
+	},
+	CUSDUNN: {
+		title: "DUNNING LETTERS FOR OVERDUE INVOICES",
+		short: "DUNNING",
+		steps: [{ name: "STEP010", run: dunningLetters }],
 	},
 	VENDSIM: {
 		title: "EDI VENDOR SIMULATOR",

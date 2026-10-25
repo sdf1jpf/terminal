@@ -7,6 +7,7 @@ import { newInvoices } from "./invoices";
 import { getInvoice, statusNames, type Invoice, type InvoiceLine } from "../invoices";
 import { typeNames, type Interchange } from "../edi";
 import { shipStatusNames, type Shipment } from "../shipping";
+import { dunningLevels } from "../ledger";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
 import { fail, isCode, pf, type ActivityState, type EventState, type Next, type Program } from "./program";
 
@@ -221,6 +222,10 @@ async function showLine(ctx: Ctx, a: ActivityState, line: string): Promise<Next>
 // The invoice an event concerns, if any.
 async function eventInvoice(ctx: Ctx, s: EventState): Promise<string> {
 	if (s.kind === "V") return s.key;
+	if (s.kind === "D") {
+		const x = await ctx.db.prepare("SELECT invoice_id FROM dunning WHERE seq = ? AND customer_id = ?").bind(Number(s.key), s.id).first<{ invoice_id: string }>();
+		return x?.invoice_id ?? "";
+	}
 	if (s.kind === "S") {
 		const x = await ctx.db.prepare("SELECT invoice_id FROM shipments WHERE id = ? AND customer_id = ?").bind(s.key, s.id).first<{ invoice_id: string }>();
 		return x?.invoice_id ?? "";
@@ -283,6 +288,17 @@ export const event: Program<EventState> = {
 					["AT", stamp(ctx, x.created)],
 				);
 				if (x.note) fields.push(["REJECTED", x.note.slice(0, scr.cols - 24)]);
+			}
+		} else if (s.kind === "D") {
+			const d = await ctx.db.prepare("SELECT * FROM dunning WHERE seq = ? AND customer_id = ?")
+				.bind(Number(s.key), s.id).first<{ level: number; days: number; amount: number; sent: string; sent_by: string; invoice_id: string }>();
+			if (d) {
+				fields.push(
+					["EVENT", `DUNNING LETTER: ${dunningLevels[d.level]}`],
+					["INVOICE", `${d.invoice_id}  ${money(d.amount)}`],
+					["DAYS PAST DUE", String(d.days)],
+					["SENT", `${stamp(ctx, d.sent)} BY ${d.sent_by}`],
+				);
 			}
 		} else if (s.kind === "S") {
 			const x = await ctx.db.prepare("SELECT * FROM shipments WHERE id = ? AND customer_id = ?").bind(s.key, s.id).first<Shipment>();
