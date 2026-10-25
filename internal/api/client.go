@@ -11,8 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/sdf1jpf/terminal/internal/customer"
 )
 
 // Client calls the customer API on behalf of one logged-on user.
@@ -75,36 +73,17 @@ func (c *Client) Logoff(context.Context) error {
 	return nil
 }
 
-func (c *Client) List(ctx context.Context, prefix string) ([]customer.Customer, error) {
-	var out []customer.Customer
-	err := c.do(ctx, http.MethodGet, "/v1/customers?prefix="+url.QueryEscape(prefix), nil, &out)
+// Screen sends an AID key and the screen's input to the API and returns
+// the next screen.
+func (c *Client) Screen(ctx context.Context, req ScreenRequest) (ScreenResponse, error) {
+	req.V = ScreenVersion
+	var out ScreenResponse
+	err := c.do(ctx, http.MethodPost, "/v1/screen", req, &out)
 	return out, err
-}
-
-func (c *Client) Get(ctx context.Context, id string) (customer.Customer, error) {
-	var out customer.Customer
-	err := c.do(ctx, http.MethodGet, "/v1/customers/"+url.PathEscape(id), nil, &out)
-	return out, err
-}
-
-func (c *Client) Create(ctx context.Context, cust customer.Customer) (customer.Customer, error) {
-	var out customer.Customer
-	err := c.do(ctx, http.MethodPost, "/v1/customers", cust, &out)
-	return out, err
-}
-
-func (c *Client) Update(ctx context.Context, cust customer.Customer) (customer.Customer, error) {
-	var out customer.Customer
-	err := c.do(ctx, http.MethodPut, "/v1/customers/"+url.PathEscape(cust.ID), cust, &out)
-	return out, err
-}
-
-func (c *Client) Delete(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/customers/"+url.PathEscape(id), nil, nil)
 }
 
 // do sends a request and decodes the response into out. API errors are
-// mapped to the package's sentinel errors or a *customer.ValidationError.
+// mapped to the package's sentinel errors.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -143,14 +122,6 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 			return ErrUnauthorized
 		case eb.Error.Code == "" && resp.StatusCode == 403:
 			return ErrBadLogon // Access policy does not allow this user
-		}
-		switch eb.Error.Code {
-		case codeNotFound:
-			return ErrNotFound
-		case codeConflict:
-			return ErrConflict
-		case codeInvalid:
-			return &customer.ValidationError{Field: eb.Error.Field, Message: eb.Error.Message}
 		}
 		msg := eb.Error.Message
 		if msg == "" {

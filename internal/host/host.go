@@ -1,6 +1,8 @@
-// Package host holds the screens of the customer information application:
-// a small CICS-style set of 3270 panels whose data comes from the
-// customer API.
+// Package host connects the terminal to the customer information
+// application. The application's screens come from the API (see
+// docs/screen-protocol.md): this package sends each AID key with the
+// screen's input and draws the screen that comes back. Only the logon
+// screen, which signs in through Cloudflare Access, is drawn locally.
 package host
 
 import (
@@ -10,33 +12,16 @@ import (
 	"time"
 
 	"github.com/sdf1jpf/terminal/internal/api"
-	"github.com/sdf1jpf/terminal/internal/customer"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
-// Backend is the API the screens talk to. *api.Client implements it.
+// Backend is the API the session talks to. *api.Client implements it.
 type Backend interface {
 	Host() string
 	Logon(ctx context.Context) (string, error)
 	Logoff(ctx context.Context) error
-	List(ctx context.Context, prefix string) ([]customer.Customer, error)
-	Get(ctx context.Context, id string) (customer.Customer, error)
-	Create(ctx context.Context, c customer.Customer) (customer.Customer, error)
-	Update(ctx context.Context, c customer.Customer) (customer.Customer, error)
-	Delete(ctx context.Context, id string) error
+	Screen(ctx context.Context, req api.ScreenRequest) (api.ScreenResponse, error)
 }
-
-// Program is one transaction screen. Render draws its current state and
-// Handle processes an AID, returning the program to show next (itself to
-// stay, nil to disconnect).
-type Program interface {
-	Render(s *Session) *t3.Screen
-	Handle(s *Session, aid t3.AID, scr *t3.Screen) Program
-}
-
-// enterer is implemented by programs that (re)load their data from the
-// API each time they become the current screen.
-type enterer interface{ enter(s *Session) }
 
 type Config struct {
 	SystemName string // e.g. "SYS1"
@@ -46,94 +31,174 @@ type Config struct {
 // Session is the terminal's connection to the application. It implements
 // tn3270.Host.
 type Session struct {
-	cfg     *Config
-	lu      string
-	user    string
-	prog    Program
-	expired bool
+	cfg   *Config
+	lu    string
+	user  string
+	logon *logon // the local logon screen, while it is showing
+	state string // the commarea from the last screen
 
 	rows, cols int // size of the terminal's presentation space
 }
 
 func NewSession(cfg *Config, lu string) *Session {
-	return &Session{cfg: cfg, lu: lu, prog: &logon{}, rows: t3.MinRows, cols: t3.MinCols}
+	return &Session{cfg: cfg, lu: lu, logon: &logon{}, rows: t3.MinRows, cols: t3.MinCols}
 }
 
-func (s *Session) Start() *t3.Screen { return s.prog.Render(s) }
+func (s *Session) Start() *t3.Screen { return s.logon.Render(s) }
 
-// Redraw renders the current program again at the terminal's new size.
+// Redraw asks the application for the current screen at the terminal's
+// new size. It returns nil, keeping the old layout, if that fails.
 func (s *Session) Redraw(rows, cols int) *t3.Screen {
 	s.rows, s.cols = max(rows, t3.MinRows), max(cols, t3.MinCols)
-	return s.prog.Render(s)
-}
-
-// newScreen returns a blank screen the size of the terminal. Panels are
-// laid out for 24x80 and spread into any extra room: the message and PF
-// key lines stay on the last two rows, the right-hand heading fields stay
-// at the right edge, and lists show as many rows as fit.
-func (s *Session) newScreen() *t3.Screen { return t3.NewScreenSize(s.rows, s.cols) }
-
-func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
-	var next Program
-	if _, inHelp := s.prog.(*help); aid == t3.PF(1) && !inHelp {
-		next = &help{back: s.prog} // PF1 is help on every screen
-	} else {
-		next = s.prog.Handle(s, aid, scr)
+	if s.logon != nil {
+		return s.logon.Render(s)
 	}
-	if next == nil {
-		s.api().Logoff(s.ctx())
+	resp, err := s.api().Screen(s.ctx(), s.request("REDRAW", nil))
+	if err != nil || resp.Screen == nil {
 		return nil
 	}
-	if next != s.prog {
-		if e, ok := next.(enterer); ok {
-			e.enter(s)
+	s.state = resp.State
+	return build(resp.Screen)
+}
+
+func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
+	if s.logon != nil {
+		return s.submitLogon(aid, scr)
+	}
+	resp, err := s.api().Screen(s.ctx(), s.request(aid.String(), scr))
+	switch {
+	case errors.Is(err, api.ErrUnauthorized):
+		return s.toLogon("IKJ56400I SESSION EXPIRED OR ENDED BY THE HOST - PLEASE LOG ON AGAIN")
+	case err != nil:
+		// Keep the screen and what was typed, so Enter can try again.
+		return withMessage(scr, s.fail(err))
+	case resp.Logoff != nil:
+		s.api().Logoff(s.ctx())
+		return s.toLogon(resp.Logoff.Message)
+	case resp.Screen == nil:
+		return withMessage(scr, "CUS0299E NO SCREEN IN THE HOST'S REPLY")
+	}
+	s.state = resp.State
+	return build(resp.Screen)
+}
+
+// start fetches the application's first screen after logon.
+func (s *Session) start() *t3.Screen {
+	s.logon, s.state = nil, ""
+	resp, err := s.api().Screen(s.ctx(), s.request("START", nil))
+	if err == nil && resp.Screen == nil {
+		err = errors.New("no screen in the host's reply")
+	}
+	if err != nil {
+		s.api().Logoff(s.ctx())
+		if errors.Is(err, api.ErrUnauthorized) {
+			return s.toLogon("IKJ56421I LOGON NOT AUTHORIZED BY CLOUDFLARE ACCESS")
 		}
+		return s.toLogon(s.fail(err))
 	}
-	if s.expired {
-		s.expired, s.user = false, ""
-		next = &logon{msg: "IKJ56400I SESSION EXPIRED OR ENDED BY THE HOST - PLEASE LOG ON AGAIN"}
+	s.state = resp.State
+	return build(resp.Screen)
+}
+
+func (s *Session) toLogon(msg string) *t3.Screen {
+	s.user, s.state = "", ""
+	s.logon = &logon{msg: msg}
+	return s.logon.Render(s)
+}
+
+// request describes the screen as the operator left it: every input field,
+// which ones were changed, and where the cursor is.
+func (s *Session) request(aid string, scr *t3.Screen) api.ScreenRequest {
+	_, off := time.Now().Zone()
+	req := api.ScreenRequest{
+		AID: aid, State: s.state, Fields: map[string]string{}, Modified: []string{},
+		Rows: s.rows, Cols: s.cols, Terminal: s.lu, System: s.cfg.SystemName, TZOffset: off / 60,
 	}
-	s.prog = next
-	return next.Render(s)
+	if scr != nil {
+		req.Fields = scr.Fields()
+		for name := range scr.Modified() {
+			req.Modified = append(req.Modified, name)
+		}
+		row, col := scr.RowCol(scr.Cursor())
+		req.Cursor = api.Cursor{Row: row, Col: col, Field: scr.FieldName(scr.Cursor())}
+	}
+	return req
 }
 
 func (s *Session) api() Backend { return s.cfg.Backend }
 
 func (s *Session) ctx() context.Context { return context.Background() }
 
-// fail turns an API error into a message for the message line. An expired
-// session sends the user back to the logon screen.
+// fail turns an API error into a message for the message line.
 func (s *Session) fail(err error) string {
-	switch {
-	case errors.Is(err, api.ErrUnauthorized):
-		s.expired = true
-		return ""
-	case errors.Is(err, api.ErrUnavailable):
+	if errors.Is(err, api.ErrUnavailable) {
 		return "CUS0298E HOST " + strings.ToUpper(s.api().Host()) + " NOT RESPONDING - PRESS ENTER TO RETRY"
 	}
-	return "CUS0299E " + strings.ToUpper(err.Error())
+	return "CUS0299E " + strings.ToUpper(strings.TrimPrefix(err.Error(), "api: "))
 }
 
-// Screen layout helpers shared by the application panels.
-
-func center(scr *t3.Screen, text string) int { return (scr.Cols()-len(text))/2 + 1 }
-
-// right returns the column that is col on a 24x80 screen, measured from
-// the right edge, so that right-hand fields follow the edge of a wider one.
-func right(scr *t3.Screen, col int) int { return col + scr.Cols() - t3.MinCols }
-
-// header draws the standard two-line panel heading.
-func header(scr *t3.Screen, s *Session, mapID, title string) {
-	now := time.Now()
-	scr.Text(1, 2, mapID, t3.WithColor(t3.Blue))
-	scr.Text(1, center(scr, title), title, t3.WithColor(t3.White), t3.Bright)
-	scr.Text(1, right(scr, 70), now.Format("01/02/06"), t3.WithColor(t3.Blue))
-	scr.Text(2, 2, s.cfg.SystemName+" CUSTOMER INFORMATION SYSTEM", t3.WithColor(t3.Blue))
-	scr.Text(2, right(scr, 70), now.Format("15:04:05"), t3.WithColor(t3.Blue))
+var colors = map[string]t3.Color{
+	"blue": t3.Blue, "red": t3.Red, "pink": t3.Pink, "green": t3.Green,
+	"turquoise": t3.Turquoise, "yellow": t3.Yellow, "white": t3.White,
 }
 
-// message draws the message line, the second to last row. The severity is taken from the
-// last letter of the message ID, IBM style: E=error, W=warning, I=info.
+// build draws a screen sent by the application.
+func build(in *api.Screen) *t3.Screen {
+	scr := t3.NewScreenSize(in.Rows, in.Cols)
+	for _, f := range in.Fields {
+		opts := []t3.Opt{t3.WithColor(colors[f.Color])}
+		if f.Bright {
+			opts = append(opts, t3.Bright)
+		}
+		if f.Hidden {
+			opts = append(opts, t3.Hidden)
+		}
+		if f.Numeric {
+			opts = append(opts, t3.Numeric)
+		}
+		if f.Mixed {
+			opts = append(opts, t3.MixedCase)
+		}
+		switch f.Highlight {
+		case "none":
+			opts = append(opts, t3.NoUnderline)
+		case "underscore":
+			opts = append(opts, t3.Underline)
+		case "reverse":
+			opts = append(opts, t3.Reverse)
+		case "blink":
+			opts = append(opts, t3.Blink)
+		}
+		if f.Name != "" {
+			scr.Input(f.Row, f.Col, f.Length, f.Name, f.Value, opts...)
+		} else {
+			scr.Text(f.Row, f.Col, f.Text, opts...)
+		}
+	}
+	switch c := in.Cursor; {
+	case c == nil:
+		scr.CursorHome()
+	case c.Field != "":
+		if !scr.CursorTo(c.Field) {
+			scr.CursorHome()
+		}
+	default:
+		scr.SetCursor(c.Row, c.Col)
+	}
+	return scr
+}
+
+// withMessage returns a copy of scr, input and all, with msg on the
+// message line, for errors the application could not report itself.
+func withMessage(scr *t3.Screen, msg string) *t3.Screen {
+	out := scr.Clone()
+	message(out, msg)
+	return out
+}
+
+// message draws the message line, the second to last row. The severity is
+// taken from the last letter of the message ID, IBM style: E=error,
+// W=warning, I=info.
 func message(scr *t3.Screen, msg string) {
 	if msg == "" {
 		return
@@ -146,27 +211,9 @@ func message(scr *t3.Screen, msg string) {
 	case 'W':
 		color = t3.Yellow
 	}
-	if n := scr.Cols() - 2; len(msg) > n {
+	n := scr.Cols() - 2
+	if len(msg) > n {
 		msg = msg[:n]
 	}
-	scr.Text(scr.Rows()-1, 2, msg, t3.WithColor(color), t3.Bright)
+	scr.Text(scr.Rows()-1, 2, msg+strings.Repeat(" ", n-len(msg)), t3.WithColor(color), t3.Bright)
 }
-
-// keys draws the PF key legend on the last row.
-func keys(scr *t3.Screen, legend string) {
-	scr.Text(scr.Rows(), 2, legend, t3.WithColor(t3.Turquoise))
-}
-
-func label(scr *t3.Screen, row, col int, text string) {
-	scr.Text(row, col, text, t3.WithColor(t3.Turquoise))
-}
-
-func value(scr *t3.Screen, row, col int, text string) {
-	scr.Text(row, col, text, t3.WithColor(t3.Green))
-}
-
-func invalidKey(aid t3.AID) string {
-	return "CUS0000W " + aid.String() + " IS NOT ACTIVE ON THIS SCREEN"
-}
-
-func nowHHMM() string { return time.Now().Format("15:04:05") }
