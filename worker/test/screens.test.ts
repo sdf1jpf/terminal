@@ -1,4 +1,5 @@
-import { exports } from "cloudflare:workers";
+import { introspectWorkflowInstance } from "cloudflare:test";
+import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { accessJWT } from "./access";
 
@@ -316,6 +317,45 @@ describe("activity and history screens", () => {
 		expect(t.scr.map).toBe("CUSM01");
 		await t.fill(first, "h").send("ENTER");
 		expect(t.scr.map).toBe("CUSM04");
+	});
+});
+
+describe("batch job screens", () => {
+	it("submits a job, lists it, and shows its output", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "7").send("ENTER");
+		expect(t.scr.map).toBe("CUSJ01");
+		expect(t.row(9)).toContain("NO JOBS ON THE SPOOL");
+
+		await t.fill("job", "iefbr14").send("ENTER");
+		expect(t.message).toBe("CUS0261E JOB IEFBR14 IS NOT IN THE JOB LIBRARY");
+		expect(t.scr.cursor).toEqual({ field: "job" });
+
+		const id = "JOB00001";
+		const instance = await introspectWorkflowInstance(env.JOB_RUNNER, id);
+		try {
+			await t.fill("job", "cusstmt").send("ENTER");
+			expect(t.message).toBe(`$HASP100 CUSSTMT ON INTRDR - ${id} SUBMITTED`);
+			expect(t.row(9)).toMatch(new RegExp(`CUSSTMT +${id} +IBMUSER`));
+			await instance.waitForStatus("complete");
+		} finally {
+			await instance.dispose();
+		}
+
+		await t.send("PF5");
+		expect(t.row(9)).toMatch(/OUTPUT +0000/);
+		await t.fill("sel0", "x").send("ENTER");
+		expect(t.message).toMatch(/^CUS0103E/);
+		await t.fill("sel0", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSJ02");
+		expect(t.row(3)).toContain(`CUSSTMT  ${id}  OUTPUT  RC=0000`);
+		expect(t.row(4)).toContain("J E S 2   J O B   L O G");
+		await t.send("PF8");
+		expect(t.row(3)).toMatch(/LINE +19 OF/);
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSJ01");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM00");
 	});
 });
 
