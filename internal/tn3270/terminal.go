@@ -1,7 +1,10 @@
 package tn3270
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +19,9 @@ type Options struct {
 	// Latency is an artificial host response delay, so the keyboard visibly
 	// locks with "X ()" after each AID. Zero disables it.
 	Latency time.Duration
+	// PrintDir is where the PRINT key (Ctrl+P) saves a copy of the screen.
+	// Empty means the current directory.
+	PrintDir string
 }
 
 // Terminal is a Bubble Tea model emulating a 3278 display station.
@@ -25,6 +31,7 @@ type Terminal struct {
 	scr    *Screen
 	lock   Lock
 	insert bool
+	print  string // print indicator in the status line, until the next key
 	width  int
 	height int
 	styles map[styleKey]lipgloss.Style
@@ -32,6 +39,8 @@ type Terminal struct {
 }
 
 type hostReply struct{ scr *Screen }
+
+type redrawReply struct{ scr *Screen }
 
 // New returns a terminal connected to host.
 func New(host Host, opts Options) *Terminal {
@@ -53,14 +62,22 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		t.width, t.height = msg.Width, msg.Height
-		t.fit()
+		return t, t.fit()
 	case hostReply:
 		if msg.scr == nil {
 			return t, tea.Quit
 		}
 		t.scr = msg.scr
 		t.lock = LockNone
-		t.fit() // the window may have changed while the host was busy
+		return t, t.fit() // the window may have changed while the host was busy
+	case redrawReply:
+		t.lock = LockNone
+		if msg.scr == nil {
+			return t, nil // keep the old layout; the next resize tries again
+		}
+		msg.scr.Carry(t.scr)
+		t.scr = msg.scr
+		return t, t.fit()
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && t.lock == LockNone {
 			x0, y0 := t.origin()
@@ -93,6 +110,17 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return t, tea.Quit
 	}
 	if t.lock == LockWait {
+		return t, nil
+	}
+	t.print = ""
+	if s == "ctrl+p" {
+		// Like a 3270 local copy: the screen goes to the printer, here a
+		// text file, without involving the host.
+		if _, err := t.Print(); err != nil {
+			t.print = "PRT ERR"
+		} else {
+			t.print = "PRINTED"
+		}
 		return t, nil
 	}
 	if s == "esc" || s == "ctrl+r" {
@@ -161,6 +189,37 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return t, nil
 }
 
+// Print saves the screen as text to a new file in the print directory and
+// returns its path.
+func (t *Terminal) Print() (string, error) {
+	var b strings.Builder
+	for row := 1; row <= t.scr.Rows(); row++ {
+		b.WriteString(strings.TrimRight(t.scr.Row(row), " "))
+		b.WriteByte('\n')
+	}
+	dir := t.opts.PrintDir
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := filepath.Join(dir, "PRINT-"+time.Now().Format("20060102-150405")+".txt")
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	for n := 2; errors.Is(err, os.ErrExist); n++ { // several prints in one second
+		name = filepath.Join(dir, fmt.Sprintf("PRINT-%s-%d.txt", time.Now().Format("20060102-150405"), n))
+		f, err = os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return "", err
+	}
+	return name, f.Close()
+}
+
 // send locks the keyboard and transmits the screen to the host.
 func (t *Terminal) send(aid AID) tea.Cmd {
 	t.lock = LockWait
@@ -174,20 +233,21 @@ func (t *Terminal) send(aid AID) tea.Cmd {
 }
 
 // fit asks the host to lay the current panel out again when the window
-// no longer matches the presentation space, keeping what has been typed.
-// The screen fills the window except for the status line and its rule.
-func (t *Terminal) fit() {
+// no longer matches the presentation space. The host may have to ask the
+// server, so the keyboard locks until the new layout arrives, and what has
+// been typed is carried over to it. The screen fills the window except for
+// the status line and its rule.
+func (t *Terminal) fit() tea.Cmd {
 	rows, cols := t.height-2, t.width
 	if t.lock == LockWait || t.width == 0 || rows < MinRows || cols < MinCols {
-		return
+		return nil
 	}
 	if rows == t.scr.Rows() && cols == t.scr.Cols() {
-		return
+		return nil
 	}
-	if next := t.host.Redraw(rows, cols); next != nil {
-		next.Carry(t.scr)
-		t.scr = next
-	}
+	t.lock = LockWait
+	host := t.host
+	return func() tea.Msg { return redrawReply{scr: host.Redraw(rows, cols)} }
 }
 
 // origin returns the top-left corner of the 3270 screen within the window.
@@ -228,6 +288,7 @@ func (t *Terminal) oia() string {
 	if t.insert {
 		put(cols-28, "^")
 	}
+	put(22, t.print)
 	put(cols-23, t.opts.LUName)
 	row, col := t.scr.RowCol(t.scr.Cursor())
 	put(cols-6, fmt.Sprintf("%03d/%03d", row, col))

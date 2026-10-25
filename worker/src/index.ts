@@ -3,17 +3,24 @@
 //
 //	GET    /v1/health
 //	POST   /v1/session              logon: -> {"userid"}
+//	POST   /v1/screen               the terminal's screens; see docs/screen-protocol.md
 //	GET    /v1/customers?prefix=X   list, ordered by name
 //	POST   /v1/customers            create
 //	GET    /v1/customers/{id}
 //	PUT    /v1/customers/{id}       update; "version" must match
 //	DELETE /v1/customers/{id}
+//	GET    /v1/customers/{id}/transactions   activity, newest first
+//	POST   /v1/customers/{id}/transactions   post an invoice or payment
+//	GET    /v1/customers/{id}/history        change history, newest first
 //
 // Everything except health is behind Cloudflare Access; see auth.ts.
 
+import { customerHistory, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
-import { customerFields, parseEditable, type Customer } from "./customer";
+import { customerFields, parseEditable } from "./customer";
+import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, json, noContent, readJSON } from "./http";
+import { requestKeys, screen } from "./screens";
 
 export interface Env {
 	DB: D1Database;
@@ -43,22 +50,43 @@ async function route(req: Request, env: Env): Promise<Response> {
 		if (m === "GET") return json(200, { status: "ok" });
 	} else if (path === "/v1/session") {
 		if (m === "POST") return json(201, { userid: await authenticate(env, req) });
+	} else if (path === "/v1/screen") {
+		if (m === "POST") return json(200, await screen(env, await authenticate(env, req), url, await readJSON(req, requestKeys)));
 	} else if (path === "/v1/customers") {
 		if (m === "GET") {
 			await authenticate(env, req);
-			return list(env, url.searchParams.get("prefix") ?? "");
+			return json(200, await listCustomers(env.DB, url.searchParams.get("prefix") ?? ""));
 		}
 		if (m === "POST") return create(req, env, await authenticate(env, req));
 	} else if (path.startsWith("/v1/customers/") && path.split("/").length === 4) {
 		const id = decodeURIComponent(path.slice("/v1/customers/".length));
 		if (m === "GET") {
 			await authenticate(env, req);
-			return get(env, id);
+			return json(200, await getCustomer(env.DB, id));
 		}
 		if (m === "PUT") return update(req, env, await authenticate(env, req), id);
 		if (m === "DELETE") {
-			await authenticate(env, req);
-			return remove(env, id);
+			await deleteCustomer(env.DB, id, await authenticate(env, req));
+			return noContent();
+		}
+	} else if (path.startsWith("/v1/customers/") && path.split("/").length === 5) {
+		const [, , , rawId, sub] = path.split("/");
+		const id = decodeURIComponent(rawId);
+		if (sub === "transactions") {
+			if (m === "GET") {
+				await authenticate(env, req);
+				const list = await listTransactions(env.DB, id);
+				if (!list) throw notFound();
+				return json(200, list);
+			}
+			if (m === "POST") return post(req, env, await authenticate(env, req), id);
+		} else if (sub === "history") {
+			if (m === "GET") {
+				await authenticate(env, req);
+				return json(200, await customerHistory(env.DB, id));
+			}
+		} else {
+			throw new HttpError(404, "not_found", "no such endpoint");
 		}
 	} else {
 		throw new HttpError(404, "not_found", "no such endpoint");
@@ -66,61 +94,16 @@ async function route(req: Request, env: Env): Promise<Response> {
 	throw new HttpError(405, "method_not_allowed", `${m} is not allowed on ${path}`);
 }
 
-async function list(env: Env, prefix: string): Promise<Response> {
-	const like = prefix.toUpperCase().replace(/[\\%_]/g, (c) => "\\" + c) + "%";
-	const { results } = await env.DB.prepare(
-		"SELECT * FROM customers WHERE name LIKE ? ESCAPE '\\' ORDER BY name, id",
-	).bind(like).all<Customer>();
-	return json(200, results);
-}
-
-async function get(env: Env, id: string): Promise<Response> {
-	const row = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(id).first<Customer>();
-	if (!row) throw notFound();
-	return json(200, row);
-}
-
 async function create(req: Request, env: Env, user: string): Promise<Response> {
-	const { fields: f } = parseEditable(await readJSON(req, customerFields));
-	// One batch is one transaction: take the next number and insert with it.
-	const [, inserted] = await env.DB.batch<Customer>([
-		env.DB.prepare("UPDATE counters SET value = value + 1 WHERE name = 'customer_id'"),
-		env.DB.prepare(
-			`INSERT INTO customers (id, name, address, city, state, zip, phone, credit_limit, balance, status, version, updated, updated_by)
-			 SELECT printf('%06d', value), ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ? FROM counters WHERE name = 'customer_id'
-			 RETURNING *`,
-		).bind(f.name, f.address, f.city, f.state, f.zip, f.phone, f.credit_limit, f.status, now(), user),
-	]);
-	return json(201, inserted.results[0]);
+	const { fields } = parseEditable(await readJSON(req, customerFields));
+	return json(201, await createCustomer(env.DB, fields, user));
 }
 
 async function update(req: Request, env: Env, user: string, id: string): Promise<Response> {
-	const { fields: f, version } = parseEditable(await readJSON(req, customerFields));
-	const row = await env.DB.prepare(
-		`UPDATE customers
-		 SET name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, credit_limit = ?, status = ?,
-		     version = version + 1, updated = ?, updated_by = ?
-		 WHERE id = ? AND version = ?
-		 RETURNING *`,
-	).bind(f.name, f.address, f.city, f.state, f.zip, f.phone, f.credit_limit, f.status, now(), user, id, version)
-		.first<Customer>();
-	if (row) return json(200, row);
-
-	const exists = await env.DB.prepare("SELECT 1 FROM customers WHERE id = ?").bind(id).first();
-	if (!exists) throw notFound();
-	throw new HttpError(409, "conflict", "record was changed by another user");
+	const { fields, version } = parseEditable(await readJSON(req, customerFields));
+	return json(200, await updateCustomer(env.DB, id, fields, version, user));
 }
 
-async function remove(env: Env, id: string): Promise<Response> {
-	const { meta } = await env.DB.prepare("DELETE FROM customers WHERE id = ?").bind(id).run();
-	if (meta.changes === 0) throw notFound();
-	return noContent();
-}
-
-function notFound(): HttpError {
-	return new HttpError(404, "not_found", "record not found");
-}
-
-function now(): string {
-	return new Date().toISOString();
+async function post(req: Request, env: Env, user: string, id: string): Promise<Response> {
+	return json(201, await postTransaction(env.DB, user, id, parsePosting(await readJSON(req, transactionFields))));
 }

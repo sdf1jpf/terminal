@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/sdf1jpf/terminal/internal/customer"
 )
 
 // stub answers like the Worker does for a few fixed requests.
@@ -41,24 +39,22 @@ func stub(t *testing.T, access Access) *Client {
 	mux.HandleFunc("POST /v1/session", gate(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, 201, map[string]string{"userid": "IBMUSER"})
 	}))
-	mux.HandleFunc("GET /v1/customers", gate(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("prefix") != "A&B" {
-			t.Errorf("prefix not escaped: %q", r.URL.RawQuery)
+	mux.HandleFunc("POST /v1/screen", gate(func(w http.ResponseWriter, r *http.Request) {
+		var req ScreenRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.V != ScreenVersion || req.AID != "PF3" || req.State != "s1" || req.Fields["opt"] != "A&B" {
+			fail(w, 400, "bad_request", "")
+			return
 		}
-		reply(w, 200, []map[string]any{{"id": "000101", "name": "A&B CO", "credit_limit": 5, "updated": "2026-10-25T11:52:00.123Z"}})
+		reply(w, 200, map[string]any{"v": 1, "state": "s2", "screen": map[string]any{
+			"map": "M1", "rows": 24, "cols": 80, "cursor": map[string]any{"field": "x"},
+			"fields": []map[string]any{{"row": 1, "col": 2, "text": "HI", "color": "blue"}, {"row": 3, "col": 2, "name": "x", "length": 4}},
+		}})
 	}))
 	mux.HandleFunc("GET /v1/expired", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://team.cloudflareaccess.com/cdn-cgi/access/login", http.StatusFound)
 	})
-	mux.HandleFunc("GET /v1/customers/{id}", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "not_found", "") })
-	mux.HandleFunc("PUT /v1/customers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("id") == "000102" {
-			fail(w, 409, "conflict", "")
-			return
-		}
-		fail(w, 422, "invalid", "zip")
-	})
-	mux.HandleFunc("DELETE /v1/customers/{id}", func(w http.ResponseWriter, r *http.Request) { fail(w, 500, "internal", "") })
+	mux.HandleFunc("GET /v1/broken", func(w http.ResponseWriter, r *http.Request) { fail(w, 500, "internal", "") })
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -68,35 +64,27 @@ func stub(t *testing.T, access Access) *Client {
 func TestClient(t *testing.T) {
 	c := stub(t, ServiceToken{"id", "secret"})
 	ctx := context.Background()
+	req := ScreenRequest{AID: "PF3", State: "s1", Fields: map[string]string{"opt": "A&B"}}
 
-	if _, err := c.List(ctx, "A&B"); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("list before logon: %v", err)
+	if _, err := c.Screen(ctx, req); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("screen before logon: %v", err)
 	}
 	if user, err := c.Logon(ctx); err != nil || user != "IBMUSER" {
 		t.Fatalf("logon: %q %v", user, err)
 	}
 
-	list, err := c.List(ctx, "A&B")
-	if err != nil || len(list) != 1 || list[0].Name != "A&B CO" || list[0].Limit != 5 || list[0].Updated.IsZero() {
-		t.Fatalf("list: %+v %v", list, err)
+	resp, err := c.Screen(ctx, req)
+	if err != nil || resp.State != "s2" || resp.Screen == nil || len(resp.Screen.Fields) != 2 ||
+		resp.Screen.Fields[1].Name != "x" || resp.Screen.Cursor.Field != "x" || resp.Logoff != nil {
+		t.Fatalf("screen: %+v %v", resp, err)
 	}
-	if _, err := c.Get(ctx, "999999"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get: %v", err)
-	}
-	if _, err := c.Update(ctx, customer.Customer{ID: "000102"}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("conflict: %v", err)
-	}
-	var verr *customer.ValidationError
-	if _, err := c.Update(ctx, customer.Customer{ID: "000101"}); !errors.As(err, &verr) || verr.Field != "zip" {
-		t.Fatalf("validation: %v", err)
-	}
-	if err := c.Delete(ctx, "000101"); err == nil || err.Error() != "api: msg internal" {
+	if err := c.do(ctx, http.MethodGet, "/v1/broken", nil, nil); err == nil || err.Error() != "api: msg internal" {
 		t.Fatalf("other errors keep the API's message: %v", err)
 	}
 	if err := c.Logoff(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.List(ctx, "A&B"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := c.Screen(ctx, req); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("headers kept after logoff: %v", err)
 	}
 	if c.Host() == "" {
@@ -120,7 +108,7 @@ func TestClientAccessRefusals(t *testing.T) {
 	if err := c.do(ctx, http.MethodGet, "/v1/expired", nil, nil); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Access token expired: %v", err)
 	}
-	if _, err := c.List(ctx, "A&B"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := c.Screen(ctx, ScreenRequest{}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("headers kept after expiry: %v", err)
 	}
 }

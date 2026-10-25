@@ -10,7 +10,7 @@ Worker.
  SYS1 CUSTOMER INFORMATION SYSTEM                                    11:23:06
 
  NAME STARTS WITH ===> ____________________                ROW 1 TO 13 OF 24
- SELECT: S=SHOW  U=UPDATE  D=DELETE
+ SELECT: S=SHOW  U=UPDATE  D=DELETE  A=ACTIVITY  H=HISTORY
 
  S CUST NO  NAME                     CITY            ST      BALANCE STAT
  -----------------------------------------------------------------------------
@@ -28,10 +28,11 @@ Worker.
 ```
  your machine                                    Cloudflare
 ┌─────────────────────────────┐                 ┌─────────────────────────────┐
-│ terminal (Go)               │   HTTPS/JSON    │ customer-api Worker (TS)    │
-│   3270 screens, keyboard,   │────────────────▶│   checks the Access JWT     │
-│   field editing (Bubble Tea)│  Access token   │   validation, locking       │
-└─────────────────────────────┘◀────────────────│   D1 database               │
+│ terminal (Go)               │  AID + fields   │ customer-api Worker (TS)    │
+│   generic 3270 display:     │────────────────▶│   checks the Access JWT     │
+│   draws fields, edits them, │  Access token   │   the screens (panels)      │
+│   keyboard (Bubble Tea)     │◀────────────────│   validation, locking       │
+└─────────────────────────────┘   next screen   │   D1 database               │
                                                 └─────────────────────────────┘
                                                   ▲ Cloudflare Access in front:
                                                     sign-in with your identity
@@ -39,8 +40,20 @@ Worker.
 ```
 
 The terminal does what a 3270 did locally: it draws screens, edits fields and
-handles the keyboard. When you press Enter or a PF key, it calls the API. The
-API is the system of record. It owns the data, checks who is signed in and enforces the
+handles the keyboard. The screens themselves come from the API, the way a
+3270 got them from CICS. When you press Enter or a PF key, the terminal sends
+the key, the input fields and the cursor position to `POST /v1/screen`, and
+the Worker answers with the next screen as a list of fields. So a new or
+changed screen ships with a Worker deploy, and the terminal never needs
+rebuilding for it. The format is in [docs/screen-protocol.md](docs/screen-protocol.md),
+and the panels are in `worker/src/screens/`.
+
+Only the logon screen is drawn by the terminal itself, since it signs you in
+through Cloudflare Access before the API can be called. If the API stops
+answering, the terminal keeps the screen and anything you typed and says
+`HOST NOT RESPONDING`; press Enter to try again.
+
+The API is the system of record. It owns the data, checks who is signed in and enforces the
 edit rules, so any other client gets the same behavior.
 
 ## Quick start (everything local)
@@ -164,6 +177,7 @@ approval before each deploy, add required reviewers to that environment
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Use an Access service token instead of a browser sign-in |
 | `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
 | `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
+| `-print-dir DIR` | Where Ctrl+P saves screens (default `~/terminal-prints`) |
 
 ## Mac app launcher
 
@@ -208,7 +222,16 @@ POST   /v1/customers            create
 GET    /v1/customers/{id}
 PUT    /v1/customers/{id}       update ("version" must match the stored record)
 DELETE /v1/customers/{id}
+GET    /v1/customers/{id}/transactions   invoices and payments, newest first
+POST   /v1/customers/{id}/transactions   post one: {"type":"I"|"P","amount","reference"}
+GET    /v1/customers/{id}/history        change history, newest first
 ```
+
+Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
+in whole dollars. Invoices are refused for customers on hold or closed;
+payments are always taken. The change history has a row for each add and
+delete and one for each field an update changed, with who and when. It is
+kept after the customer is deleted.
 
 Everything goes through Cloudflare Access, which needs a `cf-access-token`
 header (from `cloudflared access token`) or a service token's
@@ -264,6 +287,20 @@ right edge, and the browse list and the credit report show as many rows as
 fit. Anything you have typed but not yet sent survives a resize. If the window
 changes while the host is busy, the screen is redrawn when the reply arrives.
 
+## Account activity and change history
+
+From the menu, option 5 (`5 000105`) opens **ACCOUNT ACTIVITY**: type `I` or
+`P`, an amount and an optional reference, and press Enter to post. The list
+below shows each posting with the balance it left. Option 6 opens **CHANGE
+HISTORY**, which also works for a deleted customer. On the inquiry screen
+these are PF5 and PF6, and on the browse list the selection codes `A` and `H`.
+
+## Printing a screen
+
+Ctrl+P saves the screen as a text file, like a 3270 local copy, and the status
+line shows `PRINTED`. Files go to `~/terminal-prints` (change it with
+`-print-dir`) and are named `PRINT-20261025-112306.txt`.
+
 ## Keyboard
 
 | Key | 3270 function |
@@ -280,6 +317,7 @@ changes while the host is busy, the screen is redrawn when the reply arrives.
 | Insert | Insert mode |
 | Ctrl+E / Ctrl+U | Erase EOF / Erase Input |
 | Esc or Ctrl+R | RESET |
+| Ctrl+P | PRINT (save the screen to a text file) |
 | Ctrl+C | Disconnect |
 
 ## Development

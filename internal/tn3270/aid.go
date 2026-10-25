@@ -75,8 +75,9 @@ type Host interface {
 	// Start returns the first screen shown after connecting.
 	Start() *Screen
 	// Redraw lays out the current panel again for a presentation space of
-	// rows by cols, and uses that size for the screens that follow. It is
-	// never called while Submit is running.
+	// rows by cols, and uses that size for the screens that follow. Like
+	// Submit it runs on its own goroutine with the keyboard locked, and the
+	// two are never called at once. A nil screen keeps the old layout.
 	Redraw(rows, cols int) *Screen
 	// Submit receives the screen as it was when the AID key was pressed and
 	// returns the next screen. Returning a nil screen ends the session.
