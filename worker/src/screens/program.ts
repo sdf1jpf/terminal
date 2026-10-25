@@ -22,8 +22,18 @@ export interface DetailState {
 }
 export interface ReportState { p: "report"; msg?: string }
 export interface HelpState { p: "help"; back: State }
+export interface ActivityState {
+	p: "activity";
+	back: State;
+	id?: string;
+	top?: number;
+	vals?: Record<string, string>; // posting fields kept across a failed post
+	errField?: string;
+	msg?: string;
+}
+export interface HistoryState { p: "history"; back: State; id?: string; top?: number; errField?: string; msg?: string }
 
-export type State = MenuState | BrowseState | DetailState | ReportState | HelpState;
+export type State = MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | HistoryState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

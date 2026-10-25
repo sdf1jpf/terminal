@@ -1,6 +1,7 @@
 import { createCustomer, deleteCustomer, getCustomer, updateCustomer } from "../data";
 import { parseEditable, type Customer } from "../customer";
 import { HttpError } from "../http";
+import { newActivity, newHistory } from "./activity";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, right, stamp, value, type Color, type Ctx, type Opts, type Screen } from "./screen";
 import { fail, isCode, pf, setMsg, type DetailState, type Mode, type Next, type Program, type State } from "./program";
 
@@ -32,7 +33,7 @@ export async function loadDetail(ctx: Ctx, d: DetailState, id: string): Promise<
 	return d;
 }
 
-function padID(id: string): string {
+export function padID(id: string): string {
 	id = id.trim();
 	return /^\d+$/.test(id) ? String(BigInt(id)).padStart(6, "0") : id;
 }
@@ -91,7 +92,7 @@ export const detail: Program<DetailState> = {
 
 		message(scr, d.msg ?? "");
 		keys(scr, {
-			inquiry: "ENTER=DISPLAY  PF1=HELP  PF3=EXIT  PF4=UPDATE  PF9=DELETE  PF12=CANCEL",
+			inquiry: "PF1=HELP PF3=EXIT PF4=UPDATE PF5=ACTIVITY PF6=HISTORY PF9=DELETE PF12=CANCEL",
 			update: "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF",
 			add: "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF",
 			delete: "PF1=HELP  PF3=EXIT  PF10=CONFIRM DELETE  PF12=CANCEL",
@@ -183,6 +184,14 @@ async function handleInquiry(ctx: Ctx, d: DetailState, aid: string, f: Record<st
 			await loadDetail(ctx, d, d.cust!.id); // re-read for the latest copy
 			if (d.loaded) d.mode = aid === pf(9) ? "delete" : "update";
 			return d;
+		case pf(5):
+		case pf(6):
+			if (!d.loaded) {
+				d.msg = "CUS0204E DISPLAY A CUSTOMER FIRST";
+				d.errField = "id";
+				return d;
+			}
+			return aid === pf(5) ? newActivity(ctx, d, d.cust!.id) : newHistory(ctx, d, d.cust!.id);
 		case "CLEAR":
 			return { p: "detail", mode: "inquiry", back: d.back };
 	}
@@ -264,7 +273,7 @@ async function handleDelete(ctx: Ctx, d: DetailState, aid: string): Promise<Next
 	switch (aid) {
 		case pf(10): {
 			try {
-				await deleteCustomer(ctx.db, id);
+				await deleteCustomer(ctx.db, id, ctx.user);
 			} catch (e) {
 				if (!(e instanceof HttpError && e.code === "not_found")) {
 					d.msg = fail(e);

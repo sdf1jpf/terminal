@@ -248,6 +248,77 @@ describe("customer screens", () => {
 	});
 });
 
+describe("activity and history screens", () => {
+	it("posts invoices and payments, and moves between activity and history", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "5 104").send("ENTER");
+		expect(t.scr.map).toBe("CUSM03");
+		expect(t.row(4)).toContain("DELTA MARINE SUPPLY");
+		expect(t.row(13)).toContain("NO ACTIVITY ON FILE");
+		expect(t.scr.cursor).toEqual({ field: "type" });
+
+		await t.fill("type", "x", "amount", "500").send("ENTER");
+		expect(t.message).toMatch(/^CUS0240E/);
+		expect(t.scr.cursor).toEqual({ field: "type" });
+		expect(t.field("amount")?.value).toBe("500");
+
+		await t.fill("type", "i", "ref", "inv 1001").send("ENTER");
+		expect(t.message).toBe("CUS0245I INVOICE OF $500 POSTED - BALANCE NOW $500");
+		await t.fill("type", "p", "amount", "900").send("ENTER");
+		expect(t.message).toBe("CUS0245I PAYMENT OF $900 POSTED - BALANCE NOW -$400");
+		expect(t.row(13)).toMatch(/PAYMENT .* -\$900 .* -\$400  IBMUSER/);
+		expect(t.row(14)).toContain("INV 1001");
+
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSM04");
+		// PF5 goes back to the same activity screen, so PF3 then leaves it.
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSM03");
+		expect(t.row(13)).toContain("PAYMENT");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM00");
+	});
+
+	it("refreshes the inquiry balance after posting", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2 113").send("ENTER");
+		await t.send("PF5");
+		await t.fill("type", "i", "amount", "1250").send("ENTER");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM02");
+		expect(t.row(6)).toContain("$20,000");
+	});
+
+	it("keeps the history after the customer is deleted", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2 102").send("ENTER");
+		await t.send("PF4");
+		await t.fill("city", "salem").send("ENTER");
+		await t.send("PF9");
+		await t.send("PF10");
+		expect(t.message).toBe("CUS0220I CUSTOMER 000102 DELETED");
+
+		await t.send("PF3");
+		await t.fill("option", "6 102").send("ENTER");
+		expect(t.scr.map).toBe("CUSM04");
+		expect(t.message).toBe("CUS0251I CUSTOMER 000102 HAS BEEN DELETED - HISTORY ONLY");
+		expect(t.row(8)).toContain("RECORD DELETED");
+		expect(t.row(9)).toMatch(/CHANGE CITY .*ROANOKE > SALEM/);
+	});
+
+	it("opens from the browse list with A and H", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF4");
+		const first = t.scr.cursor?.field ?? "";
+		await t.fill(first, "a").send("ENTER");
+		expect(t.scr.map).toBe("CUSM03");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM01");
+		await t.fill(first, "h").send("ENTER");
+		expect(t.scr.map).toBe("CUSM04");
+	});
+});
+
 describe("screen size", () => {
 	it("lays panels out for a larger window and redraws without acting", async () => {
 		const t = await Terminal.logon(40, 132);

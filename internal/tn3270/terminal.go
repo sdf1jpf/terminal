@@ -1,7 +1,10 @@
 package tn3270
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +19,9 @@ type Options struct {
 	// Latency is an artificial host response delay, so the keyboard visibly
 	// locks with "X ()" after each AID. Zero disables it.
 	Latency time.Duration
+	// PrintDir is where the PRINT key (Ctrl+P) saves a copy of the screen.
+	// Empty means the current directory.
+	PrintDir string
 }
 
 // Terminal is a Bubble Tea model emulating a 3278 display station.
@@ -25,6 +31,7 @@ type Terminal struct {
 	scr    *Screen
 	lock   Lock
 	insert bool
+	print  string // print indicator in the status line, until the next key
 	width  int
 	height int
 	styles map[styleKey]lipgloss.Style
@@ -105,6 +112,17 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if t.lock == LockWait {
 		return t, nil
 	}
+	t.print = ""
+	if s == "ctrl+p" {
+		// Like a 3270 local copy: the screen goes to the printer, here a
+		// text file, without involving the host.
+		if _, err := t.Print(); err != nil {
+			t.print = "PRT ERR"
+		} else {
+			t.print = "PRINTED"
+		}
+		return t, nil
+	}
 	if s == "esc" || s == "ctrl+r" {
 		t.lock = LockNone
 		t.insert = false
@@ -169,6 +187,37 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return t, nil
+}
+
+// Print saves the screen as text to a new file in the print directory and
+// returns its path.
+func (t *Terminal) Print() (string, error) {
+	var b strings.Builder
+	for row := 1; row <= t.scr.Rows(); row++ {
+		b.WriteString(strings.TrimRight(t.scr.Row(row), " "))
+		b.WriteByte('\n')
+	}
+	dir := t.opts.PrintDir
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := filepath.Join(dir, "PRINT-"+time.Now().Format("20060102-150405")+".txt")
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	for n := 2; errors.Is(err, os.ErrExist); n++ { // several prints in one second
+		name = filepath.Join(dir, fmt.Sprintf("PRINT-%s-%d.txt", time.Now().Format("20060102-150405"), n))
+		f, err = os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return "", err
+	}
+	return name, f.Close()
 }
 
 // send locks the keyboard and transmits the screen to the host.
@@ -239,6 +288,7 @@ func (t *Terminal) oia() string {
 	if t.insert {
 		put(cols-28, "^")
 	}
+	put(22, t.print)
 	put(cols-23, t.opts.LUName)
 	row, col := t.scr.RowCol(t.scr.Cursor())
 	put(cols-6, fmt.Sprintf("%03d/%03d", row, col))

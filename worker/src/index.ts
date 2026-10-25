@@ -9,12 +9,16 @@
 //	GET    /v1/customers/{id}
 //	PUT    /v1/customers/{id}       update; "version" must match
 //	DELETE /v1/customers/{id}
+//	GET    /v1/customers/{id}/transactions   activity, newest first
+//	POST   /v1/customers/{id}/transactions   post an invoice or payment
+//	GET    /v1/customers/{id}/history        change history, newest first
 //
 // Everything except health is behind Cloudflare Access; see auth.ts.
 
+import { customerHistory, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
-import { createCustomer, deleteCustomer, getCustomer, listCustomers, updateCustomer } from "./data";
+import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, json, noContent, readJSON } from "./http";
 import { requestKeys, screen } from "./screens";
 
@@ -62,9 +66,27 @@ async function route(req: Request, env: Env): Promise<Response> {
 		}
 		if (m === "PUT") return update(req, env, await authenticate(env, req), id);
 		if (m === "DELETE") {
-			await authenticate(env, req);
-			await deleteCustomer(env.DB, id);
+			await deleteCustomer(env.DB, id, await authenticate(env, req));
 			return noContent();
+		}
+	} else if (path.startsWith("/v1/customers/") && path.split("/").length === 5) {
+		const [, , , rawId, sub] = path.split("/");
+		const id = decodeURIComponent(rawId);
+		if (sub === "transactions") {
+			if (m === "GET") {
+				await authenticate(env, req);
+				const list = await listTransactions(env.DB, id);
+				if (!list) throw notFound();
+				return json(200, list);
+			}
+			if (m === "POST") return post(req, env, await authenticate(env, req), id);
+		} else if (sub === "history") {
+			if (m === "GET") {
+				await authenticate(env, req);
+				return json(200, await customerHistory(env.DB, id));
+			}
+		} else {
+			throw new HttpError(404, "not_found", "no such endpoint");
 		}
 	} else {
 		throw new HttpError(404, "not_found", "no such endpoint");
@@ -80,4 +102,8 @@ async function create(req: Request, env: Env, user: string): Promise<Response> {
 async function update(req: Request, env: Env, user: string, id: string): Promise<Response> {
 	const { fields, version } = parseEditable(await readJSON(req, customerFields));
 	return json(200, await updateCustomer(env.DB, id, fields, version, user));
+}
+
+async function post(req: Request, env: Env, user: string, id: string): Promise<Response> {
+	return json(201, await postTransaction(env.DB, user, id, parsePosting(await readJSON(req, transactionFields))));
 }

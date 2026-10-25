@@ -5,6 +5,7 @@
 
 import type { Env } from "../index";
 import { HttpError, int, str } from "../http";
+import { activity, history } from "./activity";
 import { browse } from "./browse";
 import { detail } from "./detail";
 import { help } from "./help";
@@ -17,7 +18,9 @@ export const requestKeys = [
 	"v", "aid", "state", "fields", "modified", "cursor", "rows", "cols", "terminal", "system", "tz_offset",
 ] as const;
 
-const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = { menu, browse, detail, report, help };
+const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
+	menu, browse, detail, report, help, activity, history,
+};
 
 // The commarea's own version. Bump it when a state shape changes in a way
 // old states cannot be read; clients holding an old one go back to the menu.

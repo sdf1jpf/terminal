@@ -1,6 +1,7 @@
 package tn3270
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -206,3 +207,28 @@ func TestResizeWithHostDown(t *testing.T) {
 		t.Fatalf("expected the old layout and an unlocked keyboard, got %v %d", term.lock, term.scr.Cols())
 	}
 }
+
+func TestPrintScreen(t *testing.T) {
+	dir := t.TempDir()
+	scr := NewScreen()
+	scr.Text(1, 2, "CUSM00")
+	term := New(stubHost{scr}, Options{PrintDir: dir})
+	a, err := term.Print()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := term.Print()
+	if err != nil || a == b {
+		t.Fatalf("second print in the same second: %q %q %v", a, b, err)
+	}
+	got, _ := os.ReadFile(a)
+	if lines := strings.Split(string(got), "\n"); len(lines) != 25 || lines[0] != " CUSM00" {
+		t.Fatalf("printed %d lines, first %q", len(lines), lines[0])
+	}
+}
+
+type stubHost struct{ scr *Screen }
+
+func (h stubHost) Start() *Screen              { return h.scr }
+func (h stubHost) Redraw(int, int) *Screen     { return h.scr }
+func (h stubHost) Submit(AID, *Screen) *Screen { return h.scr }

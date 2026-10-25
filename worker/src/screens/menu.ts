@@ -1,3 +1,4 @@
+import { newActivity, newHistory } from "./activity";
 import { newAdd, newInquiry } from "./detail";
 import { invalidKey, header, keys, label, message, newScreen, right, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program } from "./program";
@@ -9,6 +10,8 @@ const options = [
 	["2", "INQUIRY", "Display a customer by number"],
 	["3", "ADD", "Add a new customer"],
 	["4", "REPORTS", "Credit exposure summary"],
+	["5", "ACTIVITY", "Post invoices and payments"],
+	["6", "HISTORY", "Who changed a customer, and when"],
 	["T", "TUTORIAL", "Keyboard and PF key guide"],
 	["X", "EXIT", "Log off"],
 ];
@@ -43,8 +46,8 @@ export const menu: Program<MenuState> = {
 			scr.text(6 + i, right(scr, 65), "- " + v, { color: "white" });
 		});
 
-		scr.text(14, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
-		scr.text(15, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
+		scr.text(15, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
+		scr.text(16, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
 
 		message(scr, m.msg ?? "");
 		keys(scr, "PF1=HELP  PF3=LOGOFF  PF4=BROWSE  PF12=CANCEL");
@@ -87,6 +90,12 @@ export const menu: Program<MenuState> = {
 			case "4":
 			case "REPORTS":
 				return { p: "report" };
+			case "5":
+			case "ACTIVITY":
+				return newActivity(ctx, m, arg);
+			case "6":
+			case "HISTORY":
+				return newHistory(ctx, m, arg);
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };
