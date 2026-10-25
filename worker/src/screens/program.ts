@@ -4,6 +4,7 @@
 
 import { HttpError } from "../http";
 import type { Customer } from "../customer";
+import type { Product } from "../products";
 import type { Ctx, Screen } from "./screen";
 
 export type Mode = "inquiry" | "update" | "add" | "delete";
@@ -55,9 +56,21 @@ export interface JobsState {
 }
 export interface JobLogState { p: "joblog"; back: State; id: string; top?: number; msg?: string }
 
+export interface ProductsState { p: "products"; filter?: string; top?: number; msg?: string; errSel?: string }
+export interface ProductState {
+	p: "product";
+	mode: "inquiry" | "update" | "add";
+	back: State;
+	sku?: string; // the SKU typed when none was found
+	prod?: Product;
+	vals?: Record<string, string>; // operator input kept across a failed edit
+	errField?: string;
+	msg?: string;
+}
+
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | HistoryState
-	| JobsState | JobLogState;
+	| JobsState | JobLogState | ProductsState | ProductState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

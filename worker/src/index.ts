@@ -12,6 +12,10 @@
 //	GET    /v1/customers/{id}/transactions   activity, newest first
 //	POST   /v1/customers/{id}/transactions   post an invoice or payment
 //	GET    /v1/customers/{id}/history        change history, newest first
+//	GET    /v1/products?prefix=X    product file, ordered by SKU
+//	POST   /v1/products             add a product
+//	GET    /v1/products/{sku}
+//	PUT    /v1/products/{sku}       update; "version" must match
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
@@ -24,6 +28,7 @@ import { customerFields, parseEditable } from "./customer";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, json, noContent, readJSON, str } from "./http";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
+import { createProduct, getProduct, listProducts, parseProduct, productFields, updateProduct } from "./products";
 import { requestKeys, screen } from "./screens";
 
 export interface Env {
@@ -97,6 +102,27 @@ async function route(req: Request, env: Env): Promise<Response> {
 			}
 		} else {
 			throw new HttpError(404, "not_found", "no such endpoint");
+		}
+	} else if (path === "/v1/products") {
+		if (m === "GET") {
+			await authenticate(env, req);
+			return json(200, await listProducts(env.DB, url.searchParams.get("prefix") ?? ""));
+		}
+		if (m === "POST") {
+			const user = await authenticate(env, req);
+			const { fields } = parseProduct(await readJSON(req, productFields));
+			return json(201, await createProduct(env.DB, fields, user));
+		}
+	} else if (path.startsWith("/v1/products/") && path.split("/").length === 4) {
+		const sku = decodeURIComponent(path.slice("/v1/products/".length)).toUpperCase();
+		if (m === "GET") {
+			await authenticate(env, req);
+			return json(200, await getProduct(env.DB, sku));
+		}
+		if (m === "PUT") {
+			const user = await authenticate(env, req);
+			const { fields, version } = parseProduct({ ...(await readJSON(req, productFields)), sku });
+			return json(200, await updateProduct(env.DB, sku, fields, version, user));
 		}
 	} else if (path === "/v1/jobs") {
 		if (m === "GET") {

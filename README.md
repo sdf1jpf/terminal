@@ -228,6 +228,10 @@ DELETE /v1/customers/{id}
 GET    /v1/customers/{id}/transactions   invoices and payments, newest first
 POST   /v1/customers/{id}/transactions   post one: {"type":"I"|"P","amount","reference"}
 GET    /v1/customers/{id}/history        change history, newest first
+GET    /v1/products?prefix=X    product file, ordered by SKU
+POST   /v1/products             add a product
+GET    /v1/products/{sku}
+PUT    /v1/products/{sku}       update ("version" must match)
 POST   /v1/jobs                 submit a batch job: {"name":"CUSAGING"}
 GET    /v1/jobs                 recent jobs, newest first
 GET    /v1/jobs/{id}            a job and its output listing
@@ -301,6 +305,15 @@ The API takes the same search as `GET /v1/customers?prefix=&city=&state=&status=
 
 PF1 with the cursor in an input field explains that field (CUSH01). PF1
 again, or PF1 anywhere else, shows the keyboard tutorial. PF3 goes back.
+
+## Products and stock
+
+Menu option 8 opens the **PRODUCT LIST** (CUSP01): the product file with
+price, quantity on hand and reorder point, searchable by SKU. Active products
+at or below their reorder point are flagged `LOW` in yellow, and discontinued
+products show in pink. `S` shows a product and `U` updates it, and PF5 adds
+one (CUSP02). Products are never deleted, only discontinued (status `D`).
+`seed.sql` loads 15 demo products.
 
 ## Account activity and change history
 
