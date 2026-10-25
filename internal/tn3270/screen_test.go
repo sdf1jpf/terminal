@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -232,3 +233,58 @@ type stubHost struct{ scr *Screen }
 func (h stubHost) Start() *Screen              { return h.scr }
 func (h stubHost) Redraw(int, int) *Screen     { return h.scr }
 func (h stubHost) Submit(AID, *Screen) *Screen { return h.scr }
+
+// liveHost serves a screen that asks to be refreshed, counting redraws.
+type liveHost struct {
+	echoHost
+	redraws *int
+}
+
+func (h liveHost) Start() *Screen {
+	s := form()
+	s.SetRefresh(time.Second)
+	return s
+}
+
+func (h liveHost) Submit(aid AID, s *Screen) *Screen { return h.Start() }
+
+func (h liveHost) Redraw(rows, cols int) *Screen {
+	*h.redraws++
+	s := formSize(rows, cols)
+	s.SetRefresh(time.Second)
+	return s
+}
+
+func TestRefresh(t *testing.T) {
+	n := 0
+	term := New(liveHost{redraws: &n}, Options{})
+	_, cmd := term.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd = term.Update(cmd())
+	if cmd == nil {
+		t.Fatal("no refresh timer for a screen that asks for one")
+	}
+	gen := term.gen
+
+	// The timer runs out: the terminal redraws and starts the next one.
+	_, cmd = term.Update(refreshTick{gen: gen})
+	if term.lock != LockWait {
+		t.Fatal("keyboard not locked during the refresh")
+	}
+	if _, next := term.Update(cmd()); next == nil || n != 1 || term.lock != LockNone {
+		t.Fatalf("refresh: %d redraws, lock %v, next timer %v", n, term.lock, next != nil)
+	}
+
+	// A tick for an older screen does nothing.
+	if _, cmd = term.Update(refreshTick{gen: gen}); cmd != nil {
+		t.Fatal("stale tick acted on")
+	}
+
+	// While the operator is typing, it waits rather than redraw.
+	term.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")})
+	if _, cmd = term.Update(refreshTick{gen: term.gen}); cmd == nil || term.lock != LockNone {
+		t.Fatal("expected another timer and no redraw while a field is modified")
+	}
+	if n != 1 {
+		t.Fatalf("redrew while typing: %d", n)
+	}
+}

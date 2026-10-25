@@ -236,6 +236,10 @@ PUT    /v1/products/{sku}       update ("version" must match)
 POST   /v1/jobs                 submit a batch job: {"name":"CUSAGING"}
 GET    /v1/jobs                 recent jobs, newest first
 GET    /v1/jobs/{id}            a job and its output listing
+GET    /v1/syslog?before=N      the system log, newest first (&limit=, up to 500)
+GET    /v1/schedules            the job schedule, with each job's next run
+PUT    /v1/schedules/{job}      schedule a job: {"cron":"0 6 * * *","enabled":true}
+DELETE /v1/schedules/{job}
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -414,6 +418,46 @@ The deploy job creates the queue the first time, which needs
 create it yourself with `npx wrangler queues create customer-jobs`. Wrangler
 creates the workflow when it deploys.
 
+## Operator console and job scheduler
+
+Menu option `O` opens the **OPERATOR CONSOLE** (CUSO01), which shows SYSLOG,
+the system log: jobs being submitted, starting and ending (`$HASP100`,
+`$HASP373`, `$HASP395`), abends, the scheduler releasing jobs, logons and
+logoffs, and operator commands with their responses. While it shows the end
+of the log, the screen asks the terminal to redraw it every 5 seconds (the
+`refresh` key in the [screen protocol](docs/screen-protocol.md)), so new
+lines appear as they are written. The terminal waits while you are typing a
+command. PF7 scrolls back and holds the display; PF8 back to the end, or PF5,
+follows it again.
+
+Commands go in the log with their responses, for every console to see:
+
+| Command | What it does |
+| --- | --- |
+| `D T` | Display the time, local and UTC |
+| `D J` | Display the jobs that are queued or executing |
+| `D SCHED` | Display the job schedule |
+| `S jobname` | Submit a job |
+| `H jobname`, `A jobname` | Hold or release a job's schedule |
+
+PF6 opens the **JOB SCHEDULE** (CUSO02). A Worker
+[cron trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+runs every minute and submits each active job whose cron expression (five
+fields, in UTC) matches that minute, as `SCHEDULR`. The schedule starts with
+the nightly run at 1-2 AM US Eastern:
+
+| Job | Cron (UTC) | |
+| --- | --- | --- |
+| `CUSCRREV` | `0 6 * * *` | active |
+| `CUSAGING` | `15 6 * * *` | active |
+| `CUSSTMT` | `30 6 * * *` | active |
+| `EDISIM` | `0 * * * *` | held |
+
+Type a job and a cron and press Enter to add a job or change its cron. Beside
+a job, `H` holds it, `R` releases it, `S` submits it now and `D` takes it off
+the schedule. Any job in the job library can be scheduled. The log keeps the
+newest 10,000 lines.
+
 ## Printing a screen
 
 Ctrl+P saves the screen as a text file, like a 3270 local copy, and the status
@@ -454,7 +498,7 @@ internal/host/       the application screens; they call a Backend interface
 internal/api/        HTTP client for the API (implements host.Backend)
 internal/customer/   the customer record exchanged with the API
 worker/              the API: Cloudflare Worker + D1 (TypeScript)
-  src/               routes, auth, validation, batch jobs
+  src/               routes, auth, validation, batch jobs, scheduler, SYSLOG
   migrations/        D1 schema
   seed.sql           demo customers
   test/              API tests (vitest, Workers runtime)

@@ -656,6 +656,96 @@ describe("batch job screens", () => {
 	});
 });
 
+describe("operator console", () => {
+	const lines = (t: Terminal) => [...Array(t.scr.rows).keys()].map((r) => t.row(r + 1).trimEnd());
+
+	it("follows SYSLOG and logs commands with their responses", async () => {
+		const log = (source: string, text: string) =>
+			env.DB.prepare("INSERT INTO syslog (at, source, text) VALUES (?, ?, ?)").bind(new Date().toISOString(), source, text).run();
+		for (let i = 0; i < 20; i++) await log("X", `EARLIER ${i}`);
+		const t = await Terminal.logon();
+		await t.fill("option", "o").send("ENTER");
+		expect(t.scr.map).toBe("CUSO01");
+		expect((t.scr as { refresh?: number }).refresh).toBe(5);
+		expect(t.row(4)).toContain("SYSLOG - FOLLOWING");
+		expect(lines(t).some((l) => /IBMUSER +IKJ56455I IBMUSER LOGON IN PROGRESS ON TERM0001/.test(l))).toBe(true);
+
+		await t.fill("cmd", "d t").send("ENTER");
+		const tail = lines(t).slice(4, 22).filter((l) => l.trim());
+		expect(tail.at(-2)).toMatch(/IBMUSER +D T$/);
+		expect(tail.at(-1)).toMatch(/IBMUSER +IEE136I LOCAL: TIME=\d\d\.\d\d\.\d\d DATE=\d{4}\.\d{3}  UTC:/);
+
+		await t.fill("cmd", "d sched").send("ENTER");
+		expect(lines(t).some((l) => /CUSCRREV 0 6 \* \* \* +ACTIVE  NEXT/.test(l))).toBe(true);
+		expect(lines(t).some((l) => /EDISIM +0 \* \* \* \* +HELD/.test(l))).toBe(true);
+
+		await t.fill("cmd", "s iefbr14").send("ENTER");
+		expect(t.message).toBe("CUS0705E JOB IEFBR14 IS NOT IN THE JOB LIBRARY");
+		expect(t.field("cmd")!.value).toBe("S IEFBR14");
+		await t.fill("cmd", "frobnicate").send("ENTER");
+		expect(lines(t).some((l) => l.includes("IEE305I FROBNICATE COMMAND INVALID"))).toBe(true);
+
+		// A redraw shows lines written since, as the terminal's refresh does.
+		await log("JOB00042", "$HASP373 CUSAGING STARTED");
+		await t.send("REDRAW");
+		expect(t.row(22)).toMatch(/JOB00042 +\$HASP373 CUSAGING STARTED/);
+
+		// Scrolled back, it holds still and stops refreshing.
+		for (let i = 0; i < 20; i++) await log("X", `LINE ${i}`);
+		await t.send("REDRAW");
+		expect(t.row(22)).toContain("LINE 19");
+		await t.send("PF7");
+		expect(t.row(22)).toContain("LINE 1 ");
+		expect(t.row(4)).toContain("SYSLOG - HELD");
+		expect((t.scr as { refresh?: number }).refresh).toBeUndefined();
+		await t.send("PF8");
+		expect(t.row(4)).toContain("SYSLOG - FOLLOWING");
+		expect(t.row(22)).toContain("LINE 19");
+		await t.send("PF8");
+		expect(t.message).toBe("CUS0102W ALREADY AT BOTTOM OF DATA");
+
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM00");
+	});
+
+	it("changes the job schedule", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "o").send("ENTER");
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSO02");
+		expect(t.row(9)).toMatch(/CUSAGING 15 6 \* \* \* +ACTIVE \d{4}-\d\d-\d\d \d\d:15/);
+		expect(t.row(12)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
+
+		await t.fill("job", "cusstmt", "cron", "0 7 31 2 *").send("ENTER");
+		expect(t.message).toBe("CUS0702I SCHEDULE CUSSTMT SET TO 0 7 31 2 *");
+		await t.fill("job", "cusstmt", "cron", "0 7 32 * *").send("ENTER");
+		expect(t.message).toBe("CUS0709E CRON DAY 32 IS NOT 1-31");
+		expect(t.scr.cursor).toEqual({ field: "cron" });
+		expect(t.field("cron")!.value).toBe("0 7 32 * *");
+		await t.fill("job", "nosuch", "cron", "@daily").send("ENTER");
+		expect(t.scr.cursor).toEqual({ field: "job" });
+
+		await t.fill("sel3", "r").send("ENTER"); // EDISIM
+		expect(t.message).toBe("CUS0703I SCHEDULE EDISIM RELEASED");
+		expect(t.row(12)).toMatch(/EDISIM +0 \* \* \* \* +ACTIVE/);
+		await t.fill("sel3", "h").send("ENTER");
+		expect(t.row(12)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
+		await t.fill("sel2", "d").send("ENTER");
+		expect(t.message).toBe("CUS0704I SCHEDULE CUSSTMT DELETED");
+		await t.fill("sel0", "x").send("ENTER");
+		expect(t.message).toMatch(/^CUS0103E/);
+
+		// Field help explains the cron.
+		t.cursorField = "cron";
+		await t.send("PF1");
+		expect(t.row(1)).toContain("HELP - CRON EXPRESSION (UTC)");
+		await t.send("PF3");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSO01");
+		expect([...Array(t.scr.rows).keys()].some((r) => t.row(r + 1).includes("CUS0704I SCHEDULE CUSSTMT DELETED"))).toBe(true);
+	});
+});
+
 describe("screen size", () => {
 	it("lays panels out for a larger window and redraws without acting", async () => {
 		const t = await Terminal.logon(40, 132);

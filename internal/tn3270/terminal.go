@@ -36,11 +36,16 @@ type Terminal struct {
 	height int
 	styles map[styleKey]lipgloss.Style
 	r      *lipgloss.Renderer
+	gen    int // counts screens, so a refresh tick for an old one is dropped
 }
 
 type hostReply struct{ scr *Screen }
 
 type redrawReply struct{ scr *Screen }
+
+// refreshTick asks for a screen that wants refreshing (Screen.Refresh) to
+// be drawn again.
+type refreshTick struct{ gen int }
 
 // New returns a terminal connected to host.
 func New(host Host, opts Options) *Terminal {
@@ -69,15 +74,17 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		t.scr = msg.scr
 		t.lock = LockNone
-		return t, t.fit() // the window may have changed while the host was busy
+		return t, batch(t.fit(), t.schedule()) // the window may have changed while the host was busy
 	case redrawReply:
 		t.lock = LockNone
 		if msg.scr == nil {
-			return t, nil // keep the old layout; the next resize tries again
+			return t, t.schedule() // keep the old layout; the next resize tries again
 		}
 		msg.scr.Carry(t.scr)
 		t.scr = msg.scr
-		return t, t.fit()
+		return t, batch(t.fit(), t.schedule())
+	case refreshTick:
+		return t, t.refresh(msg)
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && t.lock == LockNone {
 			x0, y0 := t.origin()
@@ -248,6 +255,53 @@ func (t *Terminal) fit() tea.Cmd {
 	t.lock = LockWait
 	host := t.host
 	return func() tea.Msg { return redrawReply{scr: host.Redraw(rows, cols)} }
+}
+
+// schedule starts the refresh timer for a new screen that asks for one.
+func (t *Terminal) schedule() tea.Cmd {
+	t.gen++
+	return t.tick()
+}
+
+func (t *Terminal) tick() tea.Cmd {
+	d := t.scr.Refresh()
+	if d <= 0 {
+		return nil
+	}
+	gen := t.gen
+	return tea.Tick(d, func(time.Time) tea.Msg { return refreshTick{gen: gen} })
+}
+
+// refresh redraws the screen when its timer runs out, unless another
+// screen has come since. While the operator is busy (the keyboard is
+// locked, or a field has been typed in) it waits for another interval
+// rather than send what they have half typed.
+func (t *Terminal) refresh(msg refreshTick) tea.Cmd {
+	if msg.gen != t.gen {
+		return nil
+	}
+	if t.lock != LockNone || len(t.scr.Modified()) > 0 {
+		return t.tick()
+	}
+	t.lock = LockWait
+	host, rows, cols := t.host, t.scr.Rows(), t.scr.Cols()
+	return func() tea.Msg { return redrawReply{scr: host.Redraw(rows, cols)} }
+}
+
+func batch(cmds ...tea.Cmd) tea.Cmd {
+	var out []tea.Cmd
+	for _, c := range cmds {
+		if c != nil {
+			out = append(out, c)
+		}
+	}
+	switch len(out) {
+	case 0:
+		return nil
+	case 1:
+		return out[0]
+	}
+	return tea.Batch(out...)
 }
 
 // origin returns the top-left corner of the 3270 screen within the window.

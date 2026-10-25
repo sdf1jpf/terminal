@@ -70,6 +70,11 @@ describe("browser terminal", () => {
 		expect(wide.rowCol(wide.cursor)).toEqual([5, 13]);
 	});
 
+	it("reads the refresh interval of a live screen", () => {
+		expect(decodeScreen(response).refresh).toBe(0);
+		expect(decodeScreen({ ...response, screen: { ...response.screen, refresh: 5 } }).refresh).toBe(5);
+	});
+
 	it("passes a logoff through", () => {
 		expect(decodeScreen({ v: 1, logoff: { message: "LOGGED OFF" } })).toEqual({ logoff: "LOGGED OFF" });
 	});

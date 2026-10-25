@@ -22,6 +22,9 @@
     "producers": [{ "binding": "JOBS", "queue": "customer-jobs" }],
     "consumers": [{ "queue": "customer-jobs", "max_batch_size": 10, "max_retries": 5 }]
   },
+  // The job scheduler: every minute, submit the jobs whose schedule is due
+  // (see src/scheduler.ts).
+  "triggers": { "crons": ["* * * * *"] },
   "workflows": [
     { "binding": "JOB_RUNNER", "name": "customer-job-runner", "class_name": "JobRunner" }
   ],

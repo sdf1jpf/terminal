@@ -27,7 +27,9 @@ export function encodeRequest({ aid, scr, state, terminal }) {
 	return body;
 }
 
-// decodeScreen turns a response into {state, scr} or {logoff}.
+// decodeScreen turns a response into {state, scr, refresh} or {logoff}.
+// refresh is how often, in seconds, to redraw the screen while the
+// operator leaves it alone; 0 never.
 export function decodeScreen(res) {
 	if (res.v !== 1) throw new Error(`unsupported screen protocol version ${res.v}`);
 	if (res.logoff) return { logoff: res.logoff.message ?? "" };
@@ -56,5 +58,5 @@ export function decodeScreen(res) {
 	} else {
 		scr.cursorHome();
 	}
-	return { state: res.state, scr };
+	return { state: res.state, scr, refresh: m.refresh > 0 ? m.refresh : 0 };
 }

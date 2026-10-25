@@ -5,8 +5,10 @@
 
 import type { Env } from "../index";
 import { HttpError, int, str } from "../http";
+import { syslog } from "../syslog";
 import { activity, event } from "./activity";
 import { browse } from "./browse";
+import { opconsole, schedule } from "./console";
 import { detail } from "./detail";
 import { fieldHelp } from "./fieldhelp";
 import { edi, edidoc } from "./edi";
@@ -26,6 +28,7 @@ export const requestKeys = [
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, help, activity, event, jobs, joblog, products, product, invoices, invoice, skusearch, edi, edidoc,
+	console: opconsole, schedule,
 };
 
 // The commarea's own version. Bump it when a state shape changes in a way
@@ -62,6 +65,7 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 	let next: Next;
 	if (aid === "START") {
 		next = { p: "menu", msg: `IKJ56455I ${user} LOGON IN PROGRESS AT ${time(ctx)}` };
+		await syslog(env.DB, user, `IKJ56455I ${user} LOGON IN PROGRESS ON ${ctx.terminal}`);
 	} else {
 		const current = decode(str(body, "state"));
 		if (!current) {
@@ -80,7 +84,10 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 		}
 	}
 
-	if ("logoff" in next) return { v: 1, logoff: { message: next.logoff } };
+	if ("logoff" in next) {
+		await syslog(env.DB, user, `IKJ56470I ${user} LOGGED OFF ${ctx.terminal}`);
+		return { v: 1, logoff: { message: next.logoff } };
+	}
 	const scr = await (programs[next.p] as Program<State>).render(ctx, next);
 	return { v: 1, state: encode(next), screen: scr.toJSON() };
 }
