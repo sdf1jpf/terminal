@@ -1,7 +1,10 @@
+import { fieldHelp } from "./fieldhelp";
 import { header, keys, newScreen } from "./screen";
 import type { HelpState, Program } from "./program";
 
-// The keyboard tutorial. Any key returns to the screen it was called from.
+// Help. With a field, it explains that field (CUSH01); PF1 there goes on
+// to the keyboard tutorial (CUSH00). Any other key returns to the screen
+// help was called from.
 
 const rows = [
 	["ENTER", "Send the screen to the host (AID key)"],
@@ -22,7 +25,16 @@ const rows = [
 ];
 
 export const help: Program<HelpState> = {
-	async render(ctx) {
+	async render(ctx, h) {
+		const fh = h.field ? fieldHelp(h.back, h.field) : undefined;
+		if (fh) {
+			const scr = newScreen(ctx, "CUSH01");
+			header(scr, ctx, "HELP - " + fh.title);
+			fh.lines.forEach((line, i) => scr.text(4 + i, 4, line, { color: "green" }));
+			keys(scr, "PF1=TUTORIAL  PF3=RETURN");
+			scr.setCursor(scr.rows, 2);
+			return scr;
+		}
 		const scr = newScreen(ctx, "CUSH00");
 		header(scr, ctx, "TUTORIAL - USING THIS TERMINAL");
 
@@ -40,7 +52,8 @@ export const help: Program<HelpState> = {
 		return scr;
 	},
 
-	async handle(_ctx, h) {
+	async handle(_ctx, h, input) {
+		if (h.field && input.aid === "PF1") return { p: "help", back: h.back };
 		return h.back;
 	},
 };

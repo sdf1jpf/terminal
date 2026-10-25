@@ -1,4 +1,4 @@
-import { listCustomers } from "../data";
+import { listCustomers, type Search } from "../data";
 import type { Customer } from "../customer";
 import { newActivity, newHistory } from "./activity";
 import { loadDetail, newAdd } from "./detail";
@@ -17,6 +17,13 @@ export function pageRows(ctx: Ctx): number {
 
 const codes: Record<string, Mode> = { S: "inquiry", U: "update", D: "delete" };
 
+function search(b: BrowseState): Search {
+	return { city: b.city, state: b.state, status: b.status };
+}
+
+// The search fields, and where each one's value lives in the state.
+const searchFields = ["filter", "city", "state", "status"] as const;
+
 export const browse: Program<BrowseState> = {
 	async render(ctx, b) {
 		const scr = newScreen(ctx, "CUSM01");
@@ -25,7 +32,7 @@ export const browse: Program<BrowseState> = {
 		let list: Customer[] = [];
 		let msg = b.msg ?? "";
 		try {
-			list = await listCustomers(ctx.db, b.filter ?? "");
+			list = await listCustomers(ctx.db, b.filter ?? "", search(b));
 		} catch (e) {
 			msg = fail(e);
 		}
@@ -38,6 +45,13 @@ export const browse: Program<BrowseState> = {
 
 		label(scr, 4, 2, "NAME STARTS WITH ===>");
 		scr.input(4, 24, 20, "filter", b.filter ?? "");
+		label(scr, 6, 2, "CITY ===>");
+		scr.input(6, 12, 18, "city", b.city ?? "");
+		label(scr, 6, 32, "STATE ===>");
+		scr.input(6, 43, 2, "state", b.state ?? "", { bright: b.errField === "state" });
+		label(scr, 6, 47, "STATUS ===>");
+		scr.input(6, 59, 1, "status", b.status ?? "", { bright: b.errField === "status" });
+		scr.text(6, 62, "A/H/C", { color: "blue" });
 		if (list.length > 0) {
 			const end = Math.min(top + page, list.length);
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${end} OF ${list.length}`, { color: "white" });
@@ -57,7 +71,7 @@ export const browse: Program<BrowseState> = {
 				{ color });
 		});
 		if (list.length === 0) {
-			scr.text(9, 4, "NO CUSTOMERS MATCH THE FILTER", { color: "yellow" });
+			scr.text(9, 4, "NO CUSTOMERS MATCH THE SEARCH", { color: "yellow" });
 		} else if (top + page >= list.length) {
 			const stars = "*".repeat(Math.floor((scr.cols - 20) / 2));
 			scr.text(9 + shown.length, 4, stars + " BOTTOM OF DATA " + stars, { color: "blue" });
@@ -65,9 +79,12 @@ export const browse: Program<BrowseState> = {
 
 		message(scr, msg);
 		keys(scr, "PF1=HELP  PF3=EXIT  PF5=ADD  PF7=UP  PF8=DOWN  PF12=CANCEL");
-		if (b.errSel && shown.some((c) => c.id === b.errSel)) {
+		const searching = searchFields.some((f) => b[f]);
+		if (b.errField) {
+			scr.cursorTo(b.errField);
+		} else if (b.errSel && shown.some((c) => c.id === b.errSel)) {
 			scr.cursorTo("sel:" + b.errSel);
-		} else if (shown.length > 0 && !b.filter) {
+		} else if (shown.length > 0 && !searching) {
 			scr.cursorTo("sel:" + shown[0].id);
 		} else {
 			scr.cursorTo("filter");
@@ -77,11 +94,18 @@ export const browse: Program<BrowseState> = {
 
 	async handle(ctx, b, input) {
 		b.msg = "";
-		b.errSel = undefined;
-		const filter = (input.fields.filter ?? "").toUpperCase();
-		if (filter !== (b.filter ?? "") && input.aid === "ENTER") {
-			b.filter = filter;
+		b.errSel = b.errField = undefined;
+		const typed = Object.fromEntries(searchFields.map((f) => [f, (input.fields[f] ?? "").trim().toUpperCase()]));
+		if (input.aid === "ENTER" && searchFields.some((f) => typed[f] !== (b[f] ?? ""))) {
+			for (const f of searchFields) b[f] = typed[f];
 			b.top = 0;
+			if (b.state && !/^[A-Z]{2}$/.test(b.state)) {
+				b.msg = "CUS0104E STATE MUST BE A TWO LETTER CODE";
+				b.errField = "state";
+			} else if (b.status && !["A", "H", "C"].includes(b.status)) {
+				b.msg = "CUS0105E STATUS MUST BE A (ACTIVE), H (HOLD) OR C (CLOSED)";
+				b.errField = "status";
+			}
 			return b;
 		}
 		const page = pageRows(ctx);
@@ -118,7 +142,7 @@ export const browse: Program<BrowseState> = {
 			case pf(8): {
 				let count = 0;
 				try {
-					count = (await listCustomers(ctx.db, b.filter ?? "")).length;
+					count = (await listCustomers(ctx.db, b.filter ?? "", search(b))).length;
 				} catch (e) {
 					b.msg = fail(e);
 					return b;
@@ -133,7 +157,7 @@ export const browse: Program<BrowseState> = {
 				return b;
 			}
 			case "CLEAR":
-				b.filter = "";
+				for (const f of searchFields) b[f] = "";
 				b.top = 0;
 				return b;
 		}

@@ -8,6 +8,7 @@ import { HttpError, int, str } from "../http";
 import { activity, history } from "./activity";
 import { browse } from "./browse";
 import { detail } from "./detail";
+import { fieldHelp } from "./fieldhelp";
 import { help } from "./help";
 import { joblog, jobs } from "./jobs";
 import { menu } from "./menu";
@@ -66,7 +67,10 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 		} else if (!aids.has(aid)) {
 			throw bad(`unknown aid "${aid}"`);
 		} else if (aid === "PF1" && current.p !== "help") {
-			next = { p: "help", back: current }; // PF1 is help on every screen
+			// PF1 is help on every screen: for the field the cursor is in if
+			// it has any, otherwise the tutorial.
+			const field = input(body, aid).cursorField;
+			next = fieldHelp(current, field) ? { p: "help", back: current, field } : { p: "help", back: current };
 		} else {
 			next = await (programs[current.p] as Program<State>).handle(ctx, current, input(body, aid));
 		}

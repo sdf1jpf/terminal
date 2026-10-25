@@ -4,7 +4,7 @@
 //	GET    /v1/health
 //	POST   /v1/session              logon: -> {"userid"}
 //	POST   /v1/screen               the terminal's screens; see docs/screen-protocol.md
-//	GET    /v1/customers?prefix=X   list, ordered by name
+//	GET    /v1/customers?prefix=X   list, ordered by name; also &city=, &state=, &status=
 //	POST   /v1/customers            create
 //	GET    /v1/customers/{id}
 //	PUT    /v1/customers/{id}       update; "version" must match
@@ -64,7 +64,8 @@ async function route(req: Request, env: Env): Promise<Response> {
 	} else if (path === "/v1/customers") {
 		if (m === "GET") {
 			await authenticate(env, req);
-			return json(200, await listCustomers(env.DB, url.searchParams.get("prefix") ?? ""));
+			const q = (k: string) => url.searchParams.get(k) ?? "";
+			return json(200, await listCustomers(env.DB, q("prefix"), { city: q("city"), state: q("state"), status: q("status") }));
 		}
 		if (m === "POST") return create(req, env, await authenticate(env, req));
 	} else if (path.startsWith("/v1/customers/") && path.split("/").length === 4) {

@@ -96,6 +96,10 @@ describe("customers", () => {
 		const k = await call("GET", "/v1/customers?prefix=k", { token });
 		expect(k.body.map((c: { name: string }) => c.name)).toEqual(["KEYSTONE STEEL"]);
 
+		const ca = await call("GET", "/v1/customers?city=fre&state=ca&status=h", { token });
+		expect(ca.body.map((c: { id: string }) => c.id)).toEqual(["000118"]);
+		expect((await call("GET", "/v1/customers?state=oh&status=c", { token })).body).toEqual([]);
+
 		// LIKE wildcards in the prefix are literal.
 		expect((await call("GET", "/v1/customers?prefix=%25", { token })).body).toEqual([]);
 	});

@@ -9,7 +9,17 @@ import type { Ctx, Screen } from "./screen";
 export type Mode = "inquiry" | "update" | "add" | "delete";
 
 export interface MenuState { p: "menu"; option?: string; msg?: string }
-export interface BrowseState { p: "browse"; filter?: string; top?: number; msg?: string; errSel?: string }
+export interface BrowseState {
+	p: "browse";
+	filter?: string; // name starts with
+	city?: string; // city starts with
+	state?: string;
+	status?: string;
+	top?: number;
+	msg?: string;
+	errSel?: string;
+	errField?: string;
+}
 export interface DetailState {
 	p: "detail";
 	mode: Mode;
@@ -21,7 +31,7 @@ export interface DetailState {
 	msg?: string;
 }
 export interface ReportState { p: "report"; msg?: string }
-export interface HelpState { p: "help"; back: State }
+export interface HelpState { p: "help"; back: State; field?: string } // field: help for that field
 export interface ActivityState {
 	p: "activity";
 	back: State;

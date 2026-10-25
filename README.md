@@ -11,7 +11,7 @@ Worker.
 
  NAME STARTS WITH ===> ____________________                ROW 1 TO 13 OF 24
  SELECT: S=SHOW  U=UPDATE  D=DELETE  A=ACTIVITY  H=HISTORY
-
+ CITY ===> __________________  STATE ===> __  STATUS ===> _  A/H/C
  S CUST NO  NAME                     CITY            ST      BALANCE STAT
  -----------------------------------------------------------------------------
  _ 000101   ACME TOOL & DIE          DAYTON          OH      $12,450 A
@@ -292,6 +292,15 @@ message and PF key lines stay at the bottom, the date and time stay at the
 right edge, and the browse list and the credit report show as many rows as
 fit. Anything you have typed but not yet sent survives a resize. If the window
 changes while the host is busy, the screen is redrawn when the reply arrives.
+
+## Searching and help
+
+The browse list (menu option 1) searches by name, city, state and status
+together: fill in any of the fields and press Enter. Clear empties them all.
+The API takes the same search as `GET /v1/customers?prefix=&city=&state=&status=`.
+
+PF1 with the cursor in an input field explains that field (CUSH01). PF1
+again, or PF1 anywhere else, shows the keyboard tutorial. PF3 goes back.
 
 ## Account activity and change history
 
