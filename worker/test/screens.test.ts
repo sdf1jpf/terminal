@@ -295,10 +295,7 @@ describe("activity and history screens", () => {
 		await t.send("PF3");
 
 		await t.send("PF6");
-		expect(t.scr.map).toBe("CUSM04");
-		// PF5 goes back to the same event history, so PF3 then leaves it.
-		await t.send("PF5");
-		expect(t.scr.map).toBe("CUSM03");
+		expect(t.message).toMatch(/^CUS0000W PF6/);
 		await t.send("PF5");
 		expect(t.scr.map).toBe("CUSI01");
 		expect(t.row(9)).toContain(inv.id);
@@ -332,14 +329,23 @@ describe("activity and history screens", () => {
 		expect(t.message).toBe("CUS0220I CUSTOMER 000102 DELETED");
 
 		await t.send("PF3");
-		await t.fill("option", "6 102").send("ENTER");
-		expect(t.scr.map).toBe("CUSM04");
+		await t.fill("option", "5 102").send("ENTER");
+		expect(t.scr.map).toBe("CUSM03");
 		expect(t.message).toBe("CUS0251I CUSTOMER 000102 HAS BEEN DELETED - HISTORY ONLY");
-		expect(t.row(8)).toContain("RECORD DELETED");
-		expect(t.row(9)).toMatch(/CHANGE CITY .*ROANOKE > SALEM/);
+		expect(t.row(11)).toContain("DELETED  RECORD DELETED");
+		expect(t.row(12)).toMatch(/CHANGED  CITY ROANOKE > SALEM/);
+		await t.fill("line", "2").send("ENTER");
+		expect(t.scr.map).toBe("CUSM05");
+		expect(t.row(8)).toContain("ROANOKE");
+
+		// The old option 6 still gets there.
+		await t.send("PF3");
+		await t.send("PF3");
+		await t.fill("option", "6 102").send("ENTER");
+		expect(t.scr.map).toBe("CUSM03");
 	});
 
-	it("opens from the browse list with A and H", async () => {
+	it("opens from the browse list with A, and H as before", async () => {
 		const t = await Terminal.logon();
 		await t.send("PF4");
 		const first = t.scr.cursor?.field ?? "";
@@ -348,7 +354,7 @@ describe("activity and history screens", () => {
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSM01");
 		await t.fill(first, "h").send("ENTER");
-		expect(t.scr.map).toBe("CUSM04");
+		expect(t.scr.map).toBe("CUSM03");
 	});
 });
 

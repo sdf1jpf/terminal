@@ -1,7 +1,8 @@
 import { createCustomer, deleteCustomer, getCustomer, updateCustomer } from "../data";
 import { parseEditable, type Customer } from "../customer";
 import { HttpError } from "../http";
-import { newActivity, newHistory } from "./activity";
+import { newActivity } from "./activity";
+import { newInvoices } from "./invoices";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, right, stamp, value, type Color, type Ctx, type Opts, type Screen } from "./screen";
 import { fail, isCode, pf, setMsg, type DetailState, type Mode, type Next, type Program, type State } from "./program";
 
@@ -92,7 +93,7 @@ export const detail: Program<DetailState> = {
 
 		message(scr, d.msg ?? "");
 		keys(scr, {
-			inquiry: "PF1=HELP PF3=EXIT PF4=UPDATE PF5=EVENTS PF6=HISTORY PF9=DELETE PF12=CANCEL",
+			inquiry: "PF1=HELP PF3=EXIT PF4=UPDATE PF5=EVENTS PF6=INVOICES PF9=DELETE PF12=CANCEL",
 			update: "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF",
 			add: "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF",
 			delete: "PF1=HELP  PF3=EXIT  PF10=CONFIRM DELETE  PF12=CANCEL",
@@ -191,7 +192,7 @@ async function handleInquiry(ctx: Ctx, d: DetailState, aid: string, f: Record<st
 				d.errField = "id";
 				return d;
 			}
-			return aid === pf(5) ? newActivity(ctx, d, d.cust!.id) : newHistory(ctx, d, d.cust!.id);
+			return aid === pf(5) ? newActivity(ctx, d, d.cust!.id) : newInvoices(d, d.cust!.id);
 		case "CLEAR":
 			return { p: "detail", mode: "inquiry", back: d.back };
 	}

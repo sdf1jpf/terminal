@@ -1,6 +1,6 @@
 import { listCustomers, type Search } from "../data";
 import type { Customer } from "../customer";
-import { newActivity, newHistory } from "./activity";
+import { newActivity } from "./activity";
 import { loadDetail, newAdd } from "./detail";
 import { newInvoices } from "./invoices";
 import { header, invalidKey, keys, label, message, MIN_COLS, money, newScreen, pad, lpad, right, type Ctx, type Color } from "./screen";
@@ -58,7 +58,7 @@ export const browse: Program<BrowseState> = {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${end} OF ${list.length}`, { color: "white" });
 		}
 
-		scr.text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE  A=EVENTS  H=HISTORY  I=INVOICES", { color: "blue" });
+		scr.text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE  A=EVENTS  I=INVOICES", { color: "blue" });
 		scr.text(7, 2, `S CUST NO  ${pad("NAME", nameW)} ${pad("CITY", cityW)} ST      BALANCE STAT`,
 			{ color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
@@ -117,8 +117,7 @@ export const browse: Program<BrowseState> = {
 					const code = v.trim().toUpperCase();
 					if (!name.startsWith("sel:") || code === "") continue;
 					const id = name.slice(4);
-					if (code === "A") return newActivity(ctx, b, id);
-					if (code === "H") return newHistory(ctx, b, id);
+					if (code === "A" || code === "H") return newActivity(ctx, b, id); // H: the old change history
 					if (code === "I") return newInvoices(b, id);
 					const mode = codes[code];
 					if (!mode) {
