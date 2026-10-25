@@ -333,6 +333,9 @@ An invoice goes OPEN, then BILLED, then PAID:
   invoice (`I`) transaction, and the lines can no longer be changed.
 - **PF11 marks it paid:** a payment (`P`) for the total is posted.
 
+The same steps are in the API under `/v1/invoices` (see the route list in
+`worker/src/index.ts`).
+
 Each step runs as one D1 transaction, so stock, the invoice and the
 customer's balance always move together.
 

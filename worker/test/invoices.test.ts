@@ -1,9 +1,10 @@
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import {
 	addLine, billInvoice, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
 } from "../src/invoices";
 import { HttpError } from "../src/http";
+import { accessJWT } from "./access";
 
 const db = env.DB;
 
@@ -106,5 +107,40 @@ describe("invoices", () => {
 		await cancelInvoice(db, inv.id);
 		expect(await onHand("TAP-DUCT")).toBe(tape);
 		expect((await refused(() => getInvoice(db, inv.id))).status).toBe(404);
+	});
+});
+
+describe("invoices API", () => {
+	const worker = (exports as unknown as { default: Fetcher }).default;
+	async function call(method: string, path: string, body?: unknown) {
+		const headers: Record<string, string> = { "Cf-Access-Jwt-Assertion": await accessJWT() };
+		if (body !== undefined) headers["Content-Type"] = "application/json";
+		const res = await worker.fetch(`https://api.test${path}`, {
+			method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+		});
+		return { status: res.status, body: res.status === 204 ? null : await res.json<any>() };
+	}
+
+	it("builds, bills and pays an invoice over REST", async () => {
+		const open = await call("POST", "/v1/invoices", { customer_id: "000113", po_number: "rest-1" });
+		expect(open.status).toBe(201);
+		const id = open.body.id;
+		expect((await call("POST", `/v1/invoices/${id}/lines`, { sku: "hyd-0250", quantity: 2 })).status).toBe(201);
+		expect((await call("POST", `/v1/invoices/${id}/lines`, { sku: "plt-4848", quantity: 1 })).status).toBe(201);
+		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 3 })).body.quantity).toBe(3);
+		expect((await call("DELETE", `/v1/invoices/${id}/lines/2`)).status).toBe(204);
+		expect((await call("PUT", `/v1/invoices/${id}`, { po_number: "rest-2" })).body.po_number).toBe("REST-2");
+		const short = await call("POST", `/v1/invoices/${id}/lines`, { sku: "vlv-0100", quantity: 1 });
+		expect(short).toMatchObject({ status: 422, body: { error: { field: "qty" } } });
+
+		const got = await call("GET", `/v1/invoices/${id}`);
+		expect(got.body.lines).toHaveLength(1);
+		expect((await call("POST", `/v1/invoices/${id}/bill`)).body.invoice.status).toBe("B");
+		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 1 })).status).toBe(422);
+		expect((await call("POST", `/v1/invoices/${id}/pay`)).body.transaction.type).toBe("P");
+		expect((await call("GET", "/v1/invoices?customer=000113")).body.map((i: { id: string }) => i.id)).toContain(id);
+		expect((await call("GET", `/v1/invoices/${id}/lines/x`)).status).toBe(405);
+		expect((await call("DELETE", `/v1/invoices/${id}/lines/x`)).status).toBe(404);
+		expect((await call("PATCH", `/v1/invoices/${id}`)).status).toBe(405);
 	});
 });
