@@ -99,6 +99,32 @@ Notes:
   a public deployment, add a Cloudflare rate-limiting rule on
   `POST /v1/session`, or put Cloudflare Access in front of the Worker.
 
+## Continuous integration and deployment
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- **Terminal client:** `gofmt`, `go vet`, `go test -race`, and a build of `cmd/terminal`.
+- **API:** `npm ci`, the TypeScript typecheck, and the Worker tests in the Workers runtime.
+
+When both pass on a push to `main`, the **Deploy API** job applies any new D1
+migrations to the remote database, deploys the Worker, and checks
+`/v1/health` on the deployed URL.
+
+One-time setup:
+
+1. **Create a Cloudflare API token** (Cloudflare dashboard → My Profile → API
+   Tokens → Create Token → "Edit Cloudflare Workers" template). Add
+   **Account → D1 → Edit** to it, and limit it to the Justin Frank account.
+2. **Add it to GitHub** as a repository secret named `CLOUDFLARE_API_TOKEN`
+   (Settings → Secrets and variables → Actions → New repository secret).
+3. **Set the logon users once** with `npx wrangler secret put CUSTAPI_USERS`.
+   Worker secrets persist across deploys, so CI doesn't manage them.
+4. **Optionally load the demo customers** with `npm run db:seed:remote`.
+
+The deploy job uses a GitHub environment named `production`. To require
+approval before each deploy, add required reviewers to that environment
+(Settings → Environments → production).
+
 ## Terminal options
 
 | Flag / env | Meaning |
@@ -189,6 +215,7 @@ cd worker && npm test && npm run typecheck # API, in the Workers runtime
 ```
 
 ```
+.github/workflows/   CI: test both halves, deploy the Worker from main
 cmd/terminal/        the terminal client (Go)
 internal/tn3270/     terminal emulation: screen buffer, fields, keyboard, rendering
 internal/host/       the application screens; they call a Backend interface
