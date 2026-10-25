@@ -302,6 +302,11 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSCRREV` | Credit review. STEP010 lists active accounts at 90% of their limit or more. STEP020 puts active accounts that are over their limit on hold, and records each hold in the change history as made by `CUSCRREV`. RC 0004 if it held any. |
 | `CUSSTMT` | Statements for every open account with a balance, with the last 30 days of activity. |
 
+In the terminal, menu option 7 opens **BATCH JOBS** (CUSJ01). Type a job name
+at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,
+like SDSF. PF5 refreshes the list, and `S` beside a job opens its output listing
+(CUSJ02), which PF7 and PF8 scroll.
+
 The deploy job creates the queue the first time, which needs
 **Account → Queues → Edit** on the `CLOUDFLARE_API_TOKEN`. You can also
 create it yourself with `npx wrangler queues create customer-jobs`. Wrangler

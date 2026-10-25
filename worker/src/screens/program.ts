@@ -33,7 +33,21 @@ export interface ActivityState {
 }
 export interface HistoryState { p: "history"; back: State; id?: string; top?: number; errField?: string; msg?: string }
 
-export type State = MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | HistoryState;
+export interface JobsState {
+	p: "jobs";
+	back: State;
+	job?: string; // the submit field, kept across a failed submit
+	ids?: string[]; // job IDs on the rows shown, for the selection codes
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface JobLogState { p: "joblog"; back: State; id: string; top?: number; msg?: string }
+
+export type State =
+	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | HistoryState
+	| JobsState | JobLogState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

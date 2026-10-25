@@ -105,7 +105,7 @@ async function route(req: Request, env: Env): Promise<Response> {
 		if (m === "POST") {
 			const user = await authenticate(env, req);
 			const body = await readJSON(req, ["name"]);
-			return json(202, await submitJob(env, user, str(body, "name")));
+			return json(202, await submitJob(env.DB, env.JOBS, user, str(body, "name")));
 		}
 	} else if (path.startsWith("/v1/jobs/") && path.split("/").length === 4) {
 		if (m === "GET") {

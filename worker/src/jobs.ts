@@ -34,6 +34,7 @@ export interface StepResult {
 
 interface JobDef {
 	title: string;
+	short: string; // for the submit panel's job list
 	steps: { name: string; run: (db: D1Database, job: Job) => Promise<StepResult> }[];
 }
 
@@ -41,10 +42,12 @@ interface JobDef {
 export const jobLibrary: Record<string, JobDef> = {
 	CUSAGING: {
 		title: "AGED BALANCES REPORT",
+		short: "AGED BALANCES",
 		steps: [{ name: "STEP010", run: agedBalances }],
 	},
 	CUSCRREV: {
 		title: "CREDIT REVIEW - HOLD ACCOUNTS OVER LIMIT",
+		short: "CREDIT REVIEW",
 		steps: [
 			{ name: "STEP010", run: creditWatchList },
 			{ name: "STEP020", run: holdOverLimit },
@@ -52,19 +55,20 @@ export const jobLibrary: Record<string, JobDef> = {
 	},
 	CUSSTMT: {
 		title: "CUSTOMER STATEMENTS",
+		short: "STATEMENTS",
 		steps: [{ name: "STEP010", run: statements }],
 	},
 };
 
 // submitJob records a job and puts it on the input queue.
-export async function submitJob(env: Env, user: string, name: string): Promise<Job> {
+export async function submitJob(db: D1Database, queue: Queue<JobMessage>, user: string, name: string): Promise<Job> {
 	name = name.trim().toUpperCase();
 	if (!jobLibrary[name]) {
 		throw new HttpError(422, "invalid", `job ${name || "(blank)"} is not in the job library`, "job");
 	}
-	const [, inserted] = await env.DB.batch<Job>([
-		env.DB.prepare("UPDATE counters SET value = value + 1 WHERE name = 'job_id'"),
-		env.DB.prepare(
+	const [, inserted] = await db.batch<Job>([
+		db.prepare("UPDATE counters SET value = value + 1 WHERE name = 'job_id'"),
+		db.prepare(
 			`INSERT INTO jobs (id, name, status, submitted, submitted_by)
 			 SELECT printf('JOB%05d', value), ?, 'QUEUED', ?, ? FROM counters WHERE name = 'job_id'
 			 RETURNING *`,
@@ -72,9 +76,9 @@ export async function submitJob(env: Env, user: string, name: string): Promise<J
 	]);
 	const job = inserted.results[0];
 	try {
-		await env.JOBS.send({ id: job.id } satisfies JobMessage);
+		await queue.send({ id: job.id } satisfies JobMessage);
 	} catch (e) {
-		await env.DB.prepare("DELETE FROM jobs WHERE id = ?").bind(job.id).run();
+		await db.prepare("DELETE FROM jobs WHERE id = ?").bind(job.id).run();
 		throw e;
 	}
 	return job;

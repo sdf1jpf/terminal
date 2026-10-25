@@ -9,6 +9,7 @@ import { activity, history } from "./activity";
 import { browse } from "./browse";
 import { detail } from "./detail";
 import { help } from "./help";
+import { joblog, jobs } from "./jobs";
 import { menu } from "./menu";
 import { report } from "./report";
 import { MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
@@ -19,7 +20,7 @@ export const requestKeys = [
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
-	menu, browse, detail, report, help, activity, history,
+	menu, browse, detail, report, help, activity, history, jobs, joblog,
 };
 
 // The commarea's own version. Bump it when a state shape changes in a way
@@ -43,6 +44,7 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 	const aid = str(body, "aid");
 	const ctx: Ctx = {
 		db: env.DB,
+		jobs: env.JOBS,
 		user,
 		rows: clamp(int(body, "rows"), MIN_ROWS, MAX_ROWS),
 		cols: clamp(int(body, "cols"), MIN_COLS, MAX_COLS),
