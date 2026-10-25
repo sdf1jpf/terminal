@@ -45,7 +45,7 @@ export interface EventState {
 	p: "event";
 	back: State;
 	id: string; // the customer
-	kind: "A" | "V" | "T" | "E"; // audit row, invoice, transaction, EDI interchange
+	kind: "A" | "V" | "T" | "E" | "S"; // audit row, invoice, transaction, EDI interchange, shipment
 	key: string;
 	line: number; // its line on the event history
 	msg?: string;
@@ -134,6 +134,25 @@ export interface POState {
 	errField?: string;
 	msg?: string;
 }
+export interface ShipmentsState {
+	p: "shipments";
+	back: State;
+	status?: string; // only shipments in this status: P, K or S; "" for all
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface ShipmentState {
+	p: "shipment";
+	back: State;
+	id: string;
+	top?: number;
+	vals?: Record<string, string>; // cartons, weight and carrier, kept across a failed step
+	confirm?: boolean; // PF9 was pressed once: press it again to cancel the shipment
+	errField?: string;
+	msg?: string;
+}
 export interface VendorsState { p: "vendors"; back: State; top?: number; errSel?: string; msg?: string }
 
 export interface ConsoleState {
@@ -170,7 +189,8 @@ export interface OutputState { p: "output"; back: State; id: string; top?: numbe
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
-	| EdiState | EdiDocState | POsState | POState | VendorsState | ConsoleState | ScheduleState | SpoolState | OutputState;
+	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
+	| ConsoleState | ScheduleState | SpoolState | OutputState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -207,7 +227,7 @@ export function isCode(err: unknown, code: string): err is HttpError {
 
 // messenger panels can show a message passed back from a child screen.
 export function setMsg(s: State, msg: string): boolean {
-	if (s.p === "browse" || s.p === "menu" || s.p === "invoices" || s.p === "edi" || s.p === "pos") {
+	if (s.p === "browse" || s.p === "menu" || s.p === "invoices" || s.p === "edi" || s.p === "pos" || s.p === "shipments") {
 		s.msg = msg;
 		return true;
 	}

@@ -3,9 +3,10 @@
 //
 // An invoice is OPEN (O) while it is being built. Adding a line takes the
 // quantity out of stock at the product's current price; changing or
-// removing a line moves the difference back. Billing (B) posts the total to
-// the customer's account as an invoice transaction and freezes the lines.
-// Marking it paid (P) posts the payment.
+// removing a line moves the difference back. Releasing it to the warehouse
+// (shipping.ts) freezes the lines, and only a shipped invoice can be billed.
+// Billing (B) posts the total to the customer's account as an invoice
+// transaction. Marking it paid (P) posts the payment.
 //
 // Each change is one D1 batch, which runs as one transaction. Statements
 // that must happen together carry the same guard, evaluated against the
@@ -81,7 +82,7 @@ export async function getInvoice(db: D1Database, id: string): Promise<{ invoice:
 export async function setPO(db: D1Database, id: string, po: string): Promise<Invoice> {
 	po = po.trim().toUpperCase();
 	if (po.length > 22) throw bad("po", "PO number is limited to 22 characters");
-	const row = await db.prepare("UPDATE invoices SET po_number = ?2 WHERE id = ?1 AND status = 'O' RETURNING *")
+	const row = await db.prepare(`UPDATE invoices SET po_number = ?2 WHERE id = ?1 AND ${isOpen} RETURNING *`)
 		.bind(id, po).first<Invoice>();
 	if (row) return row;
 	await mustBeOpen(db, id);
@@ -92,7 +93,10 @@ function checkQty(qty: number): void {
 	if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) throw bad("qty", "quantity must be a whole number from 1 to 99999");
 }
 
-const isOpen = "EXISTS (SELECT 1 FROM invoices WHERE id = ?1 AND status = 'O')";
+// isOpen: the invoice can still be changed, that is it is open and not yet
+// released to the warehouse.
+const isOpen = `EXISTS (SELECT 1 FROM invoices WHERE id = ?1 AND status = 'O')
+                AND NOT EXISTS (SELECT 1 FROM shipments WHERE invoice_id = ?1)`;
 const retotal = (db: D1Database, id: string) => db.prepare(
 	`UPDATE invoices SET total = (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_lines WHERE invoice_id = ?1)
 	 WHERE id = ?1 AND status = 'O'`,
@@ -104,6 +108,8 @@ async function mustBeOpen(db: D1Database, id: string): Promise<void> {
 	if (invoice.status !== "O") {
 		throw bad("sku", `invoice ${id} is ${statusNames[invoice.status].toLowerCase()} - it can no longer be changed`);
 	}
+	const shp = await db.prepare("SELECT id FROM shipments WHERE invoice_id = ?").bind(id).first<{ id: string }>();
+	if (shp) throw bad("sku", `invoice ${id} is released to the warehouse on ${shp.id} - cancel the shipment to change it`);
 }
 
 // addLine adds a product to an open invoice at its current price and takes
@@ -186,18 +192,18 @@ export async function cancelInvoice(db: D1Database, id: string): Promise<void> {
 			 WHERE sku IN (SELECT sku FROM invoice_lines WHERE invoice_id = ?1) AND ${isOpen}`,
 		).bind(id),
 		db.prepare(`DELETE FROM invoice_lines WHERE invoice_id = ?1 AND ${isOpen}`).bind(id),
-		db.prepare("DELETE FROM invoices WHERE id = ? AND status = 'O'").bind(id),
+		db.prepare(`DELETE FROM invoices WHERE id = ?1 AND ${isOpen}`).bind(id),
 	]);
 	if (deleted.meta.changes === 1) return;
 	await mustBeOpen(db, id);
 }
 
 // billInvoice posts an open invoice's total to its customer's account. The
-// invoice needs at least one line and an active customer.
+// invoice must have shipped, and its customer must be active.
 export async function billInvoice(db: D1Database, user: string, id: string): Promise<{ invoice: Invoice; transaction: Transaction }> {
 	const ready = `EXISTS (SELECT 1 FROM invoices i JOIN customers c ON c.id = i.customer_id
 	                       WHERE i.id = ?1 AND i.status = 'O' AND c.status = 'A')
-	               AND EXISTS (SELECT 1 FROM invoice_lines WHERE invoice_id = ?1)`;
+	               AND EXISTS (SELECT 1 FROM shipments WHERE invoice_id = ?1 AND status = 'S')`;
 	const ts = now();
 	const [, posted, billed] = await db.batch<any>([
 		db.prepare(
@@ -217,6 +223,9 @@ export async function billInvoice(db: D1Database, user: string, id: string): Pro
 	const { invoice, lines } = await getInvoice(db, id);
 	if (invoice.status !== "O") throw bad("sku", `invoice ${id} is already ${statusNames[invoice.status].toLowerCase()}`);
 	if (lines.length === 0) throw bad("sku", "add at least one line before billing");
+	const shp = await db.prepare("SELECT id, status FROM shipments WHERE invoice_id = ?").bind(id).first<{ id: string; status: string }>();
+	if (!shp) throw bad("sku", `invoice ${id} has not shipped - release it to the warehouse first`);
+	if (shp.status !== "S") throw bad("sku", `invoice ${id} has not shipped - ${shp.id} is still in the warehouse`);
 	throw bad("sku", `customer ${invoice.customer_id} is not active - the invoice cannot be billed`);
 }
 

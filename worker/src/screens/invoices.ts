@@ -5,6 +5,7 @@ import {
 	statusNames, type Invoice, type InvoiceLine,
 } from "../invoices";
 import { bill } from "../edi";
+import { release, shipmentFor, shipStatusNames, type Shipment } from "../shipping";
 import { searchProducts } from "../products";
 import { padID } from "./detail";
 import { newSkuSearch, searchText } from "./skusearch";
@@ -212,7 +213,10 @@ export const invoice: Program<InvoiceState> = {
 		} catch (e) {
 			msg = isCode(e, "not_found") ? `CUS0504E INVOICE ${s.id} NOT FOUND` : fail(e);
 		}
-		const open = inv?.status === "O";
+		// An open invoice can be changed until it is released to the warehouse.
+		const shp = inv ? await shipmentFor(ctx.db, inv.id) : undefined;
+		const released = inv?.status === "O" && !!shp;
+		const open = inv?.status === "O" && !shp;
 
 		label(scr, 4, 4, dots("INVOICE", 12));
 		scr.text(4, 18, s.id, { color: "white", bright: true });
@@ -243,6 +247,8 @@ export const invoice: Program<InvoiceState> = {
 				label(scr, 8, 37, "QTY ===>");
 				scr.input(8, 46, 5, "qty", s.vals?.qty ?? "", { numeric: true, bright: s.errField === "qty" });
 				scr.text(9, 2, "SELECT: D=DELETE LINE    OVERTYPE A QUANTITY TO CHANGE IT", { color: "blue" });
+			} else if (shp) {
+				scr.text(8, 4, shipLine(shp), { color: shp.status === "S" ? "green" : "yellow", bright: true });
 			}
 
 			const rows = lineRows(ctx);
@@ -268,7 +274,9 @@ export const invoice: Program<InvoiceState> = {
 
 		message(scr, msg);
 		keys(scr, open
-			? "ENTER=APPLY PF1=HELP PF3=EXIT PF4=FIND SKU PF7/8=SCROLL PF9=CANCEL PF10=BILL"
+			? "ENTER=APPLY PF1=HELP PF3=EXIT PF4=FIND SKU PF6=SHIP PF7/8=SCROLL PF9=CANCEL"
+			: released
+				? "PF1=HELP  PF3=EXIT  PF6=SHOW SHIPMENT  PF7/8=SCROLL  PF10=BILL  PF12=CANCEL"
 			: inv?.status === "B"
 				? "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF11=MARK PAID  PF12=CANCEL"
 				: "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF12=CANCEL");
@@ -282,11 +290,15 @@ export const invoice: Program<InvoiceState> = {
 		const confirm = s.confirm;
 		s.msg = s.errField = s.confirm = s.focus = undefined;
 		// The keys that act on the invoice depend on its status: lines are
-		// changed only while it is open, and only a billed one can be paid.
-		const active: Record<string, string> = { ENTER: "O", PF4: "O", PF9: "O", PF10: "O", PF11: "B" };
+		// changed only while it is open (O) and not released to the
+		// warehouse (R), and only a billed one can be paid.
+		const active: Record<string, string> = { ENTER: "O", PF4: "O", PF6: "OR", PF9: "O", PF10: "R", PF11: "B" };
 		if (active[input.aid]) {
-			const status = await getInvoice(ctx.db, s.id).then(({ invoice }) => invoice.status, () => "");
-			if (status !== active[input.aid]) {
+			const status = await getInvoice(ctx.db, s.id).then(
+				async ({ invoice }) => (invoice.status === "O" && (await shipmentFor(ctx.db, invoice.id)) ? "R" : invoice.status),
+				() => "",
+			);
+			if (!status || !active[input.aid].includes(status)) {
 				s.msg = input.aid === "ENTER" ? undefined : invalidKey(input.aid);
 				return s;
 			}
@@ -300,6 +312,16 @@ export const invoice: Program<InvoiceState> = {
 			case pf(4):
 				s.vals = { sku: (input.fields.sku ?? "").trim().toUpperCase(), qty: (input.fields.qty ?? "").trim() };
 				return newSkuSearch(s, s.vals.sku);
+			case pf(6): {
+				const shp = await shipmentFor(ctx.db, s.id);
+				if (shp && s.back.p === "shipment" && s.back.id === shp.id) return s.back;
+				if (shp) return { p: "shipment", back: s, id: shp.id };
+				return act(s, async () => {
+					const x = await release(ctx.db, ctx.user, s.id);
+					s.msg = `CUS0515I INVOICE ${s.id} RELEASED TO THE WAREHOUSE ON ${x.id} - PICK TICKET PRINTED`;
+					return s;
+				});
+			}
 			case pf(7):
 			case pf(8): {
 				const { lines } = await getInvoice(ctx.db, s.id).catch(() => ({ lines: [] }));
@@ -333,6 +355,11 @@ export const invoice: Program<InvoiceState> = {
 		return s;
 	},
 };
+
+function shipLine(x: Shipment): string {
+	if (x.status === "S") return `SHIPPED ON ${x.id} VIA ${x.carrier} ${x.tracking}`;
+	return `RELEASED TO THE WAREHOUSE ON ${x.id} - ${shipStatusNames[x.status]} - PF6 SHOWS IT`;
+}
 
 function back(s: InvoiceState, msg?: string): Next {
 	if (msg && s.back.p === "invoices") s.back.msg = msg;

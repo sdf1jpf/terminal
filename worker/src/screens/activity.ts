@@ -6,6 +6,7 @@ import { loadDetail, padID } from "./detail";
 import { newInvoices } from "./invoices";
 import { getInvoice, statusNames, type Invoice, type InvoiceLine } from "../invoices";
 import { typeNames, type Interchange } from "../edi";
+import { shipStatusNames, type Shipment } from "../shipping";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
 import { fail, isCode, pf, type ActivityState, type EventState, type Next, type Program } from "./program";
 
@@ -220,6 +221,10 @@ async function showLine(ctx: Ctx, a: ActivityState, line: string): Promise<Next>
 // The invoice an event concerns, if any.
 async function eventInvoice(ctx: Ctx, s: EventState): Promise<string> {
 	if (s.kind === "V") return s.key;
+	if (s.kind === "S") {
+		const x = await ctx.db.prepare("SELECT invoice_id FROM shipments WHERE id = ? AND customer_id = ?").bind(s.key, s.id).first<{ invoice_id: string }>();
+		return x?.invoice_id ?? "";
+	}
 	if (s.kind === "E") {
 		const x = await ctx.db.prepare("SELECT reference FROM edi WHERE id = ? AND partner = ?").bind(s.key, s.id).first<{ reference: string }>();
 		return x?.reference.match(/INV\d{5}/)?.[0] ?? "";
@@ -279,6 +284,21 @@ export const event: Program<EventState> = {
 				);
 				if (x.note) fields.push(["REJECTED", x.note.slice(0, scr.cols - 24)]);
 			}
+		} else if (s.kind === "S") {
+			const x = await ctx.db.prepare("SELECT * FROM shipments WHERE id = ? AND customer_id = ?").bind(s.key, s.id).first<Shipment>();
+			if (x) {
+				fields.push(
+					["EVENT", x.status === "S" ? "SHIPPED" : "RELEASED TO THE WAREHOUSE"],
+					["SHIPMENT", `${x.id}  ${shipStatusNames[x.status]}`],
+					["RELEASED", `${stamp(ctx, x.created)} BY ${x.created_by}`],
+				);
+				if (x.status === "S") {
+					fields.push(
+						["SHIPPED", `${stamp(ctx, x.shipped)} BY ${x.shipped_by}`],
+						["CARRIER", `${x.carrier}  ${x.tracking}  ${x.cartons} CTN ${x.weight} LB`],
+					);
+				}
+			}
 		} else {
 			const inv = await ctx.db.prepare("SELECT * FROM invoices WHERE id = ? AND customer_id = ?")
 				.bind(s.key, s.id).first<Invoice>();
@@ -313,7 +333,8 @@ export const event: Program<EventState> = {
 			scr.text(where, 4, `INVOICE ${id} IS NO LONGER ON FILE`, { color: "yellow" });
 		}
 		message(scr, msg);
-		keys(scr, `PF1=HELP  PF3=EXIT  ${inv ? "PF4=SHOW INVOICE  " : ""}${s.kind === "E" ? "PF6=SHOW X12  " : ""}PF12=CANCEL`);
+		const six = s.kind === "E" ? "PF6=SHOW X12  " : s.kind === "S" ? "PF6=SHOW SHIPMENT  " : "";
+		keys(scr, `PF1=HELP  PF3=EXIT  ${inv ? "PF4=SHOW INVOICE  " : ""}${six}PF12=CANCEL`);
 		return scr;
 	},
 
@@ -330,6 +351,7 @@ export const event: Program<EventState> = {
 			}
 			case pf(6):
 				if (s.kind === "E") return { p: "edidoc", back: s, id: s.key };
+				if (s.kind === "S") return { p: "shipment", back: s, id: s.key };
 				break;
 			case "ENTER":
 				return s;

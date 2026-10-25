@@ -40,6 +40,12 @@
 //	DELETE /v1/purchase-orders/{id}/lines/{n}
 //	POST   /v1/purchase-orders/{id}/send          send it to the vendor as an 850
 //	POST   /v1/purchase-orders/{id}/receive       receive goods: {"lines": {"1": 5}}, or {} for all
+//	GET    /v1/shipments?status=X   shipments, newest first (P picking, K packed, S shipped)
+//	POST   /v1/shipments            release an open invoice to the warehouse: {"invoice_id"}
+//	GET    /v1/shipments/{id}       -> {"shipment", "invoice", "lines"}
+//	DELETE /v1/shipments/{id}       cancel one that has not shipped
+//	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}
+//	POST   /v1/shipments/{id}/ship  {"carrier"}: UPS, FDX or TRK; sends an 856 for EDI orders
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
@@ -77,6 +83,7 @@ import { createProduct, getProduct, listProducts, parseProduct, productFields, s
 import {
 	addPOLine, cancelPO, createPO, deletePOLine, getPO, getVendor, listPOs, listVendors, receivePO, sendPO,
 } from "./purchasing";
+import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
 import { requestKeys, screen } from "./screens";
 
 export interface Env {
@@ -236,6 +243,25 @@ app.post("/v1/purchase-orders/:id/receive", signedOn, async (c) => {
 	return json(200, await receivePO(c.env.DB, c.get("user"), c.req.param("id").toUpperCase(), qty));
 });
 
+app.get("/v1/shipments", signedOn, async (c) => json(200, await listShipments(c.env.DB, c.req.query("status") ?? "")));
+app.post("/v1/shipments", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["invoice_id"]);
+	return json(201, await release(c.env.DB, c.get("user"), str(body, "invoice_id").trim().toUpperCase()));
+});
+app.get("/v1/shipments/:id", signedOn, async (c) => json(200, await getShipment(c.env.DB, c.req.param("id"))));
+app.delete("/v1/shipments/:id", signedOn, async (c) => {
+	await cancelShipment(c.env.DB, c.req.param("id").toUpperCase());
+	return noContent();
+});
+app.post("/v1/shipments/:id/pack", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["cartons", "weight"]);
+	return json(200, await pack(c.env.DB, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
+});
+app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["carrier"]);
+	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase(), str(body, "carrier")));
+});
+
 app.get("/v1/jobs", signedOn, async (c) => json(200, await listJobs(c.env.DB)));
 app.post("/v1/jobs", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["name"]);
@@ -305,6 +331,10 @@ for (const path of [
 	"/v1/purchase-orders/:id/lines/:line",
 	"/v1/purchase-orders/:id/send",
 	"/v1/purchase-orders/:id/receive",
+	"/v1/shipments",
+	"/v1/shipments/:id",
+	"/v1/shipments/:id/pack",
+	"/v1/shipments/:id/ship",
 	"/v1/jobs",
 	"/v1/jobs/:id",
 	"/v1/syslog",

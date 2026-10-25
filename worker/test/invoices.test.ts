@@ -5,6 +5,7 @@ import {
 } from "../src/invoices";
 import { HttpError } from "../src/http";
 import { accessJWT } from "./access";
+import { shipInvoice } from "./ship";
 
 const db = env.DB;
 
@@ -49,6 +50,8 @@ describe("invoices", () => {
 		expect(invoice).toMatchObject({ total: 450, po_number: "PO-4472" });
 		expect(lines.map((l) => l.line)).toEqual([1]);
 
+		expect((await refused(() => billInvoice(db, "IBMUSER", inv.id))).message).toMatch(/has not shipped - release it to the warehouse first/);
+		await shipInvoice(db, inv.id);
 		const billed = await billInvoice(db, "IBMUSER", inv.id);
 		expect(billed.invoice.status).toBe("B");
 		expect(billed.transaction).toMatchObject({ type: "I", amount: 450, reference: inv.id, balance: before + 450 });
@@ -135,6 +138,11 @@ describe("invoices API", () => {
 
 		const got = await call("GET", `/v1/invoices/${id}`);
 		expect(got.body.lines).toHaveLength(1);
+		const shp = await call("POST", "/v1/shipments", { invoice_id: id });
+		expect(shp.status).toBe(201);
+		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 2 })).body.error.message).toMatch(/released to the warehouse/);
+		expect((await call("POST", `/v1/shipments/${shp.body.id}/pack`, { cartons: 2, weight: 80 })).body.status).toBe("K");
+		expect((await call("POST", `/v1/shipments/${shp.body.id}/ship`, { carrier: "ups" })).body.shipment.status).toBe("S");
 		expect((await call("POST", `/v1/invoices/${id}/bill`)).body.invoice.status).toBe("B");
 		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 1 })).status).toBe(422);
 		expect((await call("POST", `/v1/invoices/${id}/pay`)).body.transaction.type).toBe("P");
