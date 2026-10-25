@@ -47,6 +47,7 @@ export interface Ctx {
 export class Screen {
 	readonly fields: Field[] = [];
 	cursor?: Cursor;
+	refresh?: number; // seconds: the client redraws the screen this often while idle
 
 	constructor(
 		readonly map: string,
@@ -75,7 +76,7 @@ export class Screen {
 	}
 
 	toJSON() {
-		return { map: this.map, rows: this.rows, cols: this.cols, fields: this.fields, cursor: this.cursor };
+		return { map: this.map, rows: this.rows, cols: this.cols, fields: this.fields, cursor: this.cursor, refresh: this.refresh };
 	}
 }
 
@@ -186,6 +187,14 @@ export function date(ctx: Ctx): string {
 export function time(ctx: Ctx): string {
 	const d = local(ctx);
 	return `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}:${two(d.getUTCSeconds())}`;
+}
+
+// clock formats an RFC 3339 time as "01/02 15:04:05" local time.
+export function clock(ctx: Ctx, iso: string): string {
+	const at = new Date(iso);
+	if (isNaN(at.getTime())) return "";
+	const d = local(ctx, at);
+	return `${two(d.getUTCMonth() + 1)}/${two(d.getUTCDate())} ${two(d.getUTCHours())}:${two(d.getUTCMinutes())}:${two(d.getUTCSeconds())}`;
 }
 
 // stamp formats an RFC 3339 time as "2006-01-02 15:04" local time.

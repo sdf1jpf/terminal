@@ -106,10 +106,30 @@ export interface EdiState {
 }
 export interface EdiDocState { p: "edidoc"; back: State; id: string; top?: number; msg?: string }
 
+export interface ConsoleState {
+	p: "console";
+	back: State;
+	cmd?: string; // the command line, kept when a command fails
+	top?: number; // the seq of the first line shown when scrolled back; unset follows the log
+	first?: number; // the seqs of the first and last lines shown
+	last?: number;
+	msg?: string;
+}
+export interface ScheduleState {
+	p: "schedule";
+	back: State;
+	vals?: Record<string, string>; // the job and cron fields, kept across a failed change
+	names?: string[]; // the jobs on the rows shown, for the selection codes
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState
-	| EdiState | EdiDocState;
+	| EdiState | EdiDocState | ConsoleState | ScheduleState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

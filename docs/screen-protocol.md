@@ -109,6 +109,15 @@ Keys at their default are left out. With color `default` the 3270 base
 colors apply: protected is blue, protected and bright is white, input is
 green, input and bright is red.
 
+### Refresh
+
+A screen that shows live data, such as the operator console, can carry
+`"refresh": 5` next to `cursor`: the client should send `REDRAW` every that
+many seconds while the operator leaves the screen alone. It waits another
+interval instead while the keyboard is locked or any input field has been
+typed in, so a refresh never takes what the operator is typing. Absent or 0
+means never.
+
 ### Cursor
 
 `cursor` is `{"field": name}` (the first position of that input field),

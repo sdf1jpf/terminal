@@ -61,6 +61,9 @@ type Screen struct {
 	Cols   int     `json:"cols"`
 	Fields []Field `json:"fields"`
 	Cursor *Cursor `json:"cursor"`
+	// Refresh, in seconds, asks the client to redraw the screen this often
+	// while the operator leaves it alone. Zero never does.
+	Refresh int `json:"refresh"`
 }
 
 // Field is an output field (Text) or, when Name is set, an input field of

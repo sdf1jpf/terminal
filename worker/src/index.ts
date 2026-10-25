@@ -32,6 +32,12 @@
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
+//	GET    /v1/syslog?before=N      the system log, newest first; &limit= (max 500)
+//	GET    /v1/schedules            the job schedule, with each job's next run
+//	PUT    /v1/schedules/{job}      schedule a job: {"cron", "enabled"?}
+//	DELETE /v1/schedules/{job}
+//
+// A cron trigger runs the job scheduler every minute (scheduler.ts).
 //
 // Routing is Hono. Everything except health is behind Cloudflare Access,
 // applied per route by the signedOn middleware (auth.ts). The browser
@@ -48,6 +54,8 @@ import {
 } from "./invoices";
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
+import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
+import { recent } from "./syslog";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, updateProduct } from "./products";
 import { requestKeys, screen } from "./screens";
 
@@ -181,6 +189,24 @@ app.get("/v1/jobs/:id", signedOn, async (c) => {
 	return json(200, job);
 });
 
+app.get("/v1/syslog", signedOn, async (c) => {
+	const n = (k: string) => Math.trunc(Number(c.req.query(k) ?? "")) || 0;
+	return json(200, await recent(c.env.DB, n("before"), Math.min(Math.max(n("limit") || 100, 1), 500)));
+});
+
+app.get("/v1/schedules", signedOn, async (c) => json(200, await listSchedules(c.env.DB)));
+app.put("/v1/schedules/:name", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["cron", "enabled"]);
+	if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
+		throw new HttpError(400, "bad_request", 'invalid request body: "enabled" must be a boolean');
+	}
+	return json(200, await putSchedule(c.env.DB, c.get("user"), c.req.param("name"), str(body, "cron"), body.enabled as boolean | undefined));
+});
+app.delete("/v1/schedules/:name", signedOn, async (c) => {
+	await deleteSchedule(c.env.DB, c.get("user"), c.req.param("name"));
+	return noContent();
+});
+
 // A known path with a method it does not take is 405, not 404. Registered
 // after the real routes, so it only runs when none of them matched.
 for (const path of [
@@ -203,14 +229,19 @@ for (const path of [
 	"/v1/edi/:id",
 	"/v1/jobs",
 	"/v1/jobs/:id",
+	"/v1/syslog",
+	"/v1/schedules",
+	"/v1/schedules/:name",
 ]) {
 	app.all(path, (c) => {
 		throw new HttpError(405, "method_not_allowed", `${c.req.method} is not allowed on ${c.req.path.replace(/\/+$/, "")}`);
 	});
 }
 
-// The queue consumer and the JobRunner workflow stay outside Hono.
+// The queue consumer, the cron trigger and the JobRunner workflow stay
+// outside Hono.
 export default {
 	fetch: app.fetch,
 	queue: startJobs,
+	scheduled: async (controller, env) => tick(env, new Date(controller.scheduledTime)),
 } satisfies ExportedHandler<Env, JobMessage>;
