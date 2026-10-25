@@ -110,6 +110,17 @@ const help: Record<string, FieldHelp> = {
 			"the invoice itself.",
 		],
 	},
+	"edi.partner": {
+		title: "PARTNER",
+		lines: [
+			"Lists only the interchanges with this customer's system. Any customer",
+			"can trade by EDI: its interchange ID is its customer number.",
+		],
+	},
+	"edi.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type S beside an interchange and press Enter to see its X12 segments."],
+	},
 	job: {
 		title: "SUBMIT JOB",
 		lines: [
@@ -118,6 +129,8 @@ const help: Record<string, FieldHelp> = {
 			"  CUSCRREV  credit review: lists accounts near their limit and puts",
 			"            active accounts over their limit on hold",
 			"  CUSSTMT   statements for open accounts with a balance",
+			"  EDISIM    EDI trading partners: customers' systems send purchase",
+			"            orders and pay the invoices we sent them",
 			"",
 			"Press PF5 to refresh the list as the job runs.",
 		],

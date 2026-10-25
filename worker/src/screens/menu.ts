@@ -1,5 +1,6 @@
 import { newActivity, newHistory } from "./activity";
 import { newAdd, newInquiry } from "./detail";
+import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
 import { invalidKey, header, keys, label, message, newScreen, right, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program } from "./program";
@@ -16,6 +17,7 @@ const options = [
 	["7", "JOBS", "Submit batch jobs and view their output"],
 	["8", "PRODUCTS", "Product file and stock on hand"],
 	["9", "INVOICES", "Build, bill and collect invoices"],
+	["E", "EDI", "EDI mailbox: orders and payments from customers' systems"],
 	["T", "TUTORIAL", "Keyboard and PF key guide"],
 	["X", "EXIT", "Log off"],
 ];
@@ -50,8 +52,8 @@ export const menu: Program<MenuState> = {
 			scr.text(6 + i, right(scr, 65), "- " + v, { color: "white" });
 		});
 
-		scr.text(17, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
-		scr.text(18, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
+		scr.text(20, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
+		scr.text(21, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
 
 		message(scr, m.msg ?? "");
 		keys(scr, "PF1=HELP  PF3=LOGOFF  PF4=BROWSE  PF12=CANCEL");
@@ -110,6 +112,9 @@ export const menu: Program<MenuState> = {
 			case "9":
 			case "INVOICES":
 				return newInvoices(m, arg);
+			case "E":
+			case "EDI":
+				return newEdi(m, arg);
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };

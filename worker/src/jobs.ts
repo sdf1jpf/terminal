@@ -7,6 +7,7 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Customer } from "./customer";
+import { partnersOrder, partnersPay, processInterchange } from "./edi";
 import { HttpError } from "./http";
 import type { Env } from "./index";
 
@@ -21,8 +22,11 @@ export interface Job {
 	ended: string;
 }
 
+// A message on the customer-jobs queue: a job to run, or (kind "edi") an
+// inbound EDI interchange to process.
 export interface JobMessage {
 	id: string;
+	kind?: "edi";
 }
 
 // StepResult is what one job step leaves behind: a condition code and the
@@ -42,7 +46,7 @@ interface JobDef {
 export const jobLibrary: Record<string, JobDef> = {
 	CUSAGING: {
 		title: "AGED BALANCES REPORT",
-		short: "AGED BALANCES",
+		short: "AGING",
 		steps: [{ name: "STEP010", run: agedBalances }],
 	},
 	CUSCRREV: {
@@ -57,6 +61,14 @@ export const jobLibrary: Record<string, JobDef> = {
 		title: "CUSTOMER STATEMENTS",
 		short: "STATEMENTS",
 		steps: [{ name: "STEP010", run: statements }],
+	},
+	EDISIM: {
+		title: "EDI TRADING PARTNER SIMULATOR",
+		short: "EDI SIM",
+		steps: [
+			{ name: "STEP010", run: partnersOrder },
+			{ name: "STEP020", run: partnersPay },
+		],
 	},
 };
 
@@ -99,12 +111,23 @@ export async function getJob(db: D1Database, id: string): Promise<{ job: Job; ou
 	return { job, output: results.map((r) => r.text) };
 }
 
-// startJobs is the queue consumer: it starts a JobRunner for each message,
-// named after the job. A redelivered message finds its workflow already
-// there and is acked.
+// startJobs is the queue consumer: it starts a JobRunner for each job,
+// named after the job, and processes each EDI interchange. A redelivered
+// message finds its workflow already there, or its interchange already
+// processed, and is acked.
 export async function startJobs(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {
 	for (const msg of batch.messages) {
-		const { id } = msg.body;
+		const { id, kind } = msg.body;
+		if (kind === "edi") {
+			try {
+				await processInterchange(env.DB, id);
+				msg.ack();
+			} catch (e) {
+				console.error(`processing ${id}:`, e);
+				msg.retry();
+			}
+			continue;
+		}
 		try {
 			await env.JOB_RUNNER.create({ id, params: { id } });
 			msg.ack();
