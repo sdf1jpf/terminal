@@ -51,7 +51,7 @@ const help: Record<string, FieldHelp> = {
 		lines: [
 			"Type a code beside a customer and press Enter:",
 			"  S  show the customer          U  update it",
-			"  D  delete it                  A  account activity",
+			"  D  delete it                  A  event history",
 			"  H  change history             I  invoices",
 		],
 	},
@@ -102,22 +102,13 @@ const help: Record<string, FieldHelp> = {
 			"  C  closed: payments are taken, new invoices are refused",
 		],
 	},
-	type: {
-		title: "TYPE",
+	"activity.line": {
+		title: "SHOW LINE",
 		lines: [
-			"  I  invoice: adds the amount to the balance",
-			"  P  payment: takes the amount off the balance",
-			"",
-			"Invoices can only be posted to active customers.",
+			"Type the number of an event in the list and press Enter to see its",
+			"details: what changed, or the invoice and its lines. PF4 there shows",
+			"the invoice itself.",
 		],
-	},
-	amount: {
-		title: "AMOUNT",
-		lines: ["The amount in whole dollars, more than zero."],
-	},
-	ref: {
-		title: "REFERENCE",
-		lines: ["Your reference for the posting, such as an invoice or check number.", "Up to 12 characters. Optional."],
 	},
 	job: {
 		title: "SUBMIT JOB",
@@ -179,7 +170,11 @@ const help: Record<string, FieldHelp> = {
 	},
 	"invoices.sel": {
 		title: "SELECTION CODE",
-		lines: ["Type S beside an invoice and press Enter to show it."],
+		lines: [
+			"Type a code beside an invoice and press Enter:",
+			"  S  show the invoice",
+			"  P  mark a billed invoice paid: posts a payment for its total",
+		],
 	},
 	"invoice.sku": {
 		title: "ADD LINE: SKU",

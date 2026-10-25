@@ -1,12 +1,17 @@
-import { customerHistory, listTransactions, parsePosting, postTransaction, type Change, type Transaction } from "../activity";
+import { customerHistory, type Change, type Transaction } from "../activity";
+import { customerEvents, type CustomerEvent } from "../events";
 import { getCustomer } from "../data";
 import type { Customer } from "../customer";
 import { loadDetail, padID } from "./detail";
-import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, type Color, type Ctx, type Opts, type Screen } from "./screen";
-import { fail, isCode, pf, type ActivityState, type HistoryState, type Next, type Program } from "./program";
+import { newInvoices } from "./invoices";
+import { getInvoice, statusNames, type Invoice, type InvoiceLine } from "../invoices";
+import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
+import { fail, isCode, pf, type ActivityState, type EventState, type HistoryState, type Next, type Program } from "./program";
 
-// CUSM03 ACCOUNT ACTIVITY posts invoices and payments to a customer and
-// lists the account's transactions, newest first. CUSM04 CHANGE HISTORY
+// CUSM03 EVENT HISTORY is the customer's audit trail: record changes,
+// invoices opened, billed and paid, newest first and numbered; typing a
+// line number shows that event on CUSM05 EVENT DETAIL. It is read only:
+// postings come from the invoice screens (invoices.ts). CUSM04 CHANGE HISTORY
 // lists who changed a customer record, when, and what changed; it works for
 // deleted customers too, since the history outlives the record.
 
@@ -57,7 +62,7 @@ function page<T>(s: { top?: number; msg?: string }, aid: string, rows: number, l
 	}
 }
 
-// ---- CUSM03 ACCOUNT ACTIVITY ----
+// ---- CUSM03 EVENT HISTORY ----
 
 export async function newActivity(ctx: Ctx, back: ActivityState["back"], id: string): Promise<ActivityState> {
 	const a: ActivityState = { p: "activity", back };
@@ -68,7 +73,6 @@ export async function newActivity(ctx: Ctx, back: ActivityState["back"], id: str
 async function loadActivity(ctx: Ctx, a: ActivityState, id: string): Promise<void> {
 	a.id = padID(id);
 	a.top = 0;
-	a.vals = undefined;
 	const c = await open(ctx, a.id);
 	if (typeof c === "string") {
 		a.msg = c;
@@ -76,71 +80,74 @@ async function loadActivity(ctx: Ctx, a: ActivityState, id: string): Promise<voi
 	}
 }
 
-// activityRows is how many transactions fit on a page: 10 on 24x80.
-const activityRows = (ctx: Ctx) => ctx.rows - 14;
+// activityRows is how many events fit on a page: 11 on 24x80.
+const activityRows = (ctx: Ctx) => ctx.rows - 13;
 
-function activityLine(date: string, time: string, type: string, ref: string, amount: string, balance: string, user: string): string {
-	return `${pad(date, 10)} ${pad(time, 5)} ${pad(type, 7)} ${pad(ref, 12)} ${lpad(amount, 12)} ${lpad(balance, 13)}  ${pad(user, 8)}`;
+function eventLine(n: string, date: string, time: string, event: string, text: string, amount: string, user: string): string {
+	return `${lpad(n, 3)} ${pad(date, 10)} ${pad(time, 5)} ${pad(event, 8)} ${pad(text, 26)} ${lpad(amount, 11)} ${pad(user, 8)}`;
 }
 
-async function transactions(ctx: Ctx, id: string): Promise<Transaction[]> {
-	return (await listTransactions(ctx.db, id)) ?? [];
+const eventColors: Record<string, Color> = {
+	ADDED: "turquoise", CHANGED: "green", DELETED: "pink", OPENED: "white", BILLED: "yellow", INVOICE: "yellow", PAYMENT: "turquoise",
+};
+
+async function events(ctx: Ctx, id?: string): Promise<CustomerEvent[]> {
+	return id ? customerEvents(ctx.db, id) : [];
 }
 
 export const activity: Program<ActivityState> = {
 	async render(ctx, a) {
 		const scr = newScreen(ctx, "CUSM03");
-		header(scr, ctx, "ACCOUNT ACTIVITY");
+		header(scr, ctx, "EVENT HISTORY");
 		let msg = a.msg ?? "";
 		const cust = await current(ctx, a.id);
 		account(scr, a.id ?? "", cust, a.errField === "id");
 
-		if (cust) {
-			const posting: [string, string, number, Opts][] = [
-				["type", "TYPE", 1, {}],
-				["amount", "AMOUNT", 9, { numeric: true }],
-				["ref", "REFERENCE", 12, {}],
-			];
-			posting.forEach(([name, text, length, opts], i) => {
-				label(scr, 6 + i, 4, dots(text, 19));
-				scr.input(6 + i, 25, length, name, a.vals?.[name] ?? "", { ...opts, bright: a.errField === name });
-			});
-			scr.text(6, 28, "I=INVOICE  P=PAYMENT", { color: "blue" });
-
-			const col = right(scr, 58);
-			const avail = cust.credit_limit - cust.balance;
-			label(scr, 6, col, "BALANCE");
-			scr.text(6, col + 10, lpad(money(cust.balance), 11), { color: "white" });
-			label(scr, 7, col, "LIMIT");
-			scr.text(7, col + 10, lpad(money(cust.credit_limit), 11), { color: "green" });
-			label(scr, 8, col, "AVAILABLE");
-			scr.text(8, col + 10, lpad(money(avail), 11), { color: avail < Math.trunc(cust.credit_limit / 10) ? "red" : "green" });
-
-			let list: Transaction[] = [];
+		let list: CustomerEvent[] = [];
+		if (a.id) {
 			try {
-				list = await transactions(ctx, cust.id);
+				list = await events(ctx, a.id);
 			} catch (e) {
 				msg = fail(e);
 			}
-			const rows = activityRows(ctx);
-			const top = Math.min(a.top ?? 0, Math.max(list.length - rows, 0));
-			if (list.length > 0) {
-				scr.text(10, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
-			}
-			scr.text(11, 4, activityLine("DATE", "TIME", "TYPE", "REFERENCE", "AMOUNT", "BALANCE", "USER"), { color: "white", bright: true });
-			scr.text(12, 4, "-".repeat(scr.cols - 6), { color: "blue" });
-			list.slice(top, top + rows).forEach((t, i) => {
-				const pay = t.type === "P";
-				const [date, time] = stamp(ctx, t.posted).split(" ");
-				scr.text(13 + i, 4, activityLine(date ?? "", time ?? "", pay ? "PAYMENT" : "INVOICE", t.reference,
-					money(pay ? -t.amount : t.amount), money(t.balance), t.posted_by), { color: pay ? "turquoise" : "green" });
-			});
-			if (list.length === 0) scr.text(13, 4, "NO ACTIVITY ON FILE", { color: "yellow" });
 		}
+		if (cust) {
+			const avail = cust.credit_limit - cust.balance;
+			const items: [string, string, Color][] = [
+				["BALANCE", money(cust.balance), "white"],
+				["LIMIT", money(cust.credit_limit), "green"],
+				["AVAILABLE", money(avail), avail < Math.trunc(cust.credit_limit / 10) ? "red" : "green"],
+			];
+			let col = 4;
+			for (const [name, amount, color] of items) {
+				label(scr, 5, col, name);
+				scr.text(5, col + name.length + 1, amount, { color });
+				col += name.length + amount.length + 5;
+			}
+		}
+		if (list.length > 0 || cust) {
+			label(scr, 7, 2, "SHOW LINE ===>");
+			scr.input(7, 17, 3, "line", "", { numeric: true, bright: a.errField === "line" });
+			scr.text(7, 22, "TYPE A LINE NUMBER AND PRESS ENTER FOR ITS DETAILS", { color: "blue" });
+		}
+		const rows = activityRows(ctx);
+		const top = Math.min(a.top ?? 0, Math.max(list.length - rows, 0));
+		if (list.length > 0) {
+			scr.text(8, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
+		}
+		scr.text(9, 2, eventLine("NO.", "DATE", "TIME", "EVENT", "DETAIL", "AMOUNT", "USER"), { color: "white", bright: true });
+		scr.text(10, 2, "-".repeat(scr.cols - 3), { color: "blue" });
+		list.slice(top, top + rows).forEach((e, i) => {
+			const [date, time] = stamp(ctx, e.at).split(" ");
+			const amount = e.amount === undefined ? "" : money(e.amount);
+			scr.text(11 + i, 2, eventLine(String(top + i + 1), date ?? "", time ?? "", e.event, e.text, amount, e.by),
+				{ color: eventColors[e.event] ?? "green" });
+		});
+		if (a.id && list.length === 0 && !a.errField) scr.text(11, 4, "NO EVENTS ON FILE", { color: "yellow" });
 
 		message(scr, msg);
-		keys(scr, "ENTER=POST  PF1=HELP  PF3=EXIT  PF6=HISTORY  PF7=UP  PF8=DOWN  PF12=CANCEL");
-		scr.cursorTo(a.errField || (cust ? "type" : "id"));
+		keys(scr, "PF1=HELP  PF3=EXIT  PF5=INVOICES  PF6=HISTORY  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		scr.cursorTo(a.errField || (cust ? "line" : "id"));
 		return scr;
 	},
 
@@ -151,7 +158,7 @@ export const activity: Program<ActivityState> = {
 			case "ENTER": {
 				const loaded = await current(ctx, a.id);
 				let id = changedID(input, a.id);
-				if (id !== "" || !loaded) {
+				if (id !== "" || (!loaded && !(input.fields.line ?? "").trim())) {
 					if (id === "") id = input.fields.id ?? "";
 					if (id.trim() === "") {
 						a.msg = "CUS0202E ENTER A CUSTOMER NUMBER";
@@ -161,27 +168,25 @@ export const activity: Program<ActivityState> = {
 					await loadActivity(ctx, a, id);
 					return a;
 				}
-				return post(ctx, a, input.fields);
+				return showLine(ctx, a, (input.fields.line ?? "").trim());
 			}
 			case pf(3):
 			case pf(12):
 				if (a.back.p === "detail" && a.back.loaded && a.back.cust) {
-					await loadDetail(ctx, a.back, a.back.cust.id); // show the new balance
+					await loadDetail(ctx, a.back, a.back.cust.id); // show the latest balance
 				}
 				return a.back;
+			case pf(5):
 			case pf(6):
 				if (!(await current(ctx, a.id))) {
 					a.msg = "CUS0204E DISPLAY A CUSTOMER FIRST";
 					a.errField = "id";
 					return a;
 				}
-				return newHistory(ctx, a, a.id!);
+				return input.aid === pf(5) ? newInvoices(a, a.id!) : newHistory(ctx, a, a.id!);
 			case pf(7):
 			case pf(8):
-				page(a, input.aid, activityRows(ctx), a.id ? await transactions(ctx, a.id) : []);
-				return a;
-			case "CLEAR":
-				a.vals = undefined;
+				page(a, input.aid, activityRows(ctx), await events(ctx, a.id));
 				return a;
 		}
 		a.msg = invalidKey(input.aid);
@@ -189,49 +194,127 @@ export const activity: Program<ActivityState> = {
 	},
 };
 
-const postingMessageIDs: Record<string, string> = { type: "CUS0240E", amount: "CUS0241E", ref: "CUS0242E" };
+const isInvoice = (ref: string) => /^INV\d{5}$/.test(ref);
 
-function postingMessage(field: string, msg: string): string {
-	return `${postingMessageIDs[field] ?? "CUS0249E"} ${msg.toUpperCase()}`;
+// showLine opens the details of the event on a line. With no line number,
+// Enter just reads the events again.
+async function showLine(ctx: Ctx, a: ActivityState, line: string): Promise<Next> {
+	if (line === "") return a;
+	const list = await events(ctx, a.id);
+	const n = Number(line);
+	if (!/^\d+$/.test(line) || n < 1 || n > list.length) {
+		a.errField = "line";
+		a.msg = list.length === 0 ? "CUS0246E THERE ARE NO EVENTS TO SHOW" : `CUS0246E LINE MUST BE 1 TO ${list.length}`;
+		return a;
+	}
+	const e = list[n - 1];
+	return { p: "event", back: a, id: a.id!, kind: e.kind, key: e.key, line: n };
 }
 
-// post sends the posting fields. With nothing filled in, Enter just reads
-// the account again.
-async function post(ctx: Ctx, a: ActivityState, f: Record<string, string>): Promise<Next> {
-	const vals = { type: f.type ?? "", amount: f.amount ?? "", ref: f.ref ?? "" };
-	a.vals = vals;
-	const type = vals.type.trim().toUpperCase();
-	const amount = vals.amount.trim();
-	const ref = vals.ref.trim();
-	if (type === "" && amount === "" && ref === "") {
-		a.vals = undefined;
-		return a;
-	}
-	if (!/^-?\d+$/.test(amount)) {
-		a.errField = "amount";
-		a.msg = postingMessage("amount", "amount must be a whole number of dollars above zero");
-		return a;
-	}
-	try {
-		const t = await postTransaction(ctx.db, ctx.user, a.id!, parsePosting({ type, amount: Number(amount), reference: ref }));
-		a.vals = undefined;
-		a.top = 0;
-		const kind = t.type === "P" ? "PAYMENT" : "INVOICE";
-		a.msg = `CUS0245I ${kind} OF ${money(t.amount)} POSTED - BALANCE NOW ${money(t.balance)}`;
-	} catch (e) {
-		if (isCode(e, "invalid")) {
-			a.errField = e.field;
-			a.msg = postingMessage(e.field ?? "", e.message);
-		} else if (isCode(e, "not_found")) {
-			a.vals = undefined;
-			a.errField = "id";
-			a.msg = `CUS0214E CUSTOMER ${a.id} NO LONGER EXISTS`;
+// ---- CUSM05 EVENT DETAIL ----
+
+// The invoice an event concerns, if any.
+async function eventInvoice(ctx: Ctx, s: EventState): Promise<string> {
+	if (s.kind === "V") return s.key;
+	if (s.kind !== "T") return "";
+	const t = await ctx.db.prepare("SELECT reference FROM transactions WHERE seq = ? AND customer_id = ?")
+		.bind(Number(s.key), s.id).first<{ reference: string }>();
+	return t && isInvoice(t.reference) ? t.reference : "";
+}
+
+export const event: Program<EventState> = {
+	async render(ctx, s) {
+		const scr = newScreen(ctx, "CUSM05");
+		header(scr, ctx, "EVENT DETAIL");
+		let msg = s.msg ?? "";
+		const cust = await current(ctx, s.id);
+		label(scr, 4, 4, dots("CUSTOMER", 16));
+		value(scr, 4, 22, `${s.id} ${cust?.name ?? ""}`);
+		scr.text(4, right(scr, 66), `LINE ${s.line}`, { color: "white" });
+
+		const fields: [string, string][] = [];
+		let where = 15; // where the invoice goes
+		if (s.kind === "T") {
+			const t = await ctx.db.prepare("SELECT * FROM transactions WHERE seq = ? AND customer_id = ?")
+				.bind(Number(s.key), s.id).first<Transaction>();
+			if (t) {
+				const pay = t.type === "P";
+				fields.push(
+					["EVENT", pay ? "PAYMENT POSTED" : "INVOICE BILLED"],
+					["AMOUNT", money(pay ? -t.amount : t.amount)],
+					["REFERENCE", t.reference || "(NONE)"],
+					["BALANCE BEFORE", money(pay ? t.balance + t.amount : t.balance - t.amount)],
+					["BALANCE AFTER", money(t.balance)],
+					["POSTED", stamp(ctx, t.posted)],
+					["POSTED BY", t.posted_by],
+				);
+			}
+		} else if (s.kind === "A") {
+			const c = await ctx.db.prepare("SELECT * FROM audit WHERE seq = ? AND customer_id = ?")
+				.bind(Number(s.key), s.id).first<Change>();
+			if (c) {
+				fields.push(["EVENT", `RECORD ${({ ADD: "ADDED", CHANGE: "CHANGED", DELETE: "DELETED" } as Record<string, string>)[c.action] ?? c.action}`]);
+				if (c.action === "CHANGE") {
+					fields.push(["FIELD", c.field], ["OLD VALUE", c.old_value || "(BLANK)"], ["NEW VALUE", c.new_value || "(BLANK)"]);
+				}
+				fields.push(["CHANGED", stamp(ctx, c.at)], ["CHANGED BY", c.by]);
+			}
 		} else {
-			a.msg = fail(e);
+			const inv = await ctx.db.prepare("SELECT * FROM invoices WHERE id = ? AND customer_id = ?")
+				.bind(s.key, s.id).first<Invoice>();
+			if (inv) fields.push(["EVENT", "INVOICE OPENED"], ["OPENED", stamp(ctx, inv.created)], ["OPENED BY", inv.created_by]);
+			where = 10;
 		}
-	}
-	return a;
-}
+		if (fields.length === 0) msg = "CUS0247E THE EVENT IS NO LONGER ON FILE";
+		fields.forEach(([name, v], i) => {
+			label(scr, 6 + i, 4, dots(name, 16));
+			value(scr, 6 + i, 22, v);
+		});
+
+		const id = fields.length > 0 ? await eventInvoice(ctx, s) : "";
+		const inv = id ? await getInvoice(ctx.db, id).catch(() => undefined) : undefined;
+		if (inv) {
+			const { invoice: i, lines } = inv;
+			const when = [`OPENED ${stamp(ctx, i.created).slice(0, 10)}`];
+			if (i.billed) when.push(`BILLED ${stamp(ctx, i.billed).slice(0, 10)}`);
+			if (i.paid) when.push(`PAID ${stamp(ctx, i.paid).slice(0, 10)}`);
+			scr.text(where, 4, `INVOICE ${i.id}  ${statusNames[i.status]}  PO ${i.po_number || "(NONE)"}  TOTAL ${money(i.total)}`,
+				{ color: "white", bright: true });
+			scr.text(where + 1, 4, when.join("  "), { color: "green" });
+			const room = Math.max(scr.rows - where - 5, 0);
+			lines.slice(0, room).forEach((l, n) => {
+				scr.text(where + 3 + n, 4, `${lpad(String(l.line), 3)} ${pad(l.sku, 10)} ${pad(l.description, 30)} ${lpad(String(l.quantity), 5)} ${lpad(money(l.unit_price), 9)} ${lpad(money(l.quantity * l.unit_price), 11)}`,
+					{ color: "green" });
+			});
+			if (lines.length > room && room > 0) {
+				scr.text(where + 2 + room, 4, `... ${lines.length - room + 1} MORE LINES - PF4 SHOWS THEM ALL`, { color: "yellow" });
+			}
+		} else if (id) {
+			scr.text(where, 4, `INVOICE ${id} IS NO LONGER ON FILE`, { color: "yellow" });
+		}
+		message(scr, msg);
+		keys(scr, inv ? "PF1=HELP  PF3=EXIT  PF4=SHOW INVOICE  PF12=CANCEL" : "PF1=HELP  PF3=EXIT  PF12=CANCEL");
+		return scr;
+	},
+
+	async handle(ctx, s, input) {
+		s.msg = undefined;
+		switch (input.aid) {
+			case pf(3):
+			case pf(12):
+				return s.back;
+			case pf(4): {
+				const id = await eventInvoice(ctx, s);
+				if (id && (await getInvoice(ctx.db, id).catch(() => undefined))) return { p: "invoice", back: s, id };
+				break;
+			}
+			case "ENTER":
+				return s;
+		}
+		s.msg = invalidKey(input.aid);
+		return s;
+	},
+};
 
 // ---- CUSM04 CHANGE HISTORY ----
 
@@ -303,7 +386,7 @@ export const history: Program<HistoryState> = {
 		if (list.length === 0 && h.id && !h.errField) scr.text(8, 4, "NO CHANGES ON FILE", { color: "yellow" });
 
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF5=ACTIVITY  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		keys(scr, "PF1=HELP  PF3=EXIT  PF5=EVENTS  PF7=UP  PF8=DOWN  PF12=CANCEL");
 		scr.cursorTo("id");
 		return scr;
 	},

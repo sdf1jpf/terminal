@@ -5,11 +5,12 @@ import {
 	statusNames, type Invoice, type InvoiceLine,
 } from "../invoices";
 import { padID } from "./detail";
-import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx } from "./screen";
+import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
 import { fail, isCode, pf, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
 
 // CUSI01 INVOICE LIST lists invoices, newest first, for one customer or
-// all, and opens new ones. CUSI02 INVOICE builds an open invoice from the
+// all, with the customer's account position, opens new ones and marks
+// billed ones paid. CUSI02 INVOICE builds an open invoice from the
 // product file, bills it to the customer's account and marks it paid.
 // Open invoices show in white, billed ones in yellow and paid ones in green.
 
@@ -50,14 +51,17 @@ export const invoices: Program<InvoicesState> = {
 
 		label(scr, 4, 2, "CUSTOMER NUMBER ===>");
 		scr.input(4, 23, 6, "cust", s.cust ?? "", { numeric: true, bright: s.errField === "cust" });
-		if (s.cust) {
-			const c = await customer(ctx, s.cust);
-			if (c) scr.text(4, 31, pad(c.name, 30), { color: "white", bright: true });
+		const c = s.cust ? await customer(ctx, s.cust) : undefined;
+		if (c) {
+			scr.text(4, 31, pad(c.name, 30), { color: "white", bright: true });
+			const status = ({ A: "ACTIVE", H: "ON HOLD", C: "CLOSED" } as Record<string, string>)[c.status] ?? "";
+			scr.text(4, right(scr, 70), lpad(status, 9), { color: custColor(c.status) });
+			account(scr, 5, c, list);
 		}
 		if (list.length > 0) {
-			scr.text(5, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
+			scr.text(6, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(5, 2, "SELECT: S=SHOW", { color: "blue" });
+		scr.text(6, 2, "SELECT: S=SHOW  P=MARK PAID", { color: "blue" });
 		scr.text(7, 2, "S " + listLine("INVOICE", "CUST NO", "PO NUMBER", "STATUS", "TOTAL", "CREATED"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		const shown = list.slice(top, top + rows);
@@ -96,12 +100,20 @@ export const invoices: Program<InvoicesState> = {
 					const code = v.trim().toUpperCase();
 					if (!name.startsWith("sel:") || code === "") continue;
 					const id = name.slice(4);
-					if (code !== "S") {
+					if (code === "S") return { p: "invoice", back: s, id };
+					s.errSel = id;
+					if (code !== "P") {
 						s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
-						s.errSel = id;
 						return s;
 					}
-					return { p: "invoice", back: s, id };
+					try {
+						const { invoice: inv, transaction: t } = await payInvoice(ctx.db, ctx.user, id);
+						s.errSel = undefined;
+						s.msg = `CUS0508I INVOICE ${id} PAID, ${money(inv.total)} PAYMENT POSTED - BALANCE NOW ${money(t.balance)}`;
+					} catch (e) {
+						s.msg = isCode(e, "invalid") ? fieldMessage("", e.message) : fail(e);
+					}
+					return s;
 				}
 				return s;
 			case pf(3):
@@ -138,6 +150,27 @@ export const invoices: Program<InvoicesState> = {
 		return s;
 	},
 };
+
+const custColor = (status: string): Color => (status === "H" ? "yellow" : status === "C" ? "pink" : "green");
+
+// account shows a customer's position: what it owes, its credit, and how
+// much of what it owes is on unpaid invoices.
+function account(scr: Screen, row: number, c: Customer, list: Invoice[]): void {
+	const avail = c.credit_limit - c.balance;
+	const unpaid = list.filter((i) => i.status === "B").reduce((t, i) => t + i.total, 0);
+	const items: [string, string, Color][] = [
+		["BALANCE", money(c.balance), "white"],
+		["LIMIT", money(c.credit_limit), "green"],
+		["AVAILABLE", money(avail), avail < Math.trunc(c.credit_limit / 10) ? "red" : "green"],
+		["UNPAID", money(unpaid), unpaid > 0 ? "yellow" : "green"],
+	];
+	let col = 4;
+	for (const [name, amount, color] of items) {
+		label(scr, row, col, name);
+		scr.text(row, col + name.length + 1, amount, { color });
+		col += name.length + amount.length + 4;
+	}
+}
 
 function scroll(s: { top?: number; msg?: string }, aid: string, rows: number, total: number): void {
 	if (aid === pf(7)) {
@@ -187,6 +220,10 @@ export const invoice: Program<InvoiceState> = {
 			const c = await customer(ctx, inv.customer_id);
 			label(scr, 5, 4, dots("CUSTOMER", 12));
 			value(scr, 5, 18, `${inv.customer_id} ${c?.name ?? "(NOT ON FILE)"}`);
+			if (c) {
+				label(scr, 5, col, "BALANCE");
+				scr.text(5, col + 8, lpad(money(c.balance), 13), { color: "white" });
+			}
 			label(scr, 6, 4, dots("PO NUMBER", 12));
 			if (open) scr.input(6, 18, 22, "po", inv.po_number, { bright: s.errField === "po" });
 			else value(scr, 6, 18, inv.po_number);

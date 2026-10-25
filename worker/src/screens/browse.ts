@@ -58,7 +58,7 @@ export const browse: Program<BrowseState> = {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${end} OF ${list.length}`, { color: "white" });
 		}
 
-		scr.text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE  A=ACTIVITY  H=HISTORY  I=INVOICES", { color: "blue" });
+		scr.text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE  A=EVENTS  H=HISTORY  I=INVOICES", { color: "blue" });
 		scr.text(7, 2, `S CUST NO  ${pad("NAME", nameW)} ${pad("CITY", cityW)} ST      BALANCE STAT`,
 			{ color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
