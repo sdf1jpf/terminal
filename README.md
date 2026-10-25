@@ -603,6 +603,7 @@ line shows `PRINTED`. Files go to `~/terminal-prints` (change it with
 | Enter | ENTER |
 | F1-F12, Shift+F1-F12 | PF1-PF12, PF13-PF24 |
 | PgUp / PgDn | PF7 / PF8 |
+| Esc, then 1-9, 0, -, = | PF1-PF9, PF10, PF11, PF12 (for when macOS keeps the F keys) |
 | Ctrl+L | CLEAR |
 | Alt+1 / Alt+2 / Alt+3 | PA1 / PA2 / PA3 |
 | Tab / Shift+Tab | Next / previous field |

@@ -19,7 +19,7 @@ const rows = [
 	["INSERT", "Toggle insert mode (^ shown in the status line)"],
 	["CTRL+E", "Erase to end of field (ERASE EOF)"],
 	["CTRL+U", "Erase all input fields (ERASE INPUT)"],
-	["ESC / CTRL+R", "RESET: unlock the keyboard after an error"],
+	["ESC / CTRL+R", "RESET. ESC then 1-9 0 - = is PF1 - PF12 (no F keys)"],
 	["CTRL+P", "PRINT: save a copy of the screen to a text file"],
 	["CTRL+C", "Disconnect the terminal session"],
 ];
