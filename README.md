@@ -176,7 +176,9 @@ scripts/make-mac-app.sh http://localhost:8787   # or any other API URL
 ```
 
 It builds `~/Applications/Mainframe Terminal.app`. Opening it starts a
-Terminal window sized 100x32 and runs the client inside it. The first time,
+Terminal window sized 100x32 with the `GoTerm` Terminal profile (or your
+default profile if there is no `GoTerm`) and runs the client inside it. Use
+`PROFILE="Other Name" scripts/make-mac-app.sh` to pick another profile. The first time,
 macOS asks whether the app may control Terminal; allow it. Run the script
 again after pulling changes to rebuild the client inside the app.
 

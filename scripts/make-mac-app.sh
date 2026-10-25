@@ -5,12 +5,15 @@
 #
 #   scripts/make-mac-app.sh [api-url]
 #
-# The app goes in ~/Applications (set DEST to change that). Run the script
+# The window uses the Terminal profile named by PROFILE (default GoTerm), or
+# Terminal's default profile if there is no profile with that name. The app
+# goes in ~/Applications (set DEST to change that). Run the script
 # again after pulling changes to rebuild the client inside the app.
 set -eu
 
 API_URL=${1:-https://customer-api.justin-frank.workers.dev}
 APP_NAME="Mainframe Terminal"
+PROFILE=${PROFILE:-GoTerm}
 DEST=${DEST:-$HOME/Applications}
 APP="$DEST/$APP_NAME.app"
 
@@ -24,13 +27,17 @@ mkdir -p "$DEST"
 rm -rf "$APP"
 
 # The launcher is a small AppleScript app. It tells Terminal to run the
-# client bundled inside the app, then sizes the window. The screen grows to
-# fill the window, so a bigger window gives a bigger presentation space.
+# client bundled inside the app, then applies the profile and sizes the
+# window. The screen grows to fill the window, so a bigger window gives a
+# bigger presentation space.
 osacompile -o "$APP" <<APPLESCRIPT
 set bin to quoted form of (POSIX path of (path to me) & "Contents/Resources/terminal")
 tell application "Terminal"
 	activate
-	do script bin & " -api " & quoted form of "$API_URL" & "; exit"
+	set t to do script bin & " -api " & quoted form of "$API_URL" & "; exit"
+	try
+		set current settings of t to settings set "$PROFILE"
+	end try
 	delay 0.2
 	set number of columns of front window to 100
 	set number of rows of front window to 32
