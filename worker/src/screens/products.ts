@@ -1,4 +1,5 @@
 import { createProduct, getProduct, listProducts, lowStock, parseProduct, updateProduct, type Product } from "../products";
+import { onOrder } from "../purchasing";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Opts } from "./screen";
 import { fail, isCode, pf, type Next, type ProductState, type ProductsState, type Program, type State } from "./program";
 
@@ -144,6 +145,8 @@ const fields: FieldDef[] = [
 	{ name: "onhand", label: "QUANTITY ON HAND", length: 7, numeric: true, get: (p) => num(p.on_hand) },
 	{ name: "reorder", label: "REORDER POINT", length: 7, numeric: true, get: (p) => num(p.reorder_point) },
 	{ name: "status", label: "STATUS (A/D)", length: 1, get: (p) => p.status ?? "" },
+	{ name: "vendor", label: "VENDOR", length: 6, get: (p) => p.vendor ?? "" },
+	{ name: "cost", label: "UNIT COST", length: 7, numeric: true, get: (p) => num(p.unit_cost) },
 ];
 
 const titles = { inquiry: "PRODUCT INQUIRY", update: "PRODUCT UPDATE", add: "ADD PRODUCT" };
@@ -151,6 +154,7 @@ const titles = { inquiry: "PRODUCT INQUIRY", update: "PRODUCT UPDATE", add: "ADD
 // Each field's edit error has its own message number.
 const messageIDs: Record<string, string> = {
 	sku: "CUS0410E", desc: "CUS0411E", price: "CUS0412E", onhand: "CUS0413E", reorder: "CUS0414E", status: "CUS0415E",
+	vendor: "CUS0416E", cost: "CUS0417E",
 };
 
 const fieldMessage = (field: string, msg: string) => `${messageIDs[field] ?? "CUS0419E"} ${msg.toUpperCase()}`;
@@ -175,7 +179,7 @@ export const product: Program<ProductState> = {
 					const opts: Opts = { numeric: f.numeric, bright: s.errField === f.name };
 					scr.input(row, 25, f.length, f.name, v, opts);
 				} else {
-					value(scr, row, 25, f.name === "price" ? money(p.unit_price) : v);
+					value(scr, row, 25, f.name === "price" ? money(p.unit_price) : f.name === "cost" ? money(p.unit_cost) : v);
 				}
 			});
 			if (s.mode !== "add") {
@@ -184,8 +188,10 @@ export const product: Program<ProductState> = {
 				if (p.status === "D") scr.text(6, col, "*** DISCONTINUED ***", { color: "pink", bright: true });
 				label(scr, 8, col, "STOCK VALUE");
 				scr.text(8, col + 12, lpad(money(p.unit_price * p.on_hand), 11), { color: "white" });
-				label(scr, 12, 4, dots("LAST UPDATED", 19));
-				value(scr, 12, 25, `${stamp(ctx, p.updated)} BY ${p.updated_by}`);
+				label(scr, 9, col, "ON ORDER");
+				scr.text(9, col + 12, lpad(String(await onOrder(ctx.db, p.sku)), 11), { color: "white" });
+				label(scr, 14, 4, dots("LAST UPDATED", 19));
+				value(scr, 14, 25, `${stamp(ctx, p.updated)} BY ${p.updated_by}`);
 			}
 		}
 
@@ -256,7 +262,8 @@ async function edit(ctx: Ctx, s: ProductState, aid: string, f: Record<string, st
 		s.msg = "CUS0406W NO FIELDS WERE CHANGED";
 		return s;
 	}
-	for (const [name, what] of [["price", "unit price"], ["onhand", "quantity on hand"], ["reorder", "reorder point"]]) {
+	if (vals.cost.trim() === "") vals.cost = "0";
+	for (const [name, what] of [["price", "unit price"], ["onhand", "quantity on hand"], ["reorder", "reorder point"], ["cost", "unit cost"]]) {
 		if (!/^\d+$/.test(vals[name].trim())) {
 			s.errField = name;
 			s.msg = fieldMessage(name, `${what} must be a whole, positive number`);
@@ -267,7 +274,8 @@ async function edit(ctx: Ctx, s: ProductState, aid: string, f: Record<string, st
 	try {
 		const { fields: edit, version } = parseProduct({
 			sku, description: vals.desc, unit_price: Number(vals.price), on_hand: Number(vals.onhand),
-			reorder_point: Number(vals.reorder), status: vals.status, version: s.prod?.version ?? 0,
+			reorder_point: Number(vals.reorder), status: vals.status, vendor: vals.vendor, unit_cost: Number(vals.cost),
+			version: s.prod?.version ?? 0,
 		});
 		const saved = s.mode === "add"
 			? await createProduct(ctx.db, edit, ctx.user)

@@ -14,6 +14,7 @@ import { help } from "./help";
 import { invoice, invoices } from "./invoices";
 import { joblog, jobs } from "./jobs";
 import { product, products } from "./products";
+import { po, pos, vendors } from "./purchasing";
 import { menu } from "./menu";
 import { report } from "./report";
 import { MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
@@ -25,6 +26,7 @@ export const requestKeys = [
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, help, activity, event, jobs, joblog, products, product, invoices, invoice, edi, edidoc,
+	pos, po, vendors,
 };
 
 // The commarea's own version. Bump it when a state shape changes in a way

@@ -569,6 +569,71 @@ describe("EDI screens", () => {
 	});
 });
 
+describe("purchasing screens", () => {
+	it("opens a PO for a vendor, sends it and receives it in two parts", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "p").send("ENTER");
+		expect(t.scr.map).toBe("CUSV01");
+		await t.send("PF5");
+		expect(t.message).toBe("CUS0702E ENTER A VENDOR NUMBER FOR THE NEW PURCHASE ORDER");
+		await t.fill("vendor", "4").send("ENTER");
+		expect(t.field("vendor")?.value).toBe("V00004");
+		expect(t.row(4)).toContain("RIVER CITY STEEL & PALLET");
+
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSV02");
+		expect(t.message).toMatch(/^CUS0703I PURCHASE ORDER PO\d{5} OPENED FOR V00004$/);
+		const id = t.row(4).match(/PO\d{5}/)![0];
+		await t.fill("sku", "brg-6204", "qty", "5").send("ENTER");
+		expect(t.message).toBe("CUS0710E BRG-6204 IS SUPPLIED BY V00002, NOT V00004");
+		await t.fill("sku", "stl-a36", "qty", "6").send("ENTER");
+		expect(t.message).toBe("CUS0713I LINE 1 ADDED: 6 STL-A36 AT $246");
+		expect(t.row(12)).toMatch(/1 STL-A36 +STEEL PLATE A36 1\/2 X 4 +6 +0 +\$246 +\$1,476/);
+
+		await t.send("PF11");
+		expect(t.message).toBe("CUS0000W PF11 IS NOT ACTIVE ON THIS SCREEN");
+		await t.send("PF10");
+		expect(t.message).toMatch(new RegExp(`^CUS0708I ${id} SENT TO V00004 AS 850 EDI\\d{5}, \\$1,476 AT COST$`));
+		expect(t.row(4)).toContain("SENT");
+		expect(t.scr.cursor).toEqual({ field: "rcv:1" });
+
+		const before = (await env.DB.prepare("SELECT on_hand FROM products WHERE sku = 'STL-A36'").first<{ on_hand: number }>())!.on_hand;
+		await t.fill("rcv:1", "9").send("ENTER");
+		expect(t.message).toBe("CUS0712E LINE 1 HAS ONLY 6 STILL DUE");
+		await t.fill("rcv:1", "2").send("ENTER");
+		expect(t.message).toBe("CUS0717I 2 UNITS RECEIVED INTO STOCK - REST STILL DUE");
+		expect(t.row(12)).toMatch(/ +6 +2 /);
+		await t.send("PF11");
+		expect(t.message).toBe(`CUS0714I ${id} RECEIVED IN FULL - 4 UNITS PUT IN STOCK`);
+		expect(t.row(4)).toContain("RECEIVED");
+		const after = (await env.DB.prepare("SELECT on_hand FROM products WHERE sku = 'STL-A36'").first<{ on_hand: number }>())!.on_hand;
+		expect(after).toBe(before + 6);
+
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSV01");
+		expect(t.row(9)).toContain(`${id} V00004 RECEIVED`);
+		await t.send("PF4");
+		expect(t.scr.map).toBe("CUSV03");
+		await t.fill("sel:V00001", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSV01");
+		expect(t.field("vendor")?.value).toBe("V00001");
+	});
+
+	it("shows the vendor, cost and stock on order on the product", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "8").send("ENTER");
+		await t.fill("sel:HYD-0250", "u").send("ENTER");
+		expect(t.field("vendor")?.value).toBe("V00003");
+		expect(t.field("cost")?.value).toBe("83");
+		await t.fill("vendor", "v12").send("ENTER");
+		expect(t.message).toBe("CUS0416E VENDOR MUST BE A VENDOR NUMBER SUCH AS V00001");
+		await t.fill("vendor", "v00001").send("ENTER");
+		expect(t.message).toBe("CUS0407I PRODUCT HYD-0250 UPDATED");
+		expect(t.row(11)).toContain("V00001");
+		expect(t.row(9)).toMatch(/ON ORDER +0/);
+	});
+});
+
 describe("batch job screens", () => {
 	it("submits a job, lists it, and shows its output", async () => {
 		const t = await Terminal.logon();

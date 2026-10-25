@@ -113,8 +113,9 @@ const help: Record<string, FieldHelp> = {
 	"edi.partner": {
 		title: "PARTNER",
 		lines: [
-			"Lists only the interchanges with this customer's system. Any customer",
-			"can trade by EDI: its interchange ID is its customer number.",
+			"Lists only the interchanges with this customer's or vendor's system.",
+			"Any customer can trade by EDI: its interchange ID is its customer",
+			"number. Vendors trade under their vendor number, such as V00001.",
 		],
 	},
 	"edi.sel": {
@@ -131,6 +132,8 @@ const help: Record<string, FieldHelp> = {
 			"  CUSSTMT   statements for open accounts with a balance",
 			"  EDISIM    EDI trading partners: customers' systems send purchase",
 			"            orders and pay the invoices we sent them",
+			"  CUSREORD  reorder: purchase orders to vendors for low stock",
+			"  VENDSIM   EDI vendors: confirm (855) and ship (856) our orders",
 			"",
 			"Press PF5 to refresh the list as the job runs.",
 		],
@@ -212,6 +215,61 @@ const help: Record<string, FieldHelp> = {
 	po: {
 		title: "PO NUMBER",
 		lines: ["The customer's purchase order number, up to 22 characters. Optional."],
+	},
+	vendor: {
+		title: "VENDOR",
+		lines: [
+			"The vendor that supplies the product, by vendor number, such as V00001.",
+			"Purchase orders for the product go to this vendor. Leave it blank if",
+			"the product is not bought in: the reorder job (CUSREORD) then skips it.",
+		],
+	},
+	cost: {
+		title: "UNIT COST",
+		lines: ["What one unit costs us from the vendor, in whole dollars. Purchase", "order lines are costed from it."],
+	},
+	"pos.vendor": {
+		title: "VENDOR",
+		lines: [
+			"Lists only this vendor's purchase orders: a vendor number such as",
+			"V00001 (V1 will do). PF5 opens a new purchase order for the vendor in",
+			"this field, and PF4 lists the vendors.",
+		],
+	},
+	"pos.sel": {
+		title: "SELECTION CODE",
+		lines: [
+			"Type a code beside a purchase order and press Enter:",
+			"  S  show the purchase order",
+			"  R  receive everything still due on a sent order into stock",
+		],
+	},
+	"po.sku": {
+		title: "ADD LINE: SKU",
+		lines: [
+			"The SKU of a product this vendor supplies. The line is costed at the",
+			"product's unit cost. Stock goes up only when the goods are received.",
+		],
+	},
+	"po.qty": {
+		title: "QUANTITY",
+		lines: ["How many units to order, from 1 to 99999. Blank orders one."],
+	},
+	"po.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type D beside a line and press Enter to remove it from the order."],
+	},
+	"po.rcv": {
+		title: "QUANTITY RECEIVED",
+		lines: [
+			"How many units of the line came in, up to the quantity still due.",
+			"Press Enter to put them in stock. PF11 receives everything still due.",
+			"The order is RECEIVED once every line is in.",
+		],
+	},
+	"vendors.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type S beside a vendor and press Enter to list its purchase orders."],
 	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
