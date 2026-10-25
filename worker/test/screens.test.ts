@@ -746,6 +746,42 @@ describe("operator console", () => {
 	});
 });
 
+describe("held output", () => {
+	it("prints a report to the spool, browses, prints and purges it", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "4").send("ENTER");
+		await t.send("PF9");
+		const id = t.message.match(/^CUS0302I REPORT PRINTED TO THE SPOOL AS (TSU\d{5}) - SEE OPTION H$/)![1];
+
+		await t.send("PF3");
+		await t.fill("option", "h cusr").send("ENTER");
+		expect(t.scr.map).toBe("CUSQ01");
+		expect(t.field("filter")!.value).toBe("CUSR");
+		expect(t.row(9)).toMatch(new RegExp(`CUSR01 +${id} IBMUSER  HELD +\\d+ +0 .*CREDIT EXPOS`));
+
+		await t.fill("sel0", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSQ02");
+		expect(t.row(3)).toContain(`CUSR01  ${id}  HELD  CREDIT EXPOSURE SUMMARY`);
+		expect(t.row(4)).toMatch(/^  CUSR01 +CREDIT EXPOSURE SUMMARY/);
+		await t.send("PF4");
+		expect(t.message).toMatch(new RegExp(`^\\$HASP150 CUSR01 ${id} ON PRT1 - \\d+ LINES, COPY 1$`));
+		await t.send("PF3");
+		expect(t.row(9)).toMatch(/PRINTED +\d+ +1 /);
+
+		await t.fill("sel0", "o").send("ENTER");
+		expect(t.message).toMatch(/COPY 2$/);
+		await t.fill("sel0", "z").send("ENTER");
+		expect(t.message).toMatch(/^CUS0103E/);
+		await t.fill("sel0", "p").send("ENTER");
+		expect(t.message).toBe(`$HASP250 ${id} PURGED`);
+		expect(t.row(9)).toContain("NO OUTPUT FOR JOBS STARTING CUSR");
+		await t.fill("filter", "").send("ENTER");
+		expect(t.field("filter")!.value ?? "").toBe("");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM00");
+	});
+});
+
 describe("screen size", () => {
 	it("lays panels out for a larger window and redraws without acting", async () => {
 		const t = await Terminal.logon(40, 132);

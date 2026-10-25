@@ -135,10 +135,21 @@ export interface ScheduleState {
 	msg?: string;
 }
 
+export interface SpoolState {
+	p: "spool";
+	back: State;
+	filter?: string; // job name starts with
+	ids?: string[]; // the output groups on the rows shown, for the selection codes
+	top?: number;
+	errSel?: string;
+	msg?: string;
+}
+export interface OutputState { p: "output"; back: State; id: string; top?: number; msg?: string }
+
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
-	| EdiState | EdiDocState | ConsoleState | ScheduleState;
+	| EdiState | EdiDocState | ConsoleState | ScheduleState | SpoolState | OutputState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

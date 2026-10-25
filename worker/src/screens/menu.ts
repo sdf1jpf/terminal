@@ -18,6 +18,7 @@ const options = [
 	["9", "INVOICES", "Build, bill and collect invoices"],
 	["E", "EDI", "EDI mailbox: orders and payments from customers' systems"],
 	["O", "OPERATOR", "Operator console: SYSLOG and the job schedule"],
+	["H", "HELD", "Held output: print, reprint or purge job output and reports"],
 	["T", "TUTORIAL", "Keyboard and PF key guide"],
 	["X", "EXIT", "Log off"],
 ];
@@ -119,6 +120,11 @@ export const menu: Program<MenuState> = {
 			case "LOG":
 			case "SYSLOG":
 				return { p: "console", back: m };
+			case "H":
+			case "HELD":
+			case "SPOOL":
+			case "OUTPUT":
+				return { p: "spool", back: m, filter: arg };
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };
