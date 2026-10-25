@@ -44,3 +44,14 @@ INSERT OR IGNORE INTO products (sku, description, unit_price, on_hand, reorder_p
   ('TAP-DUCT', 'DUCT TAPE 2 IN (CASE 24)', 88, 40, 15, 'A', '1987-03-14T09:30:00Z', 'IBMUSER'),
   ('VLV-0100', 'BALL VALVE 1 IN BRASS', 27, 0, 25, 'A', '1987-03-14T09:30:00Z', 'IBMUSER'),
   ('WLD-7018', 'WELDING ROD 7018 1/8 (50 LB)', 155, 12, 5, 'D', '1987-03-14T09:30:00Z', 'IBMUSER');
+
+-- Who supplies each product, and its cost (as migration 0008 does for
+-- products already on file).
+UPDATE products SET unit_cost = (unit_price * 6 + 9) / 10 WHERE unit_cost = 0;
+UPDATE products SET vendor = CASE substr(sku, 1, 3)
+    WHEN 'BLT' THEN 'V00001' WHEN 'SAF' THEN 'V00001' WHEN 'TAP' THEN 'V00001'
+    WHEN 'BRG' THEN 'V00002' WHEN 'CHN' THEN 'V00002' WHEN 'GRS' THEN 'V00002'
+    WHEN 'HYD' THEN 'V00003' WHEN 'PMP' THEN 'V00003' WHEN 'VLV' THEN 'V00003' WHEN 'MTR' THEN 'V00003'
+    WHEN 'STL' THEN 'V00004' WHEN 'PLT' THEN 'V00004' WHEN 'WLD' THEN 'V00004'
+    ELSE '' END
+  WHERE vendor = '';

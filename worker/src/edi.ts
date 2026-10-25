@@ -13,6 +13,13 @@
 // Any customer can trade: its interchange ID (ISA06/ISA08) is its customer
 // number, and ours is CUSTAPI. The EDISIM batch job (jobs.ts) plays the
 // customers' side, sending purchase orders and paying the invoices we send.
+//
+// Vendors trade too, with their vendor number (V00001) as their ID. Their
+// side is in purchasing.ts:
+//
+//	850 purchase order  out  our order for stock, sent from a purchase order
+//	855 PO acknowledgment in the vendor accepts it and promises a ship date
+//	856 ship notice     in   the vendor has shipped it
 
 import { getCustomer } from "./data";
 import { HttpError } from "./http";
@@ -21,6 +28,7 @@ import {
 } from "./invoices";
 import type { Transaction } from "./activity";
 import type { StepResult } from "./jobs";
+import { vendorDocument } from "./purchasing";
 
 export const OUR_ID = "CUSTAPI";
 
@@ -42,10 +50,12 @@ export const typeNames: Record<string, string> = {
 	"850": "PURCHASE ORDER",
 	"810": "INVOICE",
 	"820": "REMITTANCE ADVICE",
+	"855": "PO ACKNOWLEDGMENT",
+	"856": "SHIP NOTICE",
 	"997": "FUNCTIONAL ACKNOWLEDGMENT",
 };
 
-const functionalIDs: Record<string, string> = { "850": "PO", "810": "IN", "820": "RA", "997": "FA" };
+const functionalIDs: Record<string, string> = { "850": "PO", "810": "IN", "820": "RA", "855": "PR", "856": "SH", "997": "FA" };
 
 const MAX_RAW = 64 * 1024;
 
@@ -53,7 +63,7 @@ const MAX_RAW = 64 * 1024;
 
 const clean = (v: string | number) => String(v).replace(/[*~>\r\n]/g, " ").trim();
 const two = (n: number) => String(n).padStart(2, "0");
-const ymd = (d: Date) => `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}`;
+export const ymd = (d: Date) => `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}`;
 const hm = (d: Date) => `${two(d.getUTCHours())}${two(d.getUTCMinutes())}`;
 
 // interchange wraps one transaction set in its ISA/GS/ST envelope.
@@ -127,6 +137,10 @@ export function parse(raw: string): Parsed {
 
 export class EdiError extends Error {}
 
+// Trading partners are customers (six digits) and vendors (V and five).
+export const isVendorID = (id: string) => /^V\d{5}$/.test(id);
+const isPartnerID = (id: string) => /^\d{6}$/.test(id) || isVendorID(id);
+
 // ---- the mailbox ----
 
 async function nextNumber(db: D1Database): Promise<number> {
@@ -146,8 +160,8 @@ async function file(db: D1Database, n: number, f: Omit<Interchange, "id" | "crea
 	return row!;
 }
 
-// send files an outbound interchange to a customer.
-async function send(db: D1Database, partner: string, type: string, body: (string | number)[][], reference: string): Promise<Interchange> {
+// send files an outbound interchange to a customer or vendor.
+export async function send(db: D1Database, partner: string, type: string, body: (string | number)[][], reference: string): Promise<Interchange> {
 	const n = await nextNumber(db);
 	const raw = interchange(OUR_ID, partner, n, type, body);
 	return file(db, n, {
@@ -161,7 +175,7 @@ export async function receive(db: D1Database, user: string, raw: string): Promis
 	if (raw.length > MAX_RAW) throw new HttpError(413, "bad_request", "interchange too large");
 	if (raw.trim() === "") throw new HttpError(422, "invalid", "interchange is empty");
 	const h = header(raw);
-	const partner = /^\d{6}$/.test(h.sender) ? h.sender : "";
+	const partner = isPartnerID(h.sender) ? h.sender : "";
 	return file(db, await nextNumber(db), {
 		direction: "I", type: h.type.slice(0, 3), partner, control: h.control.slice(0, 9), status: "RECEIVED",
 		reference: "", note: "", raw, created_by: user,
@@ -199,7 +213,8 @@ export async function processInterchange(db: D1Database, id: string): Promise<In
 		parsed = parse(claimed.raw);
 		if (parsed.receiver !== OUR_ID) throw new EdiError(`interchange is addressed to ${parsed.receiver}, not ${OUR_ID}`);
 		if (!claimed.partner) throw new EdiError(`sender ${parsed.sender || "(blank)"} is not a trading partner`);
-		if (parsed.type === "850") reference = await purchaseOrder(db, claimed.partner, parsed.body);
+		if (isVendorID(claimed.partner)) reference = await vendorDocument(db, claimed.partner, parsed.type, parsed.body);
+		else if (parsed.type === "850") reference = await purchaseOrder(db, claimed.partner, parsed.body);
 		else if (parsed.type === "820") reference = await remittance(db, claimed.partner, parsed.body);
 		else throw new EdiError(`transaction set ${parsed.type || "(blank)"} is not accepted`);
 	} catch (e) {

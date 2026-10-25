@@ -37,7 +37,10 @@ export const jobs: Program<JobsState> = {
 
 		label(scr, 4, 2, "SUBMIT JOB ===>");
 		scr.input(4, 18, 8, "job", j.job ?? "", { bright: j.errField === "job" });
-		scr.text(5, 2, Object.entries(jobLibrary).map(([name, d]) => `${name}=${d.short}`).join("  "), { color: "blue" });
+		// The job library, with short descriptions if they fit, else names.
+		const library = Object.entries(jobLibrary).map(([name, d]) => `${name}=${d.short}`).join("  ");
+		const names = Object.keys(jobLibrary).join(" ");
+		scr.text(5, 2, (library.length <= scr.cols - 2 ? library : names).slice(0, scr.cols - 2), { color: "blue" });
 
 		let list: Job[] = [];
 		try {

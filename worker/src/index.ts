@@ -30,6 +30,16 @@
 //	GET    /v1/edi?partner=X        EDI mailbox, newest first (without the raw X12)
 //	POST   /v1/edi                  receive an X12 interchange (the body, as text)
 //	GET    /v1/edi/{id}             one interchange with its raw X12
+//	GET    /v1/vendors              vendors, with their open PO and product counts
+//	GET    /v1/vendors/{id}
+//	GET    /v1/purchase-orders?vendor=X   purchase orders, newest first
+//	POST   /v1/purchase-orders      open one: {"vendor_id"}
+//	GET    /v1/purchase-orders/{id} -> {"po", "lines"}
+//	DELETE /v1/purchase-orders/{id} cancel an open purchase order
+//	POST   /v1/purchase-orders/{id}/lines         add a line: {"sku", "quantity"}
+//	DELETE /v1/purchase-orders/{id}/lines/{n}
+//	POST   /v1/purchase-orders/{id}/send          send it to the vendor as an 850
+//	POST   /v1/purchase-orders/{id}/receive       receive goods: {"lines": {"1": 5}}, or {} for all
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
@@ -58,6 +68,9 @@ import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs"
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { recent } from "./syslog";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, searchProducts, updateProduct } from "./products";
+import {
+	addPOLine, cancelPO, createPO, deletePOLine, getPO, getVendor, listPOs, listVendors, receivePO, sendPO,
+} from "./purchasing";
 import { requestKeys, screen } from "./screens";
 
 export interface Env {
@@ -182,6 +195,41 @@ app.post("/v1/edi", signedOn, async (c) => {
 });
 app.get("/v1/edi/:id", signedOn, async (c) => json(200, await getInterchange(c.env.DB, c.req.param("id"))));
 
+app.get("/v1/vendors", signedOn, async (c) => json(200, await listVendors(c.env.DB)));
+app.get("/v1/vendors/:id", signedOn, async (c) => json(200, await getVendor(c.env.DB, c.req.param("id"))));
+
+app.get("/v1/purchase-orders", signedOn, async (c) => json(200, await listPOs(c.env.DB, c.req.query("vendor") ?? "")));
+app.post("/v1/purchase-orders", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["vendor_id"]);
+	return json(201, await createPO(c.env.DB, c.get("user"), str(body, "vendor_id")));
+});
+app.get("/v1/purchase-orders/:id", signedOn, async (c) => json(200, await getPO(c.env.DB, c.req.param("id").toUpperCase())));
+app.delete("/v1/purchase-orders/:id", signedOn, async (c) => {
+	await cancelPO(c.env.DB, c.req.param("id").toUpperCase());
+	return noContent();
+});
+app.post("/v1/purchase-orders/:id/lines", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["sku", "quantity"]);
+	return json(201, await addPOLine(c.env.DB, c.req.param("id").toUpperCase(), str(body, "sku"), int(body, "quantity")));
+});
+app.delete("/v1/purchase-orders/:id/lines/:line", signedOn, async (c) => {
+	await deletePOLine(c.env.DB, c.req.param("id").toUpperCase(), lineNumber(c.req.param("line")));
+	return noContent();
+});
+app.post("/v1/purchase-orders/:id/send", signedOn, async (c) => json(200, await sendPO(c.env.DB, c.req.param("id").toUpperCase())));
+app.post("/v1/purchase-orders/:id/receive", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["lines"]);
+	let qty: Map<number, number> | "all" = "all";
+	if (body.lines !== undefined) {
+		const lines = body.lines;
+		if (typeof lines !== "object" || lines === null || Array.isArray(lines)) {
+			throw new HttpError(400, "bad_request", 'invalid request body: "lines" must be an object of line numbers and quantities');
+		}
+		qty = new Map(Object.keys(lines).map((k) => [lineNumber(k), int(lines as Record<string, unknown>, k)]));
+	}
+	return json(200, await receivePO(c.env.DB, c.get("user"), c.req.param("id").toUpperCase(), qty));
+});
+
 app.get("/v1/jobs", signedOn, async (c) => json(200, await listJobs(c.env.DB)));
 app.post("/v1/jobs", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["name"]);
@@ -231,6 +279,14 @@ for (const path of [
 	"/v1/invoices/:id/pay",
 	"/v1/edi",
 	"/v1/edi/:id",
+	"/v1/vendors",
+	"/v1/vendors/:id",
+	"/v1/purchase-orders",
+	"/v1/purchase-orders/:id",
+	"/v1/purchase-orders/:id/lines",
+	"/v1/purchase-orders/:id/lines/:line",
+	"/v1/purchase-orders/:id/send",
+	"/v1/purchase-orders/:id/receive",
 	"/v1/jobs",
 	"/v1/jobs/:id",
 	"/v1/syslog",
