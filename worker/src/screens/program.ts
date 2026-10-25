@@ -91,7 +91,16 @@ export interface InvoiceState {
 	top?: number;
 	vals?: Record<string, string>; // the add line fields, kept across a failed add
 	confirm?: boolean; // PF9 was pressed once: press it again to cancel the invoice
+	focus?: string; // the field to put the cursor in, once
 	errField?: string;
+	msg?: string;
+}
+export interface SkuSearchState {
+	p: "skusearch";
+	back: InvoiceState;
+	q: string; // matched against SKU and description
+	top?: number;
+	errSel?: string;
 	msg?: string;
 }
 
@@ -128,7 +137,7 @@ export interface ScheduleState {
 
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
-	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState
+	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
 	| EdiState | EdiDocState | ConsoleState | ScheduleState;
 
 // Input is what the operator sent with the AID key.

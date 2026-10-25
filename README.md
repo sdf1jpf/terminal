@@ -229,6 +229,7 @@ GET    /v1/customers/{id}/transactions   invoices and payments, newest first
 POST   /v1/customers/{id}/transactions   post one: {"type":"I"|"P","amount","reference"}
 GET    /v1/customers/{id}/history        change history, newest first
 GET    /v1/products?prefix=X    product file, ordered by SKU
+GET    /v1/products?q=X         active products whose SKU or description contains X
 POST   /v1/products             add a product
 GET    /v1/products/{sku}
 PUT    /v1/products/{sku}       update ("version" must match)
@@ -335,6 +336,12 @@ An invoice goes OPEN, then BILLED, then PAID:
   Overtype a line's quantity to change it, or type `D` beside it to remove
   it; stock moves by the difference. PF9 twice cancels the invoice and
   returns all its stock.
+- **Finding a SKU:** PF4 opens **PRODUCT SEARCH** (CUSI03), which lists the
+  active products whose SKU or description contains what you type, with
+  price and stock on hand. `S` beside one carries its SKU back to the add
+  line. Typing part of a SKU or description with a `?` (such as `GLOVE?`) and
+  pressing Enter searches too, and so does a SKU that is not on file but
+  matches some products.
 - **PF10 bills it:** the total is posted to the customer's account as an
   invoice (`I`) transaction, and the lines can no longer be changed.
 - **PF11 marks it paid:** a payment (`P`) for the total is posted.

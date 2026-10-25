@@ -65,6 +65,17 @@ export async function listProducts(db: D1Database, prefix: string): Promise<Prod
 	return results;
 }
 
+// searchProducts finds the active products whose SKU or description
+// contains text, for picking a product to sell. Blank text finds them all.
+export async function searchProducts(db: D1Database, text: string): Promise<Product[]> {
+	const like = "%" + text.trim().toUpperCase().replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+	const { results } = await db.prepare(
+		`SELECT * FROM products WHERE status = 'A' AND (sku LIKE ?1 ESCAPE '\\' OR description LIKE ?1 ESCAPE '\\')
+		 ORDER BY sku`,
+	).bind(like).all<Product>();
+	return results;
+}
+
 export async function getProduct(db: D1Database, sku: string): Promise<Product> {
 	const row = await db.prepare("SELECT * FROM products WHERE sku = ?").bind(sku.toUpperCase()).first<Product>();
 	if (!row) throw notFound();

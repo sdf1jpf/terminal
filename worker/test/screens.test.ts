@@ -521,6 +521,54 @@ describe("invoice screens", () => {
 		expect(t.message).toBe(`CUS0506I INVOICE ${id} CANCELLED, STOCK RETURNED`);
 	});
 
+	it("finds a SKU to add with the product search", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "9 117").send("ENTER");
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.row(t.scr.rows)).toContain("PF4=FIND SKU");
+
+		await t.fill("sku", "bearing?", "qty", "4").send("ENTER");
+		expect(t.scr.map).toBe("CUSI03");
+		expect(t.field("q")?.value).toBe("BEARING");
+		expect(t.row(9)).toMatch(/BRG-6204 +BALL BEARING 6204-2RS +\$9 +\d+/);
+		expect(t.row(10)).toContain("BRG-6310");
+		expect(t.scr.cursor).toEqual({ field: "sel:BRG-6204" });
+
+		await t.fill("q", "glove").send("ENTER");
+		expect(t.row(9)).toContain("SAF-GLV");
+		await t.fill("q", "nothing like it").send("ENTER");
+		expect(t.row(9)).toContain("NO ACTIVE PRODUCTS MATCH");
+		await t.fill("q", "6310").send("ENTER");
+		await t.fill("sel:BRG-6310", "x").send("ENTER");
+		expect(t.message).toBe('CUS0103E INVALID SELECTION CODE "X"');
+		await t.fill("sel:BRG-6310", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.message).toBe("CUS0516I BRG-6310 SELECTED - ENTER A QUANTITY AND PRESS ENTER TO ADD IT");
+		expect(t.field("sku")?.value).toBe("BRG-6310");
+		expect(t.field("qty")?.value).toBe("4");
+		expect(t.scr.cursor).toEqual({ field: "qty" });
+		await t.send("ENTER");
+		expect(t.message).toMatch(/^CUS0513I LINE 1 ADDED: 4 BRG-6310 AT \$31$/);
+
+		// PF4 searches for what is in the SKU field; PF3 comes back unchanged.
+		await t.fill("sku", "chn").send("PF4");
+		expect(t.scr.map).toBe("CUSI03");
+		expect(t.field("q")?.value).toBe("CHN");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.field("sku")?.value).toBe("CHN");
+
+		// A SKU that is not on file but matches products opens the search.
+		await t.fill("sku", "gloves").send("ENTER");
+		expect(t.scr.map).toBe("CUSI03");
+		expect(t.message).toBe("CUS0515I GLOVES IS NOT A SKU - 1 PRODUCT MATCH");
+		await t.send("PF3");
+		await t.fill("sku", "zzz-1").send("ENTER");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.message).toBe("CUS0510E PRODUCT ZZZ-1 IS NOT ON FILE");
+	});
+
 	it("will not open an invoice for a customer on hold", async () => {
 		const t = await Terminal.logon();
 		await t.fill("option", "9").send("ENTER");
