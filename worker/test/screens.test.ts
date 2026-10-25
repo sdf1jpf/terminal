@@ -1,6 +1,7 @@
 import { introspectWorkflowInstance } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { partnerPO, processInterchange, receive } from "../src/edi";
 import { addLine, billInvoice, createInvoice, payInvoice } from "../src/invoices";
 import { accessJWT } from "./access";
 
@@ -523,6 +524,42 @@ describe("invoice screens", () => {
 		expect(t.row(4)).toContain("CONSOLIDATED FREIGHT");
 		await t.send("PF5");
 		expect(t.message).toBe("CUS0503E CUSTOMER IS ON HOLD - NO NEW INVOICES");
+	});
+});
+
+describe("EDI screens", () => {
+	it("lists the mailbox, shows an interchange's segments, and links to the invoice", async () => {
+		const filed = await receive(env.DB, "TEST", partnerPO("000121", 77, "UB-9", [{ sku: "BLT-0750", qty: 2, price: 46 }]));
+		const done = (await processInterchange(env.DB, filed.id))!;
+		const inv = done.reference.split(" ")[2];
+		const t = await Terminal.logon();
+		await t.fill("option", "e 121").send("ENTER");
+		expect(t.scr.map).toBe("CUSE01");
+		expect(t.row(4)).toContain("ROW 1 TO 2 OF 2");
+		expect(t.row(9)).toMatch(/OUT 997 +000121 +SENT/);
+		expect(t.row(10)).toMatch(new RegExp(`${filed.id} IN  850 +000121 +ACCEPTED +PO UB-9 ${inv}`));
+
+		await t.fill(`sel:${filed.id}`, "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSE02");
+		expect(t.row(4)).toContain(`${filed.id}  850 PURCHASE ORDER`);
+		expect(t.row(4)).toContain("ACCEPTED");
+		expect(t.row(11)).toMatch(/^ +ISA\*00\*/);
+		expect(t.row(14)).toContain("BEG*00*SA*UB-9");
+		await t.send("PF4");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.row(4)).toContain(inv);
+		await t.send("PF3");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSE01");
+
+		// The customer's event history has it too, and its detail shows the X12.
+		await t.send("PF3");
+		await t.fill("option", "5 121").send("ENTER");
+		const n = [...Array(t.scr.rows).keys()].map((r) => t.row(r + 1)).find((l) => l.includes(`850 ACCEPTED`))!.trim().split(" ")[0];
+		await t.fill("line", n).send("ENTER");
+		expect(t.row(6)).toContain("EDI 850 PURCHASE ORDER RECEIVED");
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSE02");
 	});
 });
 

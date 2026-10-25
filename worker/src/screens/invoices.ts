@@ -1,9 +1,10 @@
 import { getCustomer } from "../data";
 import type { Customer } from "../customer";
 import {
-	addLine, billInvoice, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
+	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
 	statusNames, type Invoice, type InvoiceLine,
 } from "../invoices";
+import { bill } from "../edi";
 import { padID } from "./detail";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
 import { fail, isCode, pf, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
@@ -309,8 +310,8 @@ export const invoice: Program<InvoiceState> = {
 				});
 			case pf(10):
 				return act(s, async () => {
-					const { invoice: inv } = await billInvoice(ctx.db, ctx.user, s.id);
-					s.msg = `CUS0507I INVOICE ${s.id} BILLED, ${money(inv.total)} POSTED TO ${inv.customer_id}`;
+					const { invoice: inv, edi } = await bill(ctx.db, ctx.user, s.id);
+					s.msg = `CUS0507I INVOICE ${s.id} BILLED, ${money(inv.total)} POSTED TO ${inv.customer_id}${edi ? ` - 810 ${edi.id} SENT` : ""}`;
 					return s;
 				});
 			case pf(11):

@@ -26,6 +26,9 @@
 //	DELETE /v1/invoices/{id}/lines/{n}
 //	POST   /v1/invoices/{id}/bill   post the total to the customer's account
 //	POST   /v1/invoices/{id}/pay    post the payment
+//	GET    /v1/edi?partner=X        EDI mailbox, newest first (without the raw X12)
+//	POST   /v1/edi                  receive an X12 interchange (the body, as text)
+//	GET    /v1/edi/{id}             one interchange with its raw X12
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
@@ -41,8 +44,9 @@ import { customerFields, parseEditable } from "./customer";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, int, json, noContent, readJSON, str } from "./http";
 import {
-	addLine, billInvoice, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
+	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
 } from "./invoices";
+import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, updateProduct } from "./products";
 import { requestKeys, screen } from "./screens";
@@ -150,13 +154,21 @@ app.delete("/v1/invoices/:id/lines/:line", signedOn, async (c) => {
 	await deleteLine(c.env.DB, c.req.param("id").toUpperCase(), lineNumber(c.req.param("line")));
 	return noContent();
 });
-app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await billInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 
 function lineNumber(s: string): number {
 	if (!/^\d{1,5}$/.test(s)) throw new HttpError(404, "not_found", "invoice line not found");
 	return Number(s);
 }
+
+app.get("/v1/edi", signedOn, async (c) => json(200, await listInterchanges(c.env.DB, c.req.query("partner") ?? "")));
+app.post("/v1/edi", signedOn, async (c) => {
+	const filed = await receive(c.env.DB, c.get("user"), await c.req.text());
+	await c.env.JOBS.send({ id: filed.id, kind: "edi" } satisfies JobMessage);
+	return json(202, filed);
+});
+app.get("/v1/edi/:id", signedOn, async (c) => json(200, await getInterchange(c.env.DB, c.req.param("id"))));
 
 app.get("/v1/jobs", signedOn, async (c) => json(200, await listJobs(c.env.DB)));
 app.post("/v1/jobs", signedOn, async (c) => {
@@ -187,6 +199,8 @@ for (const path of [
 	"/v1/invoices/:id/lines/:line",
 	"/v1/invoices/:id/bill",
 	"/v1/invoices/:id/pay",
+	"/v1/edi",
+	"/v1/edi/:id",
 	"/v1/jobs",
 	"/v1/jobs/:id",
 ]) {

@@ -1,14 +1,14 @@
 // A customer's event history: everything that happened to the account, in
 // one list, newest first. It is read from the records each event left
-// behind: the change history (audit), invoices opened, and the invoice and
-// payment postings (transactions).
+// behind: the change history (audit), invoices opened, the invoice and
+// payment postings (transactions), and EDI interchanges with its system.
 
 export interface CustomerEvent {
-	kind: "A" | "V" | "T"; // audit row, invoice, transaction
+	kind: "A" | "V" | "T" | "E"; // audit row, invoice, transaction, EDI interchange
 	key: string; // the audit or transaction seq, or the invoice ID
 	at: string; // RFC 3339, UTC
 	by: string;
-	event: string; // ADDED, CHANGED, DELETED, OPENED, BILLED, INVOICE, PAYMENT
+	event: string; // ADDED, CHANGED, DELETED, OPENED, BILLED, INVOICE, PAYMENT, EDI IN, EDI OUT
 	text: string;
 	amount?: number; // + charges the account, - credits it
 	balance?: number; // after a posting
@@ -17,10 +17,11 @@ export interface CustomerEvent {
 const isInvoice = (ref: string) => /^INV\d{5}$/.test(ref);
 
 export async function customerEvents(db: D1Database, id: string): Promise<CustomerEvent[]> {
-	const [audit, invoices, postings] = await db.batch<Record<string, string | number>>([
+	const [audit, invoices, postings, edi] = await db.batch<Record<string, string | number>>([
 		db.prepare("SELECT * FROM audit WHERE customer_id = ? ORDER BY seq DESC LIMIT 500").bind(id),
 		db.prepare("SELECT id, po_number, created, created_by FROM invoices WHERE customer_id = ? ORDER BY id DESC LIMIT 500").bind(id),
 		db.prepare("SELECT * FROM transactions WHERE customer_id = ? ORDER BY seq DESC LIMIT 500").bind(id),
+		db.prepare("SELECT id, direction, type, status, reference, created, created_by FROM edi WHERE partner = ? ORDER BY id DESC LIMIT 500").bind(id),
 	]);
 	const events: CustomerEvent[] = [];
 	for (const r of audit.results) {
@@ -43,8 +44,15 @@ export async function customerEvents(db: D1Database, id: string): Promise<Custom
 			text: ref, amount: pay ? -Number(r.amount) : Number(r.amount), balance: Number(r.balance),
 		});
 	}
+	for (const r of edi.results) {
+		events.push({
+			kind: "E", key: String(r.id), at: String(r.created), by: String(r.created_by),
+			event: r.direction === "I" ? "EDI IN" : "EDI OUT",
+			text: `${r.type} ${r.status} ${r.reference}`,
+		});
+	}
 	// Newest first; at the same instant, the later step first (paid after
 	// billed after opened).
-	const order = { A: 0, V: 1, T: 2 };
+	const order = { A: 0, E: 1, V: 2, T: 3 };
 	return events.sort((a, b) => b.at.localeCompare(a.at) || order[b.kind] - order[a.kind] || Number(b.key.replace(/\D/g, "")) - Number(a.key.replace(/\D/g, "")));
 }

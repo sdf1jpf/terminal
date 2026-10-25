@@ -45,7 +45,7 @@ export interface EventState {
 	p: "event";
 	back: State;
 	id: string; // the customer
-	kind: "A" | "V" | "T"; // audit row, invoice, transaction
+	kind: "A" | "V" | "T" | "E"; // audit row, invoice, transaction, EDI interchange
 	key: string;
 	line: number; // its line on the event history
 	msg?: string;
@@ -96,9 +96,21 @@ export interface InvoiceState {
 	msg?: string;
 }
 
+export interface EdiState {
+	p: "edi";
+	back: State;
+	partner?: string; // only this customer's interchanges; "" for all
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface EdiDocState { p: "edidoc"; back: State; id: string; top?: number; msg?: string }
+
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState | HistoryState
-	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState;
+	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState
+	| EdiState | EdiDocState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -135,7 +147,7 @@ export function isCode(err: unknown, code: string): err is HttpError {
 
 // messenger panels can show a message passed back from a child screen.
 export function setMsg(s: State, msg: string): boolean {
-	if (s.p === "browse" || s.p === "menu" || s.p === "invoices") {
+	if (s.p === "browse" || s.p === "menu" || s.p === "invoices" || s.p === "edi") {
 		s.msg = msg;
 		return true;
 	}

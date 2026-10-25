@@ -355,6 +355,29 @@ Option 6 opens **CHANGE HISTORY**, which also works for a deleted customer.
 On the inquiry screen these are PF5 and PF6, and on the browse list the
 selection codes `A` and `H`.
 
+## EDI with customers' systems
+
+Customers' systems can trade with us in ANSI X12 (004010), simulated end to
+end. Menu option `E` (`E 000105` for one customer) opens the **EDI MAILBOX**
+(CUSE01): every interchange in and out, newest first. `S` shows one on
+**EDI INTERCHANGE** (CUSE02), segment by segment, with PF4 to its invoice.
+
+| Set | Direction | What happens |
+| --- | --- | --- |
+| 850 purchase order | in | Opens an invoice for the sender and adds its lines, taking the stock. If any line can't be filled, the whole order is rejected and the stock returned. |
+| 997 acknowledgment | out | Sent for every inbound interchange from a known customer: accepted, or rejected with the reason kept on the mailbox. |
+| 810 invoice | out | Sent when an invoice that came from an 850 is billed (PF10). |
+| 820 remittance | in | Marks each invoice it names paid, if the amounts agree. |
+
+Any customer can trade: its interchange ID (ISA06) is its customer number,
+and ours is `CUSTAPI`. Interchanges arrive with `POST /v1/edi` (the raw X12
+as the body), wait on the `customer-jobs` queue and are processed by its
+consumer. PF6 on the mailbox submits the **EDISIM** job, which plays the
+customers' side: up to three customers send purchase orders (now and then
+for a product we don't carry, which is rejected), and each customer pays
+the billed invoices we sent it an 810 for. EDI traffic also shows in the
+customer's event history.
+
 ## Batch jobs
 
 Batch work runs the way it would under JES. Submitting a job records it as
@@ -371,6 +394,7 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSAGING` | Aged balances report. Payments are applied to the oldest invoices first, and each balance is split into current, 31-60, 61-90 and over 90 days. RC 0004 if anything is over 90 days. |
 | `CUSCRREV` | Credit review. STEP010 lists active accounts at 90% of their limit or more. STEP020 puts active accounts that are over their limit on hold, and records each hold in the change history as made by `CUSCRREV`. RC 0004 if it held any. |
 | `CUSSTMT` | Statements for every open account with a balance, with the last 30 days of activity. |
+| `EDISIM` | EDI trading partner simulator: customers send 850 purchase orders and pay invoices sent as 810s with 820 remittances. |
 
 In the terminal, menu option 7 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,
