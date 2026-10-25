@@ -1,6 +1,7 @@
 import { listCustomers } from "../data";
 import type { Customer } from "../customer";
-import { dots, header, invalidKey, keys, label, lpad, message, MIN_COLS, money, newScreen, pad, right, time, value, type Color } from "./screen";
+import { spoolReport } from "../spool";
+import { dots, header, invalidKey, keys, label, lpad, message, MIN_COLS, money, newScreen, pad, right, textLines, time, value, type Color } from "./screen";
 import { fail, pf, type Program, type ReportState } from "./program";
 
 // A read-only credit exposure summary.
@@ -58,7 +59,7 @@ export const report: Program<ReportState> = {
 		});
 
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF12=CANCEL");
+		keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF9=PRINT  PF12=CANCEL");
 		scr.setCursor(scr.rows, 2);
 		return scr;
 	},
@@ -73,6 +74,13 @@ export const report: Program<ReportState> = {
 			case "CLEAR":
 				r.msg = "CUS0301I REPORT REFRESHED AT " + time(ctx);
 				return r;
+			case pf(9): {
+				// The report goes to the spool as it is now, at 80 columns.
+				const lines = textLines(await report.render({ ...ctx, rows: 24, cols: MIN_COLS }, { p: "report" }));
+				const id = await spoolReport(ctx.db, ctx.user, "CUSR01", "CREDIT EXPOSURE SUMMARY", lines);
+				r.msg = `CUS0302I REPORT PRINTED TO THE SPOOL AS ${id} - SEE OPTION H`;
+				return r;
+			}
 		}
 		r.msg = invalidKey(input.aid);
 		return r;

@@ -22,6 +22,7 @@ const options = [
 	["P", "PURCHASING", "Purchase orders, vendors"],
 	["S", "SHIPPING", "Pick, pack and ship"],
 	["O", "OPERATOR", "Console, SYSLOG, schedule"],
+	["H", "HELD", "Held output, reprint"],
 	["T", "TUTORIAL", "Keyboard and PF keys"],
 	["X", "EXIT", "Log off"],
 ];
@@ -137,6 +138,11 @@ export const menu: Program<MenuState> = {
 			case "S":
 			case "SHIPPING":
 				return newShipments(m, arg);
+			case "H":
+			case "HELD":
+			case "SPOOL":
+			case "OUTPUT":
+				return { p: "spool", back: m, filter: arg };
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };

@@ -2,8 +2,8 @@
 // it as QUEUED and sends it to the customer-jobs queue (the input queue).
 // The queue consumer starts a JobRunner workflow per job; each job step is
 // a durable workflow step with retries. The runner marks the job EXECUTING,
-// runs the steps, and writes the output listing and the highest condition
-// code, leaving the job in OUTPUT.
+// runs the steps, and writes the output listing to the spool and the
+// highest condition code, leaving the job in OUTPUT.
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Customer } from "./customer";
@@ -11,6 +11,7 @@ import { partnersOrder, partnersPay, processInterchange } from "./edi";
 import { HttpError } from "./http";
 import type { Env } from "./index";
 import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
+import { outputLines, spoolStmts } from "./spool";
 import { logStmt } from "./syslog";
 import { pickTickets } from "./shipping";
 
@@ -124,13 +125,12 @@ export async function listJobs(db: D1Database): Promise<Job[]> {
 	return results;
 }
 
-// getJob returns a job and its output listing, or undefined.
+// getJob returns a job and its output listing, which is on the spool, or
+// undefined.
 export async function getJob(db: D1Database, id: string): Promise<{ job: Job; output: string[] } | undefined> {
 	const job = await db.prepare("SELECT * FROM jobs WHERE id = ?").bind(id).first<Job>();
 	if (!job) return undefined;
-	const { results } = await db.prepare("SELECT text FROM job_output WHERE job_id = ? ORDER BY line")
-		.bind(id).all<{ text: string }>();
-	return { job, output: results.map((r) => r.text) };
+	return { job, output: (await outputLines(db, id)) ?? [] };
 }
 
 // startJobs is the queue consumer: it starts a JobRunner for each job,
@@ -201,10 +201,8 @@ export class JobRunner extends WorkflowEntrypoint<Env, JobMessage> {
 
 		return step.do("output", async () => {
 			const { rc, lines } = listing(job, def, results);
-			const stmts = [db.prepare("DELETE FROM job_output WHERE job_id = ?").bind(job.id)];
-			lines.forEach((text, i) =>
-				stmts.push(db.prepare("INSERT INTO job_output (job_id, line, text) VALUES (?, ?, ?)").bind(job.id, i + 1, text)),
-			);
+			// The output is held on the spool (spool.ts).
+			const stmts = spoolStmts(db, { id: job.id, name: job.name, owner: job.submitted_by, title: def.title }, lines);
 			stmts.push(
 				db.prepare("UPDATE jobs SET status = 'OUTPUT', rc = ?, ended = ? WHERE id = ?")
 					.bind(rc, new Date().toISOString(), job.id),

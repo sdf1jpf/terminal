@@ -80,6 +80,20 @@ export class Screen {
 	}
 }
 
+// textLines returns what the screen shows, row by row, without the message
+// and PF key lines and with trailing blanks trimmed, for printing.
+export function textLines(scr: Screen): string[] {
+	const rows = Array.from({ length: scr.rows - 2 }, () => Array<string>(scr.cols).fill(" "));
+	for (const f of scr.fields) {
+		if (f.row > scr.rows - 2 || f.hidden) continue;
+		const s = f.text ?? (f.value ?? "");
+		for (let i = 0; i < s.length && f.col - 1 + i < scr.cols; i++) rows[f.row - 1][f.col - 1 + i] = s[i];
+	}
+	const out = rows.map((r) => r.join("").trimEnd());
+	while (out.length > 0 && out.at(-1) === "") out.pop();
+	return out;
+}
+
 // clean drops attributes at their default so the wire stays small.
 function clean(o: Opts, highlight: Highlight): Opts {
 	const out: Opts = {};
