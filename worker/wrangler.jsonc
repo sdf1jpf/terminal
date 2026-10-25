@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "customer-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "customer-api",
+      // Replace with the id printed by: npx wrangler d1 create customer-api
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "SESSION_TTL_HOURS": "8"
+  }
+  // Users are a secret, not a var: npx wrangler secret put CUSTAPI_USERS
+}

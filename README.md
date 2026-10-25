@@ -25,7 +25,7 @@ talks to a REST API over HTTP.
 ## Architecture
 
 ```
- your machine                                    API server (or also your machine)
+ your machine                                    Cloudflare Worker, or the Go server
 ┌─────────────────────────────┐                 ┌─────────────────────────────┐
 │ terminal                    │    HTTP/JSON    │ customer-api                │
 │   3270 screens, keyboard,   │────────────────▶│   logon / sessions          │
@@ -76,6 +76,63 @@ go install ./cmd/terminal ./cmd/customer-api
 | `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
 | `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
 
+## Deploy the API to Cloudflare Workers
+
+`worker/` is the same API, written in TypeScript for Cloudflare Workers. It
+stores customers and sessions in D1 (Cloudflare's SQLite database). It serves
+exactly the same endpoints, JSON and error codes as the Go server, so the
+terminal works with either one unchanged.
+
+You need Node.js 20 or later and a Cloudflare account.
+
+```sh
+cd worker
+npm ci
+npx wrangler login
+
+# 1. Create the database, then paste the printed database_id into wrangler.jsonc
+npx wrangler d1 create customer-api
+
+# 2. Create the tables, and optionally load the 24 demo customers
+npm run db:migrate:remote
+npm run db:seed:remote
+
+# 3. Set who may log on (stored encrypted as a Worker secret)
+npx wrangler secret put CUSTAPI_USERS      # e.g. IBMUSER:SOMEPASS,JDOE:OTHERPASS
+
+# 4. Deploy
+npm run deploy                             # prints https://customer-api.<you>.workers.dev
+```
+
+Then point the terminal at it:
+
+```sh
+go run ./cmd/terminal -api https://customer-api.<you>.workers.dev
+```
+
+To run the Worker locally, use a local D1 database and the demo users:
+
+```sh
+cd worker
+cp .dev.vars.example .dev.vars
+npm run db:migrate:local && npm run db:seed:local
+npm run dev                                # http://localhost:8787
+go run ./cmd/terminal -api http://localhost:8787
+```
+
+`npm test` runs the API tests inside the Workers runtime against a throwaway
+D1 database. `npm run typecheck` checks the TypeScript.
+
+Notes:
+
+- **Session length:** `SESSION_TTL_HOURS` in `wrangler.jsonc` sets how long a
+  logon lasts (default 8).
+- **Password storage:** passwords live in the `CUSTAPI_USERS` secret. Bearer
+  tokens are stored only as SHA-256 hashes.
+- **Brute-force protection:** the Worker doesn't throttle logon attempts. For
+  a public deployment, add a Cloudflare rate-limiting rule on
+  `POST /v1/session`, or put Cloudflare Access in front of the Worker.
+
 ## The API
 
 ```
@@ -90,8 +147,9 @@ DELETE /v1/customers/{id}
 ```
 
 Every endpoint except health and logon needs `Authorization: Bearer <token>`.
-The server speaks plain HTTP. If clients will connect over a network, put it
-behind a TLS-terminating proxy and point the terminal at the `https://` URL.
+The Go server speaks plain HTTP. If clients will connect to it over a network,
+put it behind a TLS-terminating proxy. The Worker is served over HTTPS
+automatically.
 Errors look like this:
 
 ```json
@@ -155,7 +213,8 @@ Erase EOF, Erase Input, and the cursor's row/col in the status line.
 
 ```
 cmd/terminal/        the local client
-cmd/customer-api/    the API server
+cmd/customer-api/    the API server in Go (local use, tests, -embedded)
+worker/              the same API for Cloudflare Workers + D1 (TypeScript)
 internal/tn3270/     terminal emulation: screen buffer, fields, keyboard, rendering
 internal/host/       the application screens; they call a Backend interface
 internal/api/        REST server and HTTP client (the client implements Backend)
