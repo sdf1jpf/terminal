@@ -5,7 +5,9 @@ import {
 	statusNames, type Invoice, type InvoiceLine,
 } from "../invoices";
 import { bill } from "../edi";
+import { searchProducts } from "../products";
 import { padID } from "./detail";
+import { newSkuSearch, searchText } from "./skusearch";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
 import { fail, isCode, pf, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
 
@@ -13,6 +15,8 @@ import { fail, isCode, pf, type InvoiceState, type InvoicesState, type Next, typ
 // all, with the customer's account position, opens new ones and marks
 // billed ones paid. CUSI02 INVOICE builds an open invoice from the
 // product file, bills it to the customer's account and marks it paid.
+// PF4 on an open invoice, or a ? or * in the SKU, searches the product
+// file (CUSI03, skusearch.ts) for the SKU to add.
 // Open invoices show in white, billed ones in yellow and paid ones in green.
 
 const statusColor = (status: string): Color => (status === "O" ? "white" : status === "B" ? "yellow" : "green");
@@ -264,21 +268,22 @@ export const invoice: Program<InvoiceState> = {
 
 		message(scr, msg);
 		keys(scr, open
-			? "ENTER=APPLY PF1=HELP PF3=EXIT PF7/8=SCROLL PF9=CANCEL INV PF10=BILL"
+			? "ENTER=APPLY PF1=HELP PF3=EXIT PF4=FIND SKU PF7/8=SCROLL PF9=CANCEL PF10=BILL"
 			: inv?.status === "B"
 				? "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF11=MARK PAID  PF12=CANCEL"
 				: "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF12=CANCEL");
 		if (s.errField && open) scr.cursorTo(s.errField);
+		else if (s.focus && open) scr.cursorTo(s.focus);
 		else if (open) scr.cursorTo("sku");
 		return scr;
 	},
 
 	async handle(ctx, s, input) {
 		const confirm = s.confirm;
-		s.msg = s.errField = s.confirm = undefined;
+		s.msg = s.errField = s.confirm = s.focus = undefined;
 		// The keys that act on the invoice depend on its status: lines are
 		// changed only while it is open, and only a billed one can be paid.
-		const active: Record<string, string> = { ENTER: "O", PF9: "O", PF10: "O", PF11: "B" };
+		const active: Record<string, string> = { ENTER: "O", PF4: "O", PF9: "O", PF10: "O", PF11: "B" };
 		if (active[input.aid]) {
 			const status = await getInvoice(ctx.db, s.id).then(({ invoice }) => invoice.status, () => "");
 			if (status !== active[input.aid]) {
@@ -292,6 +297,9 @@ export const invoice: Program<InvoiceState> = {
 			case pf(3):
 			case pf(12):
 				return back(s);
+			case pf(4):
+				s.vals = { sku: (input.fields.sku ?? "").trim().toUpperCase(), qty: (input.fields.qty ?? "").trim() };
+				return newSkuSearch(s, s.vals.sku);
 			case pf(7):
 			case pf(8): {
 				const { lines } = await getInvoice(ctx.db, s.id).catch(() => ({ lines: [] }));
@@ -396,6 +404,7 @@ async function apply(ctx: Ctx, s: InvoiceState, f: Record<string, string>, modif
 			await setPO(ctx.db, s.id, f.po ?? "");
 			done++;
 		}
+		if (/[?*]/.test(vals.sku)) return newSkuSearch(s, vals.sku);
 		if (vals.sku) {
 			const qty = vals.qty === "" ? 1 : Number(vals.qty);
 			if (!/^\d*$/.test(vals.qty)) {
@@ -403,7 +412,17 @@ async function apply(ctx: Ctx, s: InvoiceState, f: Record<string, string>, modif
 				s.msg = fieldMessage("qty", "quantity must be a whole number from 1 to 99999");
 				return s;
 			}
-			const line = await addLine(ctx.db, s.id, vals.sku, qty);
+			const line = await addLine(ctx.db, s.id, vals.sku, qty).catch(async (e) => {
+				// A SKU that is not on file may be part of one or of a
+				// description: offer the products it matches.
+				if (!isCode(e, "invalid") || !/not on file/.test(e.message)) throw e;
+				const found = await searchProducts(ctx.db, vals.sku);
+				if (found.length === 0) throw e;
+				return found.length;
+			});
+			if (typeof line === "number") {
+				return newSkuSearch(s, vals.sku, `CUS0515I ${vals.sku} IS NOT A SKU - ${line} PRODUCT${line === 1 ? "" : "S"} MATCH`);
+			}
 			s.vals = undefined;
 			s.msg = `CUS0513I LINE ${line.line} ADDED: ${line.quantity} ${line.sku} AT ${money(line.unit_price)}`;
 			return s;

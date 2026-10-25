@@ -13,6 +13,7 @@
 //	POST   /v1/customers/{id}/transactions   post an invoice or payment
 //	GET    /v1/customers/{id}/history        change history, newest first
 //	GET    /v1/products?prefix=X    product file, ordered by SKU
+//	GET    /v1/products?q=X         active products whose SKU or description contains X
 //	POST   /v1/products             add a product
 //	GET    /v1/products/{sku}
 //	PUT    /v1/products/{sku}       update; "version" must match
@@ -48,7 +49,7 @@ import {
 } from "./invoices";
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
-import { createProduct, getProduct, listProducts, parseProduct, productFields, updateProduct } from "./products";
+import { createProduct, getProduct, listProducts, parseProduct, productFields, searchProducts, updateProduct } from "./products";
 import { requestKeys, screen } from "./screens";
 
 export interface Env {
@@ -116,7 +117,10 @@ app.post("/v1/customers/:id/transactions", signedOn, async (c) =>
 );
 app.get("/v1/customers/:id/history", signedOn, async (c) => json(200, await customerHistory(c.env.DB, c.req.param("id"))));
 
-app.get("/v1/products", signedOn, async (c) => json(200, await listProducts(c.env.DB, c.req.query("prefix") ?? "")));
+app.get("/v1/products", signedOn, async (c) => {
+	const q = c.req.query("q");
+	return json(200, q !== undefined ? await searchProducts(c.env.DB, q) : await listProducts(c.env.DB, c.req.query("prefix") ?? ""));
+});
 app.post("/v1/products", signedOn, async (c) => {
 	const { fields } = parseProduct(await readJSON(c.req.raw, productFields));
 	return json(201, await createProduct(c.env.DB, fields, c.get("user")));

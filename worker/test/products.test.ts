@@ -23,6 +23,14 @@ describe("products", () => {
 		expect(brg.body.map((p: { sku: string }) => p.sku)).toEqual(["BRG-6204", "BRG-6310"]);
 	});
 
+	it("searches active products by SKU or description", async () => {
+		const skus = async (q: string) => (await call("GET", `/v1/products?q=${q}`)).body.map((p: { sku: string }) => p.sku);
+		expect(await skus("bearing")).toEqual(["BRG-6204", "BRG-6310"]);
+		expect(await skus("6310")).toEqual(["BRG-6310"]);
+		expect(await skus("%25")).toEqual([]);
+		expect((await skus("")).length).toBeGreaterThan(0);
+	});
+
 	it("adds, refuses a duplicate SKU, and updates with optimistic locking", async () => {
 		const add = await call("POST", "/v1/products", widget);
 		expect(add.status).toBe(201);
