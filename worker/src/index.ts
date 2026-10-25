@@ -47,6 +47,11 @@
 //	GET    /v1/schedules            the job schedule, with each job's next run
 //	PUT    /v1/schedules/{job}      schedule a job: {"cron", "enabled"?}
 //	DELETE /v1/schedules/{job}
+//	GET    /v1/spool?name=X         the print spool, newest first
+//	GET    /v1/spool/{id}           an output group and its lines
+//	GET    /v1/spool/{id}/print     paged for the printer, as text
+//	POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
+//	DELETE /v1/spool/{id}           purge it
 //
 // A cron trigger runs the job scheduler every minute (scheduler.ts).
 //
@@ -66,6 +71,7 @@ import {
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
+import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
 import { recent } from "./syslog";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, searchProducts, updateProduct } from "./products";
 import {
@@ -259,6 +265,18 @@ app.delete("/v1/schedules/:name", signedOn, async (c) => {
 	return noContent();
 });
 
+app.get("/v1/spool", signedOn, async (c) => json(200, await listOutput(c.env.DB, c.req.query("name") ?? "")));
+app.get("/v1/spool/:id", signedOn, async (c) => json(200, await getOutput(c.env.DB, c.req.param("id").toUpperCase())));
+app.get("/v1/spool/:id/print", signedOn, async (c) => {
+	const { output, lines } = await getOutput(c.env.DB, c.req.param("id").toUpperCase());
+	return new Response(printText(output, lines), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+});
+app.post("/v1/spool/:id/print", signedOn, async (c) => json(200, await printOutput(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+app.delete("/v1/spool/:id", signedOn, async (c) => {
+	await purgeOutput(c.env.DB, c.get("user"), c.req.param("id").toUpperCase());
+	return noContent();
+});
+
 // A known path with a method it does not take is 405, not 404. Registered
 // after the real routes, so it only runs when none of them matched.
 for (const path of [
@@ -292,6 +310,9 @@ for (const path of [
 	"/v1/syslog",
 	"/v1/schedules",
 	"/v1/schedules/:name",
+	"/v1/spool",
+	"/v1/spool/:id",
+	"/v1/spool/:id/print",
 ]) {
 	app.all(path, (c) => {
 		throw new HttpError(405, "method_not_allowed", `${c.req.method} is not allowed on ${c.req.path.replace(/\/+$/, "")}`);

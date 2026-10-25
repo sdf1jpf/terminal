@@ -332,6 +332,17 @@ const help: Record<string, FieldHelp> = {
 			"S submits the job now, without changing the schedule. D deletes it.",
 		],
 	},
+	"spool.filter": {
+		title: "JOBNAME STARTS WITH",
+		lines: ["Show only output whose job name starts with this, such as CUS. Blank for all."],
+	},
+	"spool.sel": {
+		title: "SELECTION CODE",
+		lines: [
+			"S browses the output. O prints it on PRT1: it stays on the spool, so",
+			"O again prints another copy. P purges it, and a job's entry with it.",
+		],
+	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],

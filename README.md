@@ -240,6 +240,11 @@ GET    /v1/syslog?before=N      the system log, newest first (&limit=, up to 500
 GET    /v1/schedules            the job schedule, with each job's next run
 PUT    /v1/schedules/{job}      schedule a job: {"cron":"0 6 * * *","enabled":true}
 DELETE /v1/schedules/{job}
+GET    /v1/spool?name=X         the print spool, newest first
+GET    /v1/spool/{id}           an output group and its lines
+GET    /v1/spool/{id}/print     paged for the printer, as text/plain
+POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
+DELETE /v1/spool/{id}           purge it, and its job
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -487,6 +492,23 @@ Type a job and a cron and press Enter to add a job or change its cron. Beside
 a job, `H` holds it, `R` releases it, `S` submits it now and `D` takes it off
 the schedule. Any job in the job library can be scheduled. The log keeps the
 newest 10,000 lines.
+
+## Print spool
+
+Job output and printed reports are held on the spool until someone deals
+with them, as under JES. Every job's output listing goes there under the
+job's ID when the job ends, and PF9 on the credit exposure summary (option 4)
+prints the report to it under a TSU ID, as from a TSO session.
+
+Menu option `H` (`H CUS` for jobs starting CUS) opens the **HELD OUTPUT
+QUEUE** (CUSQ01), like SDSF's H panel. Beside an output group, `S` browses it
+(CUSQ02, where PF4 prints it), `O` prints it on `PRT1`, and `P` purges it.
+Printed output stays on the spool marked `PRINTED` with a copy count, so `O`
+again is a reprint. Each print is logged on SYSLOG as `$HASP150` and each
+purge as `$HASP250`. Purging a job's output removes the job from the batch
+job list too. `PRT1` is simulated: `GET /v1/spool/{id}/print` returns the
+listing paged for it, 60 lines to a page with a heading and a form feed
+between pages.
 
 ## Printing a screen
 
