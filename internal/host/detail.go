@@ -130,7 +130,7 @@ func (d *detail) Render(s *Session) *t3.Screen {
 	message(scr, d.msg)
 	switch d.mode {
 	case modeInquiry:
-		keys(scr, "ENTER=DISPLAY  PF1=HELP  PF3=EXIT  PF4=UPDATE  PF9=DELETE  PF12=CANCEL")
+		keys(scr, "PF1=HELP PF3=EXIT PF4=UPDATE PF5=ACTIVITY PF6=HISTORY PF9=DELETE PF12=CANCEL")
 	case modeUpdate, modeAdd:
 		keys(scr, "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF")
 	case modeDelete:
@@ -256,6 +256,15 @@ func (d *detail) handleInquiry(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		if aid == t3.PF(9) {
 			d.mode = modeDelete
 		}
+	case t3.PF(5), t3.PF(6):
+		if !d.loaded {
+			d.msg, d.errField = "CUS0204E DISPLAY A CUSTOMER FIRST", "id"
+			return d
+		}
+		if aid == t3.PF(5) {
+			return newActivity(s, d.cust.ID, d)
+		}
+		return newHistory(s, d.cust.ID, d)
 	case t3.AIDClear:
 		return &detail{mode: modeInquiry, back: d.back}
 	default:

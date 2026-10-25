@@ -154,6 +154,81 @@ describe("customers", () => {
 	});
 });
 
+describe("activity", () => {
+	it("posts invoices and payments and moves the balance", async () => {
+		const token = await logon();
+		const { body: before } = await call("GET", "/v1/customers/000102", { token });
+
+		const inv = await call("POST", "/v1/customers/000102/transactions", {
+			token, body: { type: "i", amount: 500, reference: "inv 1001" },
+		});
+		expect(inv.status).toBe(201);
+		expect(inv.body).toMatchObject({
+			customer_id: "000102", type: "I", amount: 500, reference: "INV 1001",
+			balance: before.balance + 500, posted_by: "IBMUSER",
+		});
+		const pay = await call("POST", "/v1/customers/000102/transactions", {
+			token, body: { type: "P", amount: 200 },
+		});
+		expect(pay.body.balance).toBe(before.balance + 300);
+
+		const { body: after } = await call("GET", "/v1/customers/000102", { token });
+		expect(after.balance).toBe(before.balance + 300);
+		expect(after.version).toBe(before.version); // posting is not an edit
+
+		const list = await call("GET", "/v1/customers/000102/transactions", { token });
+		expect(list.body.map((t: { type: string }) => t.type)).toEqual(["P", "I"]);
+	});
+
+	it("validates postings and names the field", async () => {
+		const token = await logon();
+		const cases: [unknown, string][] = [
+			[{ type: "X", amount: 1 }, "type"],
+			[{ type: "I", amount: 0 }, "amount"],
+			[{ type: "I", amount: 5, reference: "much too long ref" }, "ref"],
+		];
+		for (const [body, field] of cases) {
+			const res = await call("POST", "/v1/customers/000104/transactions", { token, body });
+			expect(res.status).toBe(422);
+			expect(res.body.error.field).toBe(field);
+		}
+	});
+
+	it("takes payments but not invoices on hold or closed accounts", async () => {
+		const token = await logon();
+		const hold = await call("POST", "/v1/customers/000103/transactions", { token, body: { type: "I", amount: 1 } });
+		expect(hold.status).toBe(422);
+		expect(hold.body.error.message).toContain("on hold");
+		const pay = await call("POST", "/v1/customers/000103/transactions", { token, body: { type: "P", amount: 1 } });
+		expect(pay.status).toBe(201);
+		const missing = await call("POST", "/v1/customers/999999/transactions", { token, body: { type: "P", amount: 1 } });
+		expect(missing.status).toBe(404);
+	});
+});
+
+describe("history", () => {
+	it("records adds, field changes and deletes", async () => {
+		const token = await logon();
+		const { body: created } = await call("POST", "/v1/customers", { token, body: newCustomer });
+		const id = created.id;
+		const jdoe = await accessJWT({ email: "jdoe@example.com" });
+		await call("PUT", `/v1/customers/${id}`, { token: jdoe, body: { ...created, city: "sparks", credit_limit: 2000 } });
+
+		// A stale update changes nothing and records nothing.
+		const stale = await call("PUT", `/v1/customers/${id}`, { token, body: { ...created, city: "elko" } });
+		expect(stale.status).toBe(409);
+
+		expect((await call("DELETE", `/v1/customers/${id}`, { token })).status).toBe(204);
+		const res = await call("GET", `/v1/customers/${id}/history`, { token });
+		expect(res.body.map((c: Record<string, string>) => [c.action, c.field, c.old_value, c.new_value, c.by])).toEqual([
+			["DELETE", "", "", "", "IBMUSER"],
+			["CHANGE", "LIMIT", "1000", "2000", "JDOE"],
+			["CHANGE", "CITY", "RENO", "SPARKS", "JDOE"],
+			["ADD", "", "", "", "IBMUSER"],
+		]);
+	});
+});
+
 describe("routing", () => {
 	it("returns JSON errors for unknown paths and methods", async () => {
 		expect((await call("GET", "/nope")).body.error.code).toBe("not_found");

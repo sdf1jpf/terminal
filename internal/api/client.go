@@ -103,6 +103,24 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/customers/"+url.PathEscape(id), nil, nil)
 }
 
+func (c *Client) Transactions(ctx context.Context, id string) ([]customer.Transaction, error) {
+	var out []customer.Transaction
+	err := c.do(ctx, http.MethodGet, "/v1/customers/"+url.PathEscape(id)+"/transactions", nil, &out)
+	return out, err
+}
+
+func (c *Client) Post(ctx context.Context, t customer.Transaction) (customer.Transaction, error) {
+	var out customer.Transaction
+	err := c.do(ctx, http.MethodPost, "/v1/customers/"+url.PathEscape(t.ID)+"/transactions", t, &out)
+	return out, err
+}
+
+func (c *Client) History(ctx context.Context, id string) ([]customer.Change, error) {
+	var out []customer.Change
+	err := c.do(ctx, http.MethodGet, "/v1/customers/"+url.PathEscape(id)+"/history", nil, &out)
+	return out, err
+}
+
 // do sends a request and decodes the response into out. API errors are
 // mapped to the package's sentinel errors or a *customer.ValidationError.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {

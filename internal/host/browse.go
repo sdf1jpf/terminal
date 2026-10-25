@@ -52,7 +52,7 @@ func (b *browse) Render(s *Session) *t3.Screen {
 		scr.Text(4, right(scr, 58), fmt.Sprintf("ROW %d TO %d OF %d", b.top+1, end, len(b.list)), t3.WithColor(t3.White))
 	}
 
-	scr.Text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE", t3.WithColor(t3.Blue))
+	scr.Text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE  A=ACTIVITY  H=HISTORY", t3.WithColor(t3.Blue))
 	scr.Text(7, 2, fmt.Sprintf("S CUST NO  %-*s %-*s ST      BALANCE STAT", nameW, "NAME", cityW, "CITY"),
 		t3.WithColor(t3.White), t3.Bright)
 	scr.Text(8, 2, strings.Repeat("-", scr.Cols()-3), t3.WithColor(t3.Blue))
@@ -143,6 +143,12 @@ func (b *browse) selection(s *Session, f map[string]string) Program {
 		if code == "" {
 			continue
 		}
+		switch code {
+		case "A":
+			return newActivity(s, id, b)
+		case "H":
+			return newHistory(s, id, b)
+		}
 		d := &detail{back: b}
 		switch code {
 		case "S":
@@ -175,7 +181,7 @@ func money(n int) string {
 		s = s[:i] + "," + s[i:]
 	}
 	if neg {
-		s = "-" + s
+		return "-$" + s
 	}
 	return "$" + s
 }

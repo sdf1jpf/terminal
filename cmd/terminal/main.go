@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -25,6 +26,7 @@ func main() {
 		sysName = flag.String("system", "SYS1", "system name shown on screens")
 		lu      = flag.String("lu", "TERM0001", "terminal name shown in the status line")
 		latency = flag.Duration("latency", 0, "extra delay added to every host response, for effect")
+		prints  = flag.String("print-dir", defaultPrintDir(), "where the PRINT key (Ctrl+P) saves screens")
 	)
 	flag.Parse()
 
@@ -32,7 +34,7 @@ func main() {
 		SystemName: *sysName,
 		Backend:    api.NewClient(*apiURL, access(*apiURL)),
 	}, *lu)
-	term := tn3270.New(sess, tn3270.Options{LUName: *lu, Latency: *latency})
+	term := tn3270.New(sess, tn3270.Options{LUName: *lu, Latency: *latency, PrintDir: *prints})
 	p := tea.NewProgram(term, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -54,4 +56,13 @@ func access(apiURL string) api.Access {
 		}
 	}
 	return api.Cloudflared{App: apiURL}
+}
+
+// defaultPrintDir is ~/terminal-prints, or the current directory if there
+// is no home directory.
+func defaultPrintDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "terminal-prints")
+	}
+	return "."
 }

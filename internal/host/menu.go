@@ -18,6 +18,8 @@ var menuOptions = []struct{ key, name, desc string }{
 	{"2", "INQUIRY", "Display a customer by number"},
 	{"3", "ADD", "Add a new customer"},
 	{"4", "REPORTS", "Credit exposure summary"},
+	{"5", "ACTIVITY", "Post invoices and payments"},
+	{"6", "HISTORY", "Who changed a customer, and when"},
 	{"T", "TUTORIAL", "Keyboard and PF key guide"},
 	{"X", "EXIT", "Log off"},
 }
@@ -48,8 +50,8 @@ func (m *menu) Render(s *Session) *t3.Screen {
 		scr.Text(6+i, right(scr, 65), "- "+kv[1], t3.WithColor(t3.White))
 	}
 
-	scr.Text(14, 4, "Enter an option number, or a command such as 2 000105 to jump", t3.WithColor(t3.Blue))
-	scr.Text(15, 4, "straight to a customer. Press PF1 at any time for help.", t3.WithColor(t3.Blue))
+	scr.Text(15, 4, "Enter an option number, or a command such as 2 000105 to jump", t3.WithColor(t3.Blue))
+	scr.Text(16, 4, "straight to a customer. Press PF1 at any time for help.", t3.WithColor(t3.Blue))
 
 	message(scr, m.msg)
 	keys(scr, "PF1=HELP  PF3=LOGOFF  PF4=BROWSE  PF12=CANCEL")
@@ -95,6 +97,10 @@ func (m *menu) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		return newAdd(m)
 	case "4", "REPORTS":
 		return &report{}
+	case "5", "ACTIVITY":
+		return newActivity(s, arg, m)
+	case "6", "HISTORY":
+		return newHistory(s, arg, m)
 	case "T", "TUTORIAL":
 		return &help{back: m}
 	case "X", "EXIT", "LOGOFF":

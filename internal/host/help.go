@@ -20,6 +20,7 @@ var helpRows = [][2]string{
 	{"CTRL+E", "Erase to end of field (ERASE EOF)"},
 	{"CTRL+U", "Erase all input fields (ERASE INPUT)"},
 	{"ESC / CTRL+R", "RESET: unlock the keyboard after an error"},
+	{"CTRL+P", "PRINT: save a copy of the screen to a text file"},
 	{"CTRL+C", "Disconnect the terminal session"},
 }
 
