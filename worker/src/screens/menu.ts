@@ -1,4 +1,4 @@
-import { newActivity, newHistory } from "./activity";
+import { newActivity } from "./activity";
 import { newAdd, newInquiry } from "./detail";
 import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
@@ -13,7 +13,6 @@ const options = [
 	["3", "ADD", "Add a new customer"],
 	["4", "REPORTS", "Credit exposure summary"],
 	["5", "EVENTS", "Event history: changes, invoices, payments"],
-	["6", "HISTORY", "Who changed a customer, and when"],
 	["7", "JOBS", "Submit batch jobs and view their output"],
 	["8", "PRODUCTS", "Product file and stock on hand"],
 	["9", "INVOICES", "Build, bill and collect invoices"],
@@ -99,10 +98,9 @@ export const menu: Program<MenuState> = {
 			case "5":
 			case "EVENTS":
 			case "ACTIVITY":
-				return newActivity(ctx, m, arg);
-			case "6":
+			case "6": // the old change history, now part of the events
 			case "HISTORY":
-				return newHistory(ctx, m, arg);
+				return newActivity(ctx, m, arg);
 			case "7":
 			case "JOBS":
 				return { p: "jobs", back: m };

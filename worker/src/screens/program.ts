@@ -50,7 +50,6 @@ export interface EventState {
 	line: number; // its line on the event history
 	msg?: string;
 }
-export interface HistoryState { p: "history"; back: State; id?: string; top?: number; errField?: string; msg?: string }
 
 export interface JobsState {
 	p: "jobs";
@@ -108,7 +107,7 @@ export interface EdiState {
 export interface EdiDocState { p: "edidoc"; back: State; id: string; top?: number; msg?: string }
 
 export type State =
-	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState | HistoryState
+	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState
 	| EdiState | EdiDocState;
 

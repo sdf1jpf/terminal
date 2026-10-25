@@ -5,7 +5,7 @@
 
 import type { Env } from "../index";
 import { HttpError, int, str } from "../http";
-import { activity, event, history } from "./activity";
+import { activity, event } from "./activity";
 import { browse } from "./browse";
 import { detail } from "./detail";
 import { fieldHelp } from "./fieldhelp";
@@ -24,7 +24,7 @@ export const requestKeys = [
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
-	menu, browse, detail, report, help, activity, event, history, jobs, joblog, products, product, invoices, invoice, edi, edidoc,
+	menu, browse, detail, report, help, activity, event, jobs, joblog, products, product, invoices, invoice, edi, edidoc,
 };
 
 // The commarea's own version. Bump it when a state shape changes in a way

@@ -10,7 +10,7 @@ Worker.
  SYS1 CUSTOMER INFORMATION SYSTEM                                    11:23:06
 
  NAME STARTS WITH ===> ____________________                ROW 1 TO 13 OF 24
- SELECT: S=SHOW  U=UPDATE  D=DELETE  A=EVENTS  H=HISTORY  I=INVOICES
+ SELECT: S=SHOW  U=UPDATE  D=DELETE  A=EVENTS  I=INVOICES
  CITY ===> __________________  STATE ===> __  STATUS ===> _  A/H/C
  S CUST NO  NAME                     CITY            ST      BALANCE STAT
  -----------------------------------------------------------------------------
@@ -341,19 +341,20 @@ The same steps are in the API under `/v1/invoices` (see the route list in
 Each step runs as one D1 transaction, so stock, the invoice and the
 customer's balance always move together.
 
-## Event history and change history
+## Event history
 
 From the menu, option 5 (`5 000105`) opens the customer's **EVENT HISTORY**
-(CUSM03): every record change, invoice opened, invoice billed and payment
-posted, newest first, with the account's balance, limit and available
+(CUSM03): every record change (including credit limit and status changes),
+invoice opened, invoice billed, payment posted and EDI interchange, newest first, with the account's balance, limit and available
 credit above. Each line is numbered: type a number in `SHOW LINE` and press
 Enter to see that event on **EVENT DETAIL** (CUSM05), including the
 invoice and its lines; PF4 there opens the invoice. The screen is read only:
 charges and payments come from the invoice screens (option 9).
 
-Option 6 opens **CHANGE HISTORY**, which also works for a deleted customer.
-On the inquiry screen these are PF5 and PF6, and on the browse list the
-selection codes `A` and `H`.
+It also works for a deleted customer, whose events outlive the record. On
+the inquiry screen it is PF5 (PF6 is the customer's invoices), and on the
+browse list the selection code `A`. It replaces the old change history:
+option 6 and the code `H` still lead here.
 
 ## EDI with customers' systems
 

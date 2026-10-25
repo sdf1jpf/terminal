@@ -1,4 +1,4 @@
-import { customerHistory, type Change, type Transaction } from "../activity";
+import type { Change, Transaction } from "../activity";
 import { customerEvents, type CustomerEvent } from "../events";
 import { getCustomer } from "../data";
 import type { Customer } from "../customer";
@@ -7,14 +7,13 @@ import { newInvoices } from "./invoices";
 import { getInvoice, statusNames, type Invoice, type InvoiceLine } from "../invoices";
 import { typeNames, type Interchange } from "../edi";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
-import { fail, isCode, pf, type ActivityState, type EventState, type HistoryState, type Next, type Program } from "./program";
+import { fail, isCode, pf, type ActivityState, type EventState, type Next, type Program } from "./program";
 
 // CUSM03 EVENT HISTORY is the customer's audit trail: record changes,
 // invoices opened, billed and paid, newest first and numbered; typing a
 // line number shows that event on CUSM05 EVENT DETAIL. It is read only:
-// postings come from the invoice screens (invoices.ts). CUSM04 CHANGE HISTORY
-// lists who changed a customer record, when, and what changed; it works for
-// deleted customers too, since the history outlives the record.
+// postings come from the invoice screens (invoices.ts). It works for deleted
+// customers too, since their events outlive the record.
 
 // open reads a customer, returning it or an error message.
 async function open(ctx: Ctx, id: string): Promise<Customer | string> {
@@ -75,9 +74,13 @@ async function loadActivity(ctx: Ctx, a: ActivityState, id: string): Promise<voi
 	a.id = padID(id);
 	a.top = 0;
 	const c = await open(ctx, a.id);
-	if (typeof c === "string") {
+	if (typeof c !== "string") return;
+	// A deleted customer's events outlive it.
+	if ((await events(ctx, a.id)).length === 0) {
 		a.msg = c;
 		a.errField = "id";
+	} else {
+		a.msg = `CUS0251I CUSTOMER ${a.id} HAS BEEN DELETED - HISTORY ONLY`;
 	}
 }
 
@@ -148,7 +151,7 @@ export const activity: Program<ActivityState> = {
 		if (a.id && list.length === 0 && !a.errField) scr.text(11, 4, "NO EVENTS ON FILE", { color: "yellow" });
 
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF5=INVOICES  PF6=HISTORY  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		keys(scr, "PF1=HELP  PF3=EXIT  PF5=INVOICES  PF7=UP  PF8=DOWN  PF12=CANCEL");
 		scr.cursorTo(a.errField || (cust ? "line" : "id"));
 		return scr;
 	},
@@ -179,13 +182,12 @@ export const activity: Program<ActivityState> = {
 				}
 				return a.back;
 			case pf(5):
-			case pf(6):
 				if (!(await current(ctx, a.id))) {
 					a.msg = "CUS0204E DISPLAY A CUSTOMER FIRST";
 					a.errField = "id";
 					return a;
 				}
-				return input.aid === pf(5) ? newInvoices(a, a.id!) : newHistory(ctx, a, a.id!);
+				return newInvoices(a, a.id!);
 			case pf(7):
 			case pf(8):
 				page(a, input.aid, activityRows(ctx), await events(ctx, a.id));
@@ -334,117 +336,5 @@ export const event: Program<EventState> = {
 		}
 		s.msg = invalidKey(input.aid);
 		return s;
-	},
-};
-
-// ---- CUSM04 CHANGE HISTORY ----
-
-export async function newHistory(ctx: Ctx, back: HistoryState["back"], id: string): Promise<HistoryState> {
-	const h: HistoryState = { p: "history", back };
-	if (id) await loadHistory(ctx, h, id);
-	return h;
-}
-
-async function loadHistory(ctx: Ctx, h: HistoryState, id: string): Promise<void> {
-	h.id = padID(id);
-	h.top = 0;
-	const c = await open(ctx, h.id);
-	let list: Change[];
-	try {
-		list = await customerHistory(ctx.db, h.id);
-	} catch (e) {
-		h.msg = fail(e);
-		return;
-	}
-	if (list.length > 0 && typeof c === "string") {
-		h.msg = `CUS0251I CUSTOMER ${h.id} HAS BEEN DELETED - HISTORY ONLY`;
-	} else if (typeof c === "string") {
-		h.msg = c;
-		h.errField = "id";
-	}
-}
-
-// historyRows is how many changes fit on a page: 14 on 24x80.
-const historyRows = (ctx: Ctx) => ctx.rows - 10;
-
-function historyLine(date: string, time: string, user: string, action: string, field: string): string {
-	return `${pad(date, 10)} ${pad(time, 5)} ${pad(user, 8)} ${pad(action, 6)} ${pad(field, 7)} `;
-}
-
-const blank = (s: string) => (s === "" ? "(BLANK)" : s);
-
-export const history: Program<HistoryState> = {
-	async render(ctx, h) {
-		const scr = newScreen(ctx, "CUSM04");
-		header(scr, ctx, "CHANGE HISTORY");
-		let msg = h.msg ?? "";
-		account(scr, h.id ?? "", await current(ctx, h.id), h.errField === "id");
-
-		let list: Change[] = [];
-		if (h.id) {
-			try {
-				list = await customerHistory(ctx.db, h.id);
-			} catch (e) {
-				msg = fail(e);
-			}
-		}
-		const rows = historyRows(ctx);
-		const top = Math.min(h.top ?? 0, Math.max(list.length - rows, 0));
-		if (list.length > 0) {
-			scr.text(5, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
-		}
-		scr.text(6, 4, historyLine("DATE", "TIME", "USER", "ACTION", "FIELD") + "OLD VALUE > NEW VALUE", { color: "white", bright: true });
-		scr.text(7, 4, "-".repeat(scr.cols - 6), { color: "blue" });
-		const width = scr.cols - 4 - historyLine("", "", "", "", "").length - 2;
-		list.slice(top, top + rows).forEach((c, i) => {
-			let what = `${blank(c.old_value ?? "")} > ${blank(c.new_value ?? "")}`;
-			let color: Color = "green";
-			if (c.action === "ADD") [what, color] = ["RECORD ADDED", "turquoise"];
-			if (c.action === "DELETE") [what, color] = ["RECORD DELETED", "pink"];
-			const [date, time] = stamp(ctx, c.at).split(" ");
-			scr.text(8 + i, 4, historyLine(date ?? "", time ?? "", c.by, c.action, c.field ?? "") + what.slice(0, width), { color });
-		});
-		if (list.length === 0 && h.id && !h.errField) scr.text(8, 4, "NO CHANGES ON FILE", { color: "yellow" });
-
-		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF5=EVENTS  PF7=UP  PF8=DOWN  PF12=CANCEL");
-		scr.cursorTo("id");
-		return scr;
-	},
-
-	async handle(ctx, h, input) {
-		h.msg = "";
-		h.errField = undefined;
-		switch (input.aid) {
-			case "ENTER": {
-				const id = (input.fields.id ?? "").trim();
-				if (id === "") {
-					Object.assign(h, { msg: "CUS0202E ENTER A CUSTOMER NUMBER", errField: "id", id: undefined });
-					return h;
-				}
-				await loadHistory(ctx, h, id);
-				return h;
-			}
-			case pf(3):
-			case pf(12):
-				return h.back;
-			case pf(5):
-				if (!(await current(ctx, h.id))) {
-					h.msg = "CUS0204E DISPLAY A CUSTOMER FIRST";
-					h.errField = "id";
-					return h;
-				}
-				if (h.back.p === "activity" && h.back.id === h.id) {
-					await loadActivity(ctx, h.back, h.id!);
-					return h.back;
-				}
-				return newActivity(ctx, h, h.id!);
-			case pf(7):
-			case pf(8):
-				page(h, input.aid, historyRows(ctx), h.id ? await customerHistory(ctx.db, h.id) : []);
-				return h;
-		}
-		h.msg = invalidKey(input.aid);
-		return h;
 	},
 };
