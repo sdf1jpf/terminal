@@ -28,10 +28,11 @@ Worker.
 ```
  your machine                                    Cloudflare
 ┌─────────────────────────────┐                 ┌─────────────────────────────┐
-│ terminal (Go)               │   HTTPS/JSON    │ customer-api Worker (TS)    │
-│   3270 screens, keyboard,   │────────────────▶│   checks the Access JWT     │
-│   field editing (Bubble Tea)│  Access token   │   validation, locking       │
-└─────────────────────────────┘◀────────────────│   D1 database               │
+│ terminal (Go)               │  AID + fields   │ customer-api Worker (TS)    │
+│   generic 3270 display:     │────────────────▶│   checks the Access JWT     │
+│   draws fields, edits them, │  Access token   │   the screens (panels)      │
+│   keyboard (Bubble Tea)     │◀────────────────│   validation, locking       │
+└─────────────────────────────┘   next screen   │   D1 database               │
                                                 └─────────────────────────────┘
                                                   ▲ Cloudflare Access in front:
                                                     sign-in with your identity
@@ -39,8 +40,20 @@ Worker.
 ```
 
 The terminal does what a 3270 did locally: it draws screens, edits fields and
-handles the keyboard. When you press Enter or a PF key, it calls the API. The
-API is the system of record. It owns the data, checks who is signed in and enforces the
+handles the keyboard. The screens themselves come from the API, the way a
+3270 got them from CICS. When you press Enter or a PF key, the terminal sends
+the key, the input fields and the cursor position to `POST /v1/screen`, and
+the Worker answers with the next screen as a list of fields. So a new or
+changed screen ships with a Worker deploy, and the terminal never needs
+rebuilding for it. The format is in [docs/screen-protocol.md](docs/screen-protocol.md),
+and the panels are in `worker/src/screens/`.
+
+Only the logon screen is drawn by the terminal itself, since it signs you in
+through Cloudflare Access before the API can be called. If the API stops
+answering, the terminal keeps the screen and anything you typed and says
+`HOST NOT RESPONDING`; press Enter to try again.
+
+The API is the system of record. It owns the data, checks who is signed in and enforces the
 edit rules, so any other client gets the same behavior.
 
 ## Quick start (everything local)

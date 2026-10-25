@@ -141,12 +141,23 @@ func TestTerminalRoundTrip(t *testing.T) {
 	}
 }
 
+// update applies msg and runs the commands it returns, as Bubble Tea would.
+func update(term *Terminal, msg tea.Msg) {
+	for _, cmd := term.Update(msg); cmd != nil; {
+		_, cmd = term.Update(cmd())
+	}
+}
+
 func TestResizeKeepsInput(t *testing.T) {
 	term := New(echoHost{}, Options{})
-	term.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	update(term, tea.WindowSizeMsg{Width: 80, Height: 26})
 	term.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")})
 
-	term.Update(tea.WindowSizeMsg{Width: 132, Height: 45})
+	_, cmd := term.Update(tea.WindowSizeMsg{Width: 132, Height: 45})
+	if term.lock != LockWait {
+		t.Fatal("keyboard not locked while the host lays out the screen")
+	}
+	update(term, cmd())
 	if r, c := term.scr.Rows(), term.scr.Cols(); r != 43 || c != 132 {
 		t.Fatalf("screen is %dx%d after resize, want 43x132", r, c)
 	}
@@ -165,7 +176,7 @@ func TestResizeKeepsInput(t *testing.T) {
 	}
 
 	// Too small for a Model 2: keep the last layout and say so.
-	term.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	update(term, tea.WindowSizeMsg{Width: 60, Height: 20})
 	if term.scr.Cols() != 132 || !strings.Contains(term.View(), "too small") {
 		t.Fatal("expected the too-small notice")
 	}
@@ -173,15 +184,27 @@ func TestResizeKeepsInput(t *testing.T) {
 
 func TestResizeWaitsForHost(t *testing.T) {
 	term := New(echoHost{}, Options{})
-	term.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	update(term, tea.WindowSizeMsg{Width: 80, Height: 26})
 	_, cmd := term.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	term.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	if term.scr.Cols() != 80 {
 		t.Fatal("screen was redrawn while the host was busy")
 	}
-	term.Update(cmd())
+	update(term, cmd())
 	if r, c := term.scr.Rows(), term.scr.Cols(); r != 28 || c != 100 {
 		t.Fatalf("screen is %dx%d after the reply, want 28x100", r, c)
+	}
+}
+
+type downHost struct{ echoHost }
+
+func (downHost) Redraw(rows, cols int) *Screen { return nil }
+
+func TestResizeWithHostDown(t *testing.T) {
+	term := New(downHost{}, Options{})
+	update(term, tea.WindowSizeMsg{Width: 100, Height: 30})
+	if term.lock != LockNone || term.scr.Cols() != 80 {
+		t.Fatalf("expected the old layout and an unlocked keyboard, got %v %d", term.lock, term.scr.Cols())
 	}
 }
 

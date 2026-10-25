@@ -2,18 +2,13 @@
 // API, which is served by the Cloudflare Worker in worker/.
 //
 //	GET    /v1/health
-//	POST   /v1/session              logon: -> {"userid"}
-//	GET    /v1/customers?prefix=X   list, ordered by name
-//	POST   /v1/customers            create
-//	GET    /v1/customers/{id}
-//	PUT    /v1/customers/{id}       update; "version" must match
-//	DELETE /v1/customers/{id}
-//	GET    /v1/customers/{id}/transactions   activity, newest first
-//	POST   /v1/customers/{id}/transactions   post an invoice or payment
-//	GET    /v1/customers/{id}/history        change history, newest first
+//	POST   /v1/session    logon: -> {"userid"}
+//	POST   /v1/screen     the application's screens; see docs/screen-protocol.md
 //
-// Everything except health is behind Cloudflare Access (see access.go).
-// Errors are returned as {"error":{"code","message","field"}}.
+// The Worker also serves /v1/customers for other clients; the terminal
+// reaches the data only through the screens. Everything except health is
+// behind Cloudflare Access (see access.go). Errors are returned as
+// {"error":{"code","message","field"}}.
 package api
 
 import "errors"
@@ -21,8 +16,6 @@ import "errors"
 var (
 	ErrUnauthorized = errors.New("not logged on or session expired")
 	ErrBadLogon     = errors.New("not authorized by Cloudflare Access")
-	ErrNotFound     = errors.New("record not found")
-	ErrConflict     = errors.New("record was changed by another user")
 	ErrUnavailable  = errors.New("host not responding")
 )
 
@@ -30,6 +23,68 @@ var (
 
 type LogonResponse struct {
 	UserID string `json:"userid"`
+}
+
+// ScreenVersion is the screen protocol version this client speaks.
+const ScreenVersion = 1
+
+// ScreenRequest is sent when an AID key is pressed, or with AID "START"
+// for the first screen and "REDRAW" for a new window size.
+type ScreenRequest struct {
+	V        int               `json:"v"`
+	AID      string            `json:"aid"`
+	State    string            `json:"state,omitempty"`
+	Fields   map[string]string `json:"fields"`
+	Modified []string          `json:"modified"`
+	Cursor   Cursor            `json:"cursor"`
+	Rows     int               `json:"rows"`
+	Cols     int               `json:"cols"`
+	Terminal string            `json:"terminal,omitempty"`
+	System   string            `json:"system,omitempty"`
+	TZOffset int               `json:"tz_offset"`
+}
+
+// ScreenResponse holds the next screen and the commarea to send back with
+// the next request, or Logoff when the operator has logged off.
+type ScreenResponse struct {
+	V      int     `json:"v"`
+	State  string  `json:"state"`
+	Screen *Screen `json:"screen"`
+	Logoff *struct {
+		Message string `json:"message"`
+	} `json:"logoff"`
+}
+
+type Screen struct {
+	Map    string  `json:"map"`
+	Rows   int     `json:"rows"`
+	Cols   int     `json:"cols"`
+	Fields []Field `json:"fields"`
+	Cursor *Cursor `json:"cursor"`
+}
+
+// Field is an output field (Text) or, when Name is set, an input field of
+// Length characters prefilled with Value.
+type Field struct {
+	Row       int    `json:"row"`
+	Col       int    `json:"col"`
+	Text      string `json:"text"`
+	Name      string `json:"name"`
+	Length    int    `json:"length"`
+	Value     string `json:"value"`
+	Color     string `json:"color"`
+	Bright    bool   `json:"bright"`
+	Highlight string `json:"highlight"`
+	Hidden    bool   `json:"hidden"`
+	Numeric   bool   `json:"numeric"`
+	Mixed     bool   `json:"mixed"`
+}
+
+// Cursor is a position, 1-based, and the input field it is in, if any.
+type Cursor struct {
+	Row   int    `json:"row,omitempty"`
+	Col   int    `json:"col,omitempty"`
+	Field string `json:"field,omitempty"`
 }
 
 type errorBody struct {
@@ -43,9 +98,4 @@ type errorDetail struct {
 }
 
 // Error codes used on the wire.
-const (
-	codeUnauthorized = "unauthorized"
-	codeNotFound     = "not_found"
-	codeConflict     = "conflict"
-	codeInvalid      = "invalid"
-)
+const codeUnauthorized = "unauthorized"
