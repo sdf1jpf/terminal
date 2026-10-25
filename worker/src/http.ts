@@ -3,7 +3,6 @@
 
 export type ErrorCode =
 	| "unauthorized"
-	| "bad_logon"
 	| "not_found"
 	| "conflict"
 	| "invalid"

@@ -8,7 +8,8 @@ export default defineConfig(async () => ({
 			wrangler: { configPath: "./wrangler.jsonc" },
 			miniflare: {
 				bindings: {
-					CUSTAPI_USERS: "IBMUSER:SYS1,GUEST:GUEST",
+					ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.test",
+					ACCESS_AUD: "test-aud",
 					TEST_MIGRATIONS: await readD1Migrations("./migrations"),
 					TEST_SEED: await readFile("./seed.sql", "utf8"),
 				},

@@ -15,9 +15,10 @@ import (
 // fakeAPI is an in-memory stand-in for the customer API with the same
 // observable behaviour as the Worker: logon, validation, optimistic locking.
 type fakeAPI struct {
-	user string
-	recs map[string]customer.Customer
-	next int
+	user   string
+	denied bool // Access refuses the logon
+	recs   map[string]customer.Customer
+	next   int
 }
 
 func newFakeAPI() *fakeAPI {
@@ -37,8 +38,8 @@ func newFakeAPI() *fakeAPI {
 
 func (f *fakeAPI) Host() string { return "fake:1" }
 
-func (f *fakeAPI) Logon(_ context.Context, user, password string) (string, error) {
-	if strings.ToUpper(user) != "IBMUSER" || strings.ToUpper(password) != "SYS1" {
+func (f *fakeAPI) Logon(context.Context) (string, error) {
+	if f.denied {
 		return "", api.ErrBadLogon
 	}
 	f.user = "IBMUSER"

@@ -78,6 +78,19 @@ jobs:
       - name: Smoke test
         env:
           URL: ${{ steps.deploy.outputs.deployment-url }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           echo "Deployed to $URL"
-          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$URL/v1/health"
+          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::Set the CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET secrets (an Access service token; see README)"
+            exit 1
+          fi
+          auth=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "${auth[@]}" "$URL/v1/health"
+          echo
+          # Without a token, Access must turn the request away.
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/v1/customers")
+          if [ "$code" = 200 ]; then echo "::error::$URL/v1/customers answered without Cloudflare Access"; exit 1; fi
+          # With the service token, Access and the Worker's JWT check let it in.
+          curl -fsS "${auth[@]}" -X POST "$URL/v1/session"

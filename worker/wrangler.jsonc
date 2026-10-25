@@ -13,8 +13,10 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Cloudflare Access guards every request; the Worker verifies its JWT.
+  // Both values come from the Access application (see README).
   "vars": {
-    "SESSION_TTL_HOURS": "8"
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
   }
-  // Users are a secret, not a var: npx wrangler secret put CUSTAPI_USERS
 }

@@ -17,7 +17,7 @@ import (
 // Backend is the API the screens talk to. *api.Client implements it.
 type Backend interface {
 	Host() string
-	Logon(ctx context.Context, user, password string) (string, error)
+	Logon(ctx context.Context) (string, error)
 	Logoff(ctx context.Context) error
 	List(ctx context.Context, prefix string) ([]customer.Customer, error)
 	Get(ctx context.Context, id string) (customer.Customer, error)

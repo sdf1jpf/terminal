@@ -39,7 +39,6 @@ func fill(t *testing.T, scr *t3.Screen, kv ...string) {
 
 func login(t *testing.T) (*Session, *t3.Screen) {
 	s, scr := newSession(t)
-	fill(t, scr, "userid", "ibmuser", "password", "sys1")
 	scr = s.Submit(t3.AIDEnter, scr)
 	if _, ok := s.prog.(*menu); !ok {
 		t.Fatalf("not at menu after logon: %T", s.prog)
@@ -47,9 +46,9 @@ func login(t *testing.T) (*Session, *t3.Screen) {
 	return s, scr
 }
 
-func TestLogonRejectsBadPassword(t *testing.T) {
+func TestLogonRejectedByAccess(t *testing.T) {
 	s, scr := newSession(t)
-	fill(t, scr, "userid", "ibmuser", "password", "nope")
+	s.api().(*fakeAPI).denied = true
 	s.Submit(t3.AIDEnter, scr)
 	l, ok := s.prog.(*logon)
 	if !ok || !strings.HasPrefix(l.msg, "IKJ56421I") {
@@ -175,9 +174,8 @@ func TestServerSideValidationAndAdd(t *testing.T) {
 }
 
 func TestHostDown(t *testing.T) {
-	s := NewSession(&Config{SystemName: "TEST", Backend: api.NewClient("http://127.0.0.1:1")}, "TERM0001")
+	s := NewSession(&Config{SystemName: "TEST", Backend: api.NewClient("http://127.0.0.1:1", nil)}, "TERM0001")
 	scr := s.Start()
-	fill(t, scr, "userid", "ibmuser", "password", "sys1")
 	s.Submit(t3.AIDEnter, scr)
 	if l := s.prog.(*logon); !strings.HasPrefix(l.msg, "CUS0298E") {
 		t.Fatalf("expected host-down message, got %q", l.msg)

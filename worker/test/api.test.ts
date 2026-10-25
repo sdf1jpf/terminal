@@ -1,11 +1,12 @@
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { accessJWT } from "./access";
 
 const worker = (exports as unknown as { default: Fetcher }).default;
 
 async function call(method: string, path: string, opts: { token?: string; body?: unknown } = {}) {
 	const headers: Record<string, string> = {};
-	if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+	if (opts.token) headers["Cf-Access-Jwt-Assertion"] = opts.token;
 	if (opts.body !== undefined) headers["Content-Type"] = "application/json";
 	const res = await worker.fetch(`https://api.test${path}`, {
 		method,
@@ -16,10 +17,12 @@ async function call(method: string, path: string, opts: { token?: string; body?:
 	return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
-async function logon(userid = "ibmuser", password = "sys1") {
-	const res = await call("POST", "/v1/session", { body: { userid, password } });
-	expect(res.status).toBe(201);
-	return res.body.token as string;
+// logon returns an Access JWT for IBMUSER, after checking the API accepts it.
+async function logon() {
+	const token = await accessJWT();
+	const res = await call("POST", "/v1/session", { token });
+	expect(res).toEqual({ status: 201, body: { userid: "IBMUSER" } });
+	return token;
 }
 
 // What the Go client sends: the whole record, server-owned fields included.
@@ -40,28 +43,44 @@ describe("sessions", () => {
 		expect(res.body.error.code).toBe("unauthorized");
 	});
 
-	it("rejects bad passwords and unknown users alike", async () => {
-		for (const body of [{ userid: "ibmuser", password: "nope" }, { userid: "nobody", password: "sys1" }]) {
-			const res = await call("POST", "/v1/session", { body });
-			expect(res.status).toBe(401);
-			expect(res.body.error.code).toBe("bad_logon");
+	it("rejects requests without a valid Access JWT", async () => {
+		const now = Math.floor(Date.now() / 1000);
+		const bad = [
+			"",
+			"not.a.jwt",
+			await accessJWT({ aud: ["some-other-app"] }),
+			await accessJWT({ iss: "https://evil.cloudflareaccess.com" }),
+			await accessJWT({ exp: now - 3600 }),
+			await accessJWT({ nbf: now + 3600 }),
+			await accessJWT({}, "unknown-kid"),
+			(await accessJWT()).slice(0, -4) + "AAAA", // bad signature
+		];
+		for (const token of bad) {
+			const res = await call("POST", "/v1/session", { token });
+			expect(res.status, token).toBe(401);
+			expect(res.body.error.code).toBe("unauthorized");
 		}
 	});
 
-	it("issues tokens and ends them on logoff", async () => {
-		const res = await call("POST", "/v1/session", { body: { userid: " ibmuser ", password: "SyS1" } });
-		expect(res.status).toBe(201);
-		expect(res.body.userid).toBe("IBMUSER");
-		expect(Date.parse(res.body.expires_at)).toBeGreaterThan(Date.now());
+	it("derives the userid from the Access identity", async () => {
+		for (const [claims, userid] of [
+			[{ email: "j.doe-smith@example.com" }, "JDOESMIT"],
+			[{ email: undefined, common_name: "abc123.access" }, "SERVICE"],
+		] as const) {
+			const res = await call("POST", "/v1/session", { token: await accessJWT(claims) });
+			expect(res.body.userid).toBe(userid);
+		}
+	});
 
-		const token = res.body.token;
-		expect((await call("GET", "/v1/customers", { token })).status).toBe(200);
-		expect((await call("DELETE", "/v1/session", { token })).status).toBe(204);
-		expect((await call("GET", "/v1/customers", { token })).status).toBe(401);
+	it("records the Access user on changes", async () => {
+		const token = await accessJWT({ email: "jdoe@example.com" });
+		const { body: current } = await call("GET", "/v1/customers/000110", { token });
+		const res = await call("PUT", "/v1/customers/000110", { token, body: current });
+		expect(res.body.updated_by).toBe("JDOE");
 	});
 
 	it("rejects unknown fields", async () => {
-		const res = await call("POST", "/v1/session", { body: { userid: "a", pw: "b" } });
+		const res = await call("POST", "/v1/customers", { token: await logon(), body: { ...newCustomer, pw: "b" } });
 		expect(res.status).toBe(400);
 		expect(res.body.error.code).toBe("bad_request");
 	});

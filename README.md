@@ -29,15 +29,18 @@ Worker.
  your machine                                    Cloudflare
 ┌─────────────────────────────┐                 ┌─────────────────────────────┐
 │ terminal (Go)               │   HTTPS/JSON    │ customer-api Worker (TS)    │
-│   3270 screens, keyboard,   │────────────────▶│   logon / sessions          │
-│   field editing (Bubble Tea)│   Bearer token  │   validation, locking       │
+│   3270 screens, keyboard,   │────────────────▶│   checks the Access JWT     │
+│   field editing (Bubble Tea)│  Access token   │   validation, locking       │
 └─────────────────────────────┘◀────────────────│   D1 database               │
                                                 └─────────────────────────────┘
+                                                  ▲ Cloudflare Access in front:
+                                                    sign-in with your identity
+                                                    provider, in the browser
 ```
 
 The terminal does what a 3270 did locally: it draws screens, edits fields and
 handles the keyboard. When you press Enter or a PF key, it calls the API. The
-API is the system of record. It owns the data, checks logons and enforces the
+API is the system of record. It owns the data, checks who is signed in and enforces the
 edit rules, so any other client gets the same behavior.
 
 ## Quick start (everything local)
@@ -45,7 +48,7 @@ edit rules, so any other client gets the same behavior.
 You need Go 1.24 or later and Node.js 20 or later.
 
 ```sh
-# 1. Run the API locally with a local D1 database and the demo users
+# 1. Run the API locally with a local D1 database
 cd worker
 npm ci
 cp .dev.vars.example .dev.vars
@@ -56,7 +59,8 @@ npm run dev                                # http://localhost:8787
 go run ./cmd/terminal                      # defaults to http://localhost:8787
 ```
 
-Log on with **IBMUSER / SYS1** (or GUEST / GUEST).
+Press Enter on the logon screen. Locally there is no Cloudflare Access, so
+you are logged on as `DEV_USER` from `.dev.vars` (IBMUSER).
 
 ## Deploy the API to Cloudflare
 
@@ -74,14 +78,17 @@ npx wrangler login
 npm run db:migrate:remote
 npm run db:seed:remote
 
-# 2. Set who may log on (stored encrypted as a Worker secret)
-npx wrangler secret put CUSTAPI_USERS      # e.g. IBMUSER:SOMEPASS,JDOE:OTHERPASS
+# 2. Put Cloudflare Access in front (see "Who can log on" below) and set
+#    ACCESS_TEAM_DOMAIN and ACCESS_AUD in wrangler.jsonc
 
 # 3. Deploy
 npm run deploy                             # prints https://customer-api.<you>.workers.dev
 ```
 
-Then point the terminal at it:
+Then point the terminal at it. It signs in with
+[`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+(`brew install cloudflared`), which opens your browser the first time and
+caches the token after that.
 
 ```sh
 go install ./cmd/terminal
@@ -89,15 +96,37 @@ terminal -api https://customer-api.<you>.workers.dev
 # or: export TERMINAL_API_URL=https://customer-api.<you>.workers.dev
 ```
 
-Notes:
+### Who can log on
 
-- **Session length:** `SESSION_TTL_HOURS` in `wrangler.jsonc` sets how long a
-  logon lasts (default 8).
-- **Password storage:** passwords live in the `CUSTAPI_USERS` secret. Bearer
-  tokens are stored only as SHA-256 hashes.
-- **Brute-force protection:** the Worker doesn't throttle logon attempts. For
-  a public deployment, add a Cloudflare rate-limiting rule on
-  `POST /v1/session`, or put Cloudflare Access in front of the Worker.
+There are no passwords in the app. [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
+sits in front of the Worker and signs people in with your identity provider
+(one-time PIN by email, Google, GitHub and so on). The Access policy decides who
+gets in. Access forwards each allowed request with a signed JWT, and the Worker
+checks that JWT itself as well, so a request that bypasses Access is still refused.
+
+1. **Turn on Access for the Worker:** Workers & Pages → `customer-api` →
+   Settings → Domains & Routes → `workers.dev` → enable Cloudflare Access.
+   Then click **Manage Cloudflare Access** and set the policy to allow the
+   emails or groups you want. (Or, in Zero Trust → Access → Applications, add
+   a self-hosted application for `customer-api.<you>.workers.dev`.)
+2. **Copy the two values the Worker checks** into `vars` in
+   `worker/wrangler.jsonc`:
+   - `ACCESS_TEAM_DOMAIN`: your team domain, e.g. `example.cloudflareaccess.com`
+     (Zero Trust → Settings → Custom Pages).
+   - `ACCESS_AUD`: the application's Audience (AUD) tag (Zero Trust → Access →
+     Applications → the app → Overview).
+   Until both are set, every request except health gets a 500 saying Access
+   is not configured.
+3. **For CI and scripts, add a service token:** Zero Trust → Access → Service
+   Auth → Create service token, then add a policy to the application with
+   action **Service Auth** that includes it. The terminal uses one if
+   `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are set.
+
+The userid shown on the screens and stored in `updated_by` is the part of the
+email before the `@`, upper case, letters and digits only, at most 8
+characters (`j.doe@example.com` becomes `JDOE`). Service tokens log on as
+`SERVICE`. How long a logon lasts is the Access application's session
+duration.
 
 ## Continuous integration and deployment
 
@@ -107,8 +136,9 @@ Notes:
 - **API:** `npm ci`, the TypeScript typecheck, and the Worker tests in the Workers runtime.
 
 When both pass on a push to `main`, the **Deploy API** job applies any new D1
-migrations to the remote database, deploys the Worker, and checks
-`/v1/health` on the deployed URL.
+migrations to the remote database and deploys the Worker. It then checks that
+the deployed URL refuses a request with no Access token, and that a logon with
+the CI service token works.
 
 One-time setup:
 
@@ -117,8 +147,9 @@ One-time setup:
    **Account → D1 → Edit** to it, and limit it to the Justin Frank account.
 2. **Add it to GitHub** as a repository secret named `CLOUDFLARE_API_TOKEN`
    (Settings → Secrets and variables → Actions → New repository secret).
-3. **Set the logon users once** with `npx wrangler secret put CUSTAPI_USERS`.
-   Worker secrets persist across deploys, so CI doesn't manage them.
+3. **Set up Cloudflare Access** as in [Who can log on](#who-can-log-on), and
+   add the service token to GitHub as repository secrets
+   `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
 4. **Optionally load the demo customers** with `npm run db:seed:remote`.
 
 The deploy job uses a GitHub environment named `production`. To require
@@ -130,6 +161,7 @@ approval before each deploy, add required reviewers to that environment
 | Flag / env | Meaning |
 | --- | --- |
 | `-api URL` or `TERMINAL_API_URL` | API base URL (default `http://localhost:8787`) |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Use an Access service token instead of a browser sign-in |
 | `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
 | `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
 
@@ -137,8 +169,7 @@ approval before each deploy, add required reviewers to that environment
 
 ```
 GET    /v1/health
-POST   /v1/session              {"userid","password"} → {"token","userid","expires_at"}
-DELETE /v1/session              log off
+POST   /v1/session              logon → {"userid"}
 GET    /v1/customers?prefix=K   list, ordered by name
 POST   /v1/customers            create
 GET    /v1/customers/{id}
@@ -146,22 +177,22 @@ PUT    /v1/customers/{id}       update ("version" must match the stored record)
 DELETE /v1/customers/{id}
 ```
 
-Every endpoint except health and logon needs `Authorization: Bearer <token>`.
-Errors look like this:
+Everything goes through Cloudflare Access, which needs a `cf-access-token`
+header (from `cloudflared access token`) or a service token's
+`CF-Access-Client-Id` and `CF-Access-Client-Secret` headers. Errors look like this:
 
 ```json
 {"error": {"code": "invalid", "field": "zip", "message": "zip code must be five digits"}}
 ```
 
-The error codes are `unauthorized`, `bad_logon`, `not_found`, `conflict`
+The error codes are `unauthorized`, `not_found`, `conflict`
 (HTTP 409: someone else changed the record), `invalid` (HTTP 422) and
 `bad_request`.
 
 ```sh
-API=http://localhost:8787
-TOKEN=$(curl -s -XPOST $API/v1/session \
-  -d '{"userid":"ibmuser","password":"sys1"}' | jq -r .token)
-curl -s -H "Authorization: Bearer $TOKEN" $API/v1/customers/000105
+API=https://customer-api.<you>.workers.dev
+cloudflared access login $API
+curl -s -H "cf-access-token: $(cloudflared access token -app=$API)" $API/v1/customers/000105
 ```
 
 ## How the terminal responds to the API
@@ -175,7 +206,9 @@ curl -s -H "Authorization: Bearer $TOKEN" $API/v1/customers/000105
   latest copy is reloaded so you can review it and resubmit.
 - **If the API is unreachable**, you get
   `CUS0298E HOST … NOT RESPONDING - PRESS ENTER TO RETRY`.
-- **If your session expires**, you are sent back to the logon screen.
+- **If your Access session expires**, you are sent back to the logon screen.
+  Enter signs you in again.
+- **If the Access policy doesn't allow you**, you get `IKJ56421I`.
 
 ## What makes it feel like a 3270
 

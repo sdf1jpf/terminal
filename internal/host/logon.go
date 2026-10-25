@@ -16,10 +16,11 @@ var banner = []string{
 	`   ##    ######  ##   ## ##   ##  ######  ##   ##  ##   ##  ###### `,
 }
 
-// logon is the VTAM-style welcome and sign-on screen.
+// logon is the VTAM-style welcome and sign-on screen. Who may log on is
+// decided by Cloudflare Access, so there is no userid or password to type:
+// Enter signs in through the browser and the API names the userid.
 type logon struct {
-	userid string
-	msg    string
+	msg string
 }
 
 func (l *logon) Render(s *Session) *t3.Screen {
@@ -34,21 +35,14 @@ func (l *logon) Render(s *Session) *t3.Screen {
 	scr.Text(12, 12, "TERMINAL . . . : "+s.lu, t3.WithColor(t3.Blue))
 	scr.Text(13, 12, "HOST . . . . . : "+strings.ToUpper(s.api().Host()), t3.WithColor(t3.Blue))
 
-	label(scr, 15, 12, "USERID   ===>")
-	scr.Input(15, 26, 8, "userid", l.userid)
-	label(scr, 16, 12, "PASSWORD ===>")
-	scr.Input(16, 26, 8, "password", "", t3.Hidden)
-
-	scr.Text(18, 12, "Demo credentials: IBMUSER / SYS1", t3.WithColor(t3.Yellow))
+	label(scr, 15, 12, "PRESS ENTER TO LOG ON.")
+	scr.Text(16, 12, "Sign-on is through Cloudflare Access; a browser window", t3.WithColor(t3.Yellow))
+	scr.Text(17, 12, "opens if you are not already signed in.", t3.WithColor(t3.Yellow))
 	scr.Text(20, 12, "UNAUTHORIZED ACCESS TO THIS SYSTEM IS PROHIBITED.", t3.WithColor(t3.Red))
 
 	message(scr, l.msg)
 	keys(scr, "ENTER=LOGON  PF1=HELP  PF3=DISCONNECT")
-	if l.userid != "" {
-		scr.CursorTo("password")
-	} else {
-		scr.CursorHome()
-	}
+	scr.CursorHome()
 	return scr
 }
 
@@ -63,22 +57,10 @@ func (l *logon) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		l.msg = invalidKey(aid)
 		return l
 	}
-	f := scr.Fields()
-	user := strings.ToUpper(strings.TrimSpace(f["userid"]))
-	pass := strings.TrimSpace(f["password"])
-	l.userid = user
-	switch {
-	case user == "":
-		l.msg = "IKJ56700A ENTER USERID"
-		return l
-	case pass == "":
-		l.msg = "IKJ56714A ENTER CURRENT PASSWORD FOR " + user
-		return l
-	}
-	who, err := s.api().Logon(s.ctx(), user, pass)
+	who, err := s.api().Logon(s.ctx())
 	switch {
 	case errors.Is(err, api.ErrBadLogon):
-		l.msg = "IKJ56421I PASSWORD NOT AUTHORIZED FOR USERID " + user
+		l.msg = "IKJ56421I LOGON NOT AUTHORIZED BY CLOUDFLARE ACCESS"
 		return l
 	case err != nil:
 		l.msg = s.fail(err)

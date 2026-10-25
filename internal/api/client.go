@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,15 +17,24 @@ import (
 
 // Client calls the customer API on behalf of one logged-on user.
 type Client struct {
-	base  string
-	http  *http.Client
-	token string
+	base   string
+	http   *http.Client
+	access Access      // nil when the API is not behind Cloudflare Access
+	hdr    http.Header // Access headers for the logged-on user; nil when logged off
 }
 
-func NewClient(baseURL string) *Client {
+// NewClient returns a client for the API at baseURL. access may be nil, for
+// a local `wrangler dev`.
+func NewClient(baseURL string, access Access) *Client {
 	return &Client{
-		base: strings.TrimRight(baseURL, "/"),
-		http: &http.Client{Timeout: 10 * time.Second},
+		base:   strings.TrimRight(baseURL, "/"),
+		access: access,
+		http: &http.Client{
+			Timeout: 10 * time.Second,
+			// Access answers a missing or expired token with a redirect to
+			// its login page; report that rather than following it.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
 }
 
@@ -36,23 +46,33 @@ func (c *Client) Host() string {
 	return c.base
 }
 
-func (c *Client) Logon(ctx context.Context, user, password string) (string, error) {
+// Logon signs in through Cloudflare Access, which may open a browser, and
+// returns the userid the API knows the user by.
+func (c *Client) Logon(ctx context.Context) (string, error) {
+	hdr := http.Header{}
+	if c.access != nil {
+		h, err := c.access.Headers(ctx)
+		if err != nil {
+			return "", err
+		}
+		hdr = h
+	}
+	c.hdr = hdr
 	var resp LogonResponse
-	err := c.do(ctx, http.MethodPost, "/v1/session", LogonRequest{user, password}, &resp)
-	if err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/session", nil, &resp); err != nil {
+		c.hdr = nil
+		if errors.Is(err, ErrUnauthorized) {
+			err = ErrBadLogon
+		}
 		return "", err
 	}
-	c.token = resp.Token
 	return resp.UserID, nil
 }
 
-func (c *Client) Logoff(ctx context.Context) error {
-	if c.token == "" {
-		return nil
-	}
-	err := c.do(ctx, http.MethodDelete, "/v1/session", nil, nil)
-	c.token = ""
-	return err
+// Logoff forgets the user locally. Access sessions end on their own.
+func (c *Client) Logoff(context.Context) error {
+	c.hdr = nil
+	return nil
 }
 
 func (c *Client) List(ctx context.Context, prefix string) ([]customer.Customer, error) {
@@ -101,8 +121,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.hdr == nil {
+		return ErrUnauthorized
+	}
+	for k, v := range c.hdr {
+		req.Header[k] = v
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -113,12 +136,15 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if resp.StatusCode >= 300 {
 		var eb errorBody
 		json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&eb)
-		switch eb.Error.Code {
-		case codeUnauthorized:
-			c.token = ""
+		switch {
+		case eb.Error.Code == codeUnauthorized, eb.Error.Code == "" && (resp.StatusCode < 400 || resp.StatusCode == 401):
+			// From the Worker, or Access redirecting to its login page.
+			c.hdr = nil
 			return ErrUnauthorized
-		case codeBadLogon:
-			return ErrBadLogon
+		case eb.Error.Code == "" && resp.StatusCode == 403:
+			return ErrBadLogon // Access policy does not allow this user
+		}
+		switch eb.Error.Code {
 		case codeNotFound:
 			return ErrNotFound
 		case codeConflict:
