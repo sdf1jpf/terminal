@@ -196,6 +196,22 @@ default profile if there is no `GoTerm`) and runs the client inside it. Use
 macOS asks whether the app may control Terminal; allow it. Run the script
 again after pulling changes to rebuild the client inside the app.
 
+## In a browser
+
+The Worker also serves a browser version of the terminal at its root URL,
+for example https://customer-api.justin-frank.workers.dev/. Cloudflare Access
+signs you in the usual way, and the page then talks to `POST /v1/screen`
+([docs/screen-protocol.md](docs/screen-protocol.md)) like the Go client does:
+the same screens, colors, field editing and status line. The screen fills the
+window (never smaller than 24x80; the font shrinks instead) and is laid out
+again when you resize it, keeping what you typed.
+
+Keys are the same as the Go client's (see [Keyboard](#keyboard)), with
+Shift+Enter for New Line. Browsers keep some function keys for themselves
+(F11 and F12 usually), so the key bar under the screen has Enter, Clear,
+Reset, PA1, PA2 and PF1 to PF12 as buttons. The page lives in `worker/public/`
+and is plain HTML, CSS and JavaScript with no build step.
+
 ## The API
 
 ```
