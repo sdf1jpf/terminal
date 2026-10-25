@@ -289,6 +289,49 @@ const help: Record<string, FieldHelp> = {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a vendor and press Enter to list its purchase orders."],
 	},
+	"console.cmd": {
+		title: "OPERATOR COMMAND",
+		lines: [
+			"An operator command. It goes in the log with its response, for every",
+			"console to see.",
+			"",
+			"  D T            display the time, local and UTC",
+			"  D J            display the jobs that are queued or executing",
+			"  D SCHED        display the job schedule",
+			"  S jobname      submit a job, such as S CUSAGING",
+			"  H jobname      hold a job's schedule; A jobname releases it",
+			"  SCHED          open the job schedule (PF6)",
+		],
+	},
+	"schedule.job": {
+		title: "JOB NAME",
+		lines: [
+			"A job from the job library to schedule. With a cron, Enter adds it to the",
+			"schedule, or changes its cron if it is already there.",
+		],
+	},
+	"schedule.cron": {
+		title: "CRON EXPRESSION (UTC)",
+		lines: [
+			"When the scheduler submits the job: five fields, in UTC.",
+			"",
+			"  MINUTE 0-59  HOUR 0-23  DAY 1-31  MONTH 1-12  WEEKDAY 0-7 (0 AND 7 ARE SUN)",
+			"",
+			"Each takes *, a number, a range (1-5), a step (*/15) or a list (1,15).",
+			"  0 6 * * *      06:00 UTC every day",
+			"  */15 * * * *   every 15 minutes",
+			"  0 7 1 * *      07:00 UTC on the first of the month",
+			"  0 6 * * MON-FRI   weekdays",
+			"@HOURLY, @DAILY, @WEEKLY and @MONTHLY are shorthands.",
+		],
+	},
+	"schedule.sel": {
+		title: "SELECTION CODE",
+		lines: [
+			"H holds a schedule so the scheduler skips it, and R releases it again.",
+			"S submits the job now, without changing the schedule. D deletes it.",
+		],
+	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],

@@ -26,12 +26,14 @@ const state = {
 	commarea: null, // the host's opaque state, handed back with every AID
 	lastAid: null, // for HOST NOT RESPONDING retries
 	pendingResize: false,
+	timer: null, // the refresh timer, for screens that show live data
 };
 
 // --- Host conversation ---------------------------------------------------
 
 async function send(aid) {
 	if (state.lock === Lock.WAIT) return;
+	clearTimeout(state.timer);
 	state.lock = Lock.WAIT;
 	state.lastAid = aid;
 	render();
@@ -61,6 +63,7 @@ async function send(aid) {
 		state.scr = next.scr;
 		if (aid === "REDRAW") state.scr.carry(before);
 		state.lock = Lock.NONE;
+		schedule(next.refresh);
 			} catch (e) {
 		console.error(e);
 		hostMessage("HOST NOT RESPONDING - PRESS ENTER TO RETRY", () => send(state.lastAid));
@@ -68,6 +71,19 @@ async function send(aid) {
 	}
 	render();
 	if (state.pendingResize) fit();
+}
+
+// schedule redraws a screen that asks for it every so many seconds. While
+// the operator is busy (a field typed in, or a message showing) it waits
+// another interval rather than send what they have half typed.
+function schedule(seconds) {
+	clearTimeout(state.timer);
+	if (!seconds) return;
+	state.timer = setTimeout(() => {
+		const busy = state.lock !== Lock.NONE || state.message || Object.keys(state.scr.modifiedFields()).length > 0;
+		if (busy) schedule(seconds);
+		else send("REDRAW");
+	}, seconds * 1000);
 }
 
 // loggedOff shows the host's farewell; Enter starts a new conversation.

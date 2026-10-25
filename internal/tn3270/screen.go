@@ -6,7 +6,10 @@
 // dynamic screen size are.
 package tn3270
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // MinRows and MinCols are the smallest presentation space, a 3278 Model 2.
 const (
@@ -79,7 +82,16 @@ type Screen struct {
 	rows, cols int
 	buf        []cell
 	cursor     int
+	refresh    time.Duration
 }
+
+// SetRefresh asks the terminal to redraw the screen every d while the
+// operator leaves it alone, for screens that show live data. Zero (the
+// default) never does.
+func (s *Screen) SetRefresh(d time.Duration) { s.refresh = d }
+
+// Refresh returns the screen's refresh interval, or zero.
+func (s *Screen) Refresh() time.Duration { return s.refresh }
 
 // NewScreen returns a cleared, formatted 24x80 screen.
 func NewScreen() *Screen { return NewScreenSize(MinRows, MinCols) }

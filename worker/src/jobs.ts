@@ -11,6 +11,7 @@ import { partnersOrder, partnersPay, processInterchange } from "./edi";
 import { HttpError } from "./http";
 import type { Env } from "./index";
 import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
+import { logStmt } from "./syslog";
 
 export interface Job {
 	id: string;
@@ -107,6 +108,7 @@ export async function submitJob(db: D1Database, queue: Queue<JobMessage>, user: 
 		await db.prepare("DELETE FROM jobs WHERE id = ?").bind(job.id).run();
 		throw e;
 	}
+	await logStmt(db, job.id, `$HASP100 ${job.name} ON INTRDR FROM ${user}`).run();
 	return job;
 }
 
@@ -162,9 +164,15 @@ export class JobRunner extends WorkflowEntrypoint<Env, JobMessage> {
 	async run(event: Readonly<WorkflowEvent<JobMessage>>, step: WorkflowStep): Promise<string> {
 		const db = this.env.DB;
 		const job = await step.do("start", async () => {
-			const row = await db.prepare(
-				"UPDATE jobs SET status = 'EXECUTING', started = ? WHERE id = ? RETURNING *",
-			).bind(new Date().toISOString(), event.payload.id).first<Job>();
+			const [updated] = await db.batch<Job>([
+				db.prepare("UPDATE jobs SET status = 'EXECUTING', started = ? WHERE id = ? RETURNING *")
+					.bind(new Date().toISOString(), event.payload.id),
+				db.prepare(
+					`INSERT INTO syslog (at, source, type, text)
+					 SELECT ?, id, 'M', '$HASP373 ' || name || ' STARTED' FROM jobs WHERE id = ?`,
+				).bind(new Date().toISOString(), event.payload.id),
+			]);
+			const row = updated.results[0];
 			if (!row) throw new Error(`no job ${event.payload.id}`);
 			return row;
 		});
@@ -194,6 +202,8 @@ export class JobRunner extends WorkflowEntrypoint<Env, JobMessage> {
 			stmts.push(
 				db.prepare("UPDATE jobs SET status = 'OUTPUT', rc = ?, ended = ? WHERE id = ?")
 					.bind(rc, new Date().toISOString(), job.id),
+				...lines.filter((l) => l.startsWith("IEF450I")).map((l) => logStmt(db, job.id, l)),
+				logStmt(db, job.id, `$HASP395 ${job.name} ENDED - RC=${rc}`),
 			);
 			await db.batch(stmts);
 			return rc;

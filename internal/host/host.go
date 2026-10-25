@@ -185,6 +185,9 @@ func build(in *api.Screen) *t3.Screen {
 	default:
 		scr.SetCursor(c.Row, c.Col)
 	}
+	if in.Refresh > 0 {
+		scr.SetRefresh(time.Duration(in.Refresh) * time.Second)
+	}
 	return scr
 }
 
