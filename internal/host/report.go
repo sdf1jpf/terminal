@@ -2,20 +2,37 @@ package host
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/sdf1jpf/terminal/internal/customer"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
 // report is a read-only credit exposure summary.
-type report struct{ msg string }
+type report struct {
+	list []customer.Customer
+	msg  string
+}
+
+func (r *report) enter(s *Session) { r.refresh(s) }
+
+func (r *report) refresh(s *Session) bool {
+	list, err := s.api().List(s.ctx(), "")
+	if err != nil {
+		r.msg = s.fail(err)
+		return false
+	}
+	r.list = list
+	return true
+}
 
 func (r *report) Render(s *Session) *t3.Screen {
 	scr := t3.NewScreen()
 	header(scr, s, "CUSR01", "CREDIT EXPOSURE SUMMARY")
 
-	list := s.cfg.Store.List("")
+	list := slices.Clone(r.list)
 	var limit, bal int
 	status := map[string]int{}
 	for _, c := range list {
@@ -73,7 +90,9 @@ func (r *report) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 	case t3.PF(3), t3.PF(12):
 		return &menu{}
 	case t3.PF(5), t3.AIDEnter, t3.AIDClear:
-		r.msg = "CUS0301I REPORT REFRESHED AT " + nowHHMM()
+		if r.refresh(s) {
+			r.msg = "CUS0301I REPORT REFRESHED AT " + nowHHMM()
+		}
 	default:
 		r.msg = invalidKey(aid)
 	}

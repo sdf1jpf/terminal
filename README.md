@@ -1,8 +1,9 @@
 # terminal
 
-A Go application that looks and behaves like an IBM 3270 mainframe application
-(think CICS or ISPF on a 3278 Model 2), running on a modern stack: Bubble Tea
-for the terminal UI and Wish for an optional SSH server.
+A terminal app that looks and behaves like an IBM 3270 mainframe application
+(think CICS or ISPF on a 3278 Model 2). The client is written in Go and runs
+locally on your machine. It talks to a REST API that runs as a Cloudflare
+Worker.
 
 ```
  CUSM01                         CUSTOMER BROWSE                      10/25/26
@@ -22,38 +23,145 @@ for the terminal UI and Wish for an optional SSH server.
 4A      X ()                                            TERM0001         009/002
 ```
 
-## Run it
+## Architecture
+
+```
+ your machine                                    Cloudflare
+┌─────────────────────────────┐                 ┌─────────────────────────────┐
+│ terminal (Go)               │   HTTPS/JSON    │ customer-api Worker (TS)    │
+│   3270 screens, keyboard,   │────────────────▶│   logon / sessions          │
+│   field editing (Bubble Tea)│   Bearer token  │   validation, locking       │
+└─────────────────────────────┘◀────────────────│   D1 database               │
+                                                └─────────────────────────────┘
+```
+
+The terminal does what a 3270 did locally: it draws screens, edits fields and
+handles the keyboard. When you press Enter or a PF key, it calls the API. The
+API is the system of record. It owns the data, checks logons and enforces the
+edit rules, so any other client gets the same behavior.
+
+## Quick start (everything local)
+
+You need Go 1.24 or later and Node.js 20 or later.
 
 ```sh
-go run .                     # in your terminal (needs at least 80x26)
-go run . -data customers.json   # keep changes between runs
-go run . -ssh :2323          # serve it; connect with: ssh -p 2323 localhost
+# 1. Run the API locally with a local D1 database and the demo users
+cd worker
+npm ci
+cp .dev.vars.example .dev.vars
+npm run db:migrate:local && npm run db:seed:local
+npm run dev                                # http://localhost:8787
+
+# 2. In another window, run the terminal
+go run ./cmd/terminal                      # defaults to http://localhost:8787
 ```
 
 Log on with **IBMUSER / SYS1** (or GUEST / GUEST).
 
-Flags: `-ssh addr`, `-hostkey path`, `-data file.json`, `-system SYS1`,
-`-latency 150ms` (simulated host response time; `0` turns it off).
+## Deploy the API to Cloudflare
+
+`worker/wrangler.jsonc` already points at the `customer-api` D1 database in
+the project's Cloudflare account. To deploy to a different account, change
+`account_id`, run `npx wrangler d1 create customer-api`, and put the new
+`database_id` in `wrangler.jsonc`.
+
+```sh
+cd worker
+npm ci
+npx wrangler login
+
+# 1. Create the tables, and optionally load the 24 demo customers
+npm run db:migrate:remote
+npm run db:seed:remote
+
+# 2. Set who may log on (stored encrypted as a Worker secret)
+npx wrangler secret put CUSTAPI_USERS      # e.g. IBMUSER:SOMEPASS,JDOE:OTHERPASS
+
+# 3. Deploy
+npm run deploy                             # prints https://customer-api.<you>.workers.dev
+```
+
+Then point the terminal at it:
+
+```sh
+go install ./cmd/terminal
+terminal -api https://customer-api.<you>.workers.dev
+# or: export TERMINAL_API_URL=https://customer-api.<you>.workers.dev
+```
+
+Notes:
+
+- **Session length:** `SESSION_TTL_HOURS` in `wrangler.jsonc` sets how long a
+  logon lasts (default 8).
+- **Password storage:** passwords live in the `CUSTAPI_USERS` secret. Bearer
+  tokens are stored only as SHA-256 hashes.
+- **Brute-force protection:** the Worker doesn't throttle logon attempts. For
+  a public deployment, add a Cloudflare rate-limiting rule on
+  `POST /v1/session`, or put Cloudflare Access in front of the Worker.
+
+## Terminal options
+
+| Flag / env | Meaning |
+| --- | --- |
+| `-api URL` or `TERMINAL_API_URL` | API base URL (default `http://localhost:8787`) |
+| `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
+| `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
+
+## The API
+
+```
+GET    /v1/health
+POST   /v1/session              {"userid","password"} → {"token","userid","expires_at"}
+DELETE /v1/session              log off
+GET    /v1/customers?prefix=K   list, ordered by name
+POST   /v1/customers            create
+GET    /v1/customers/{id}
+PUT    /v1/customers/{id}       update ("version" must match the stored record)
+DELETE /v1/customers/{id}
+```
+
+Every endpoint except health and logon needs `Authorization: Bearer <token>`.
+Errors look like this:
+
+```json
+{"error": {"code": "invalid", "field": "zip", "message": "zip code must be five digits"}}
+```
+
+The error codes are `unauthorized`, `bad_logon`, `not_found`, `conflict`
+(HTTP 409: someone else changed the record), `invalid` (HTTP 422) and
+`bad_request`.
+
+```sh
+API=http://localhost:8787
+TOKEN=$(curl -s -XPOST $API/v1/session \
+  -d '{"userid":"ibmuser","password":"sys1"}' | jq -r .token)
+curl -s -H "Authorization: Bearer $TOKEN" $API/v1/customers/000105
+```
+
+## How the terminal responds to the API
+
+- **While a request is in flight**, the keyboard locks and the status line
+  shows `X ()`, just like waiting on a real host.
+- **API validation errors** show up as IBM-style messages, such as
+  `CUS0233E ZIP CODE MUST BE FIVE DIGITS`. The field in error is brightened and
+  the cursor is placed on it.
+- **If someone else changed the record** (HTTP 409), you get `CUS0213E`. The
+  latest copy is reloaded so you can review it and resubmit.
+- **If the API is unreachable**, you get
+  `CUS0298E HOST … NOT RESPONDING - PRESS ENTER TO RETRY`.
+- **If your session expires**, you are sent back to the logon screen.
 
 ## What makes it feel like a 3270
 
-It is block mode, not a line-by-line TUI. The screen is a 24x80 buffer of
-fields, and each field starts with an attribute byte that takes up a screen
-position, just as on real hardware. You edit fields locally, and nothing goes
-to the "host" until you press an AID key (Enter, a PF key, PA1-PA3, or Clear).
-Then the whole screen is sent and the host replies with a new one.
-
-- Protected and unprotected fields, numeric-only fields, non-display (password)
-  fields, intensified fields, and the 7 extended colors.
-- Auto-skip to the next field when one fills up. Input is folded to upper case.
-- Keyboard locks in the operator information area (the status line):
-  `X ()` while the host is busy, `X -f` when you type into a protected
-  position, `X NUM` for a letter in a numeric field, and `X >` when insert mode
-  runs out of room. Press Reset (Esc) to clear the lock.
-- Insert mode (`^`), Erase EOF, Erase Input, Tab/Backtab, and the cursor
-  address shown as `row/col`.
-- IBM-style message IDs (`CUS0233E ZIP CODE MUST BE FIVE DIGITS`), with the
-  failing field brightened and the cursor placed on it.
+The terminal is block mode, not a line-by-line TUI. The screen is a 24x80
+buffer of fields, and each field starts with an attribute byte that takes up a
+screen position, just as on real hardware. Fields can be protected, numeric,
+non-display (for passwords), intensified, and use any of the 7 extended
+colors. When a field fills up, the cursor skips to the next one, and input is
+folded to upper case. The keyboard locks with `X -f` (you typed into a
+protected position), `X NUM` (a letter in a numeric field) or `X >` (insert
+mode ran out of room), and Reset clears the lock. You also get insert mode,
+Erase EOF, Erase Input, and the cursor's row/col in the status line.
 
 ## Keyboard
 
@@ -73,50 +181,26 @@ Then the whole screen is sent and the host replies with a new one.
 | Esc or Ctrl+R | RESET |
 | Ctrl+C | Disconnect |
 
-## The sample application
+## Development
 
-A CICS-style customer information system:
-
-- **Logon**: a VTAM-style welcome screen.
-- **Primary option menu**: ISPF style. Shortcuts like `2 105` jump straight to
-  customer 000105.
-- **Browse**: a paged customer list (PF7/PF8) with a name filter and line
-  commands `S`, `U` and `D`.
-- **Inquiry / update / add / delete**: field validation, and PF10 to confirm a
-  delete.
-- **Credit exposure report**, plus a **tutorial** you can reach with PF1 from
-  any screen.
-
-## Layout
-
-```
-main.go                 flags, local mode, SSH server
-internal/tn3270/        the terminal: screen buffer, fields, keyboard, rendering
-internal/host/          the "mainframe" programs (one per screen)
-internal/store/         customer master file (in memory, optional JSON file)
+```sh
+go test ./...                              # terminal client
+cd worker && npm test && npm run typecheck # API, in the Workers runtime
 ```
 
-To write your own screen, implement `host.Program`:
-
-```go
-func (p *myScreen) Render(s *Session) *tn3270.Screen {
-	scr := tn3270.NewScreen()
-	header(scr, s, "MYMAP1", "MY TRANSACTION")
-	label(scr, 4, 2, "ACCOUNT ===>")
-	scr.Input(4, 15, 8, "acct", p.acct, tn3270.Numeric)
-	keys(scr, "PF3=EXIT")
-	scr.CursorTo("acct")
-	return scr
-}
-
-func (p *myScreen) Handle(s *Session, aid tn3270.AID, scr *tn3270.Screen) Program {
-	if aid == tn3270.PF(3) {
-		return &menu{}
-	}
-	p.acct = scr.Fields()["acct"]
-	return p
-}
+```
+cmd/terminal/        the terminal client (Go)
+internal/tn3270/     terminal emulation: screen buffer, fields, keyboard, rendering
+internal/host/       the application screens; they call a Backend interface
+internal/api/        HTTP client for the API (implements host.Backend)
+internal/customer/   the customer record exchanged with the API
+worker/              the API: Cloudflare Worker + D1 (TypeScript)
+  src/               routes, auth, validation
+  migrations/        D1 schema
+  seed.sql           demo customers
+  test/              API tests (vitest, Workers runtime)
 ```
 
-`tn3270.Host` is the only thing the terminal depends on, so you can put the
-same terminal in front of a different backend, such as a real API.
+To point the terminal at a different API, implement `host.Backend` (`Logon`,
+`List`, `Get`, `Create`, `Update`, `Delete`, …) and pass it in `host.Config`.
+The screens don't change.

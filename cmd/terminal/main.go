@@ -1,0 +1,40 @@
+// Command terminal is a 3270-style client for the customer information
+// API. It runs in your local terminal and talks to the API over HTTP.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/sdf1jpf/terminal/internal/api"
+	"github.com/sdf1jpf/terminal/internal/host"
+	"github.com/sdf1jpf/terminal/internal/tn3270"
+)
+
+func main() {
+	defaultURL := os.Getenv("TERMINAL_API_URL")
+	if defaultURL == "" {
+		defaultURL = "http://localhost:8787" // wrangler dev
+	}
+	var (
+		apiURL  = flag.String("api", defaultURL, "customer API base URL (or set TERMINAL_API_URL)")
+		sysName = flag.String("system", "SYS1", "system name shown on screens")
+		lu      = flag.String("lu", "TERM0001", "terminal name shown in the status line")
+		latency = flag.Duration("latency", 0, "extra delay added to every host response, for effect")
+	)
+	flag.Parse()
+
+	sess := host.NewSession(&host.Config{
+		SystemName: *sysName,
+		Backend:    api.NewClient(*apiURL),
+	}, *lu)
+	term := tn3270.New(sess, tn3270.Options{LUName: *lu, Latency: *latency})
+	p := tea.NewProgram(term, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

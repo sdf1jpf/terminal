@@ -4,22 +4,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sdf1jpf/terminal/internal/store"
+	"github.com/sdf1jpf/terminal/internal/api"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
 func newSession(t *testing.T) (*Session, *t3.Screen) {
 	t.Helper()
-	st, err := store.Open("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := NewSession(&Config{
-		SystemName: "TEST",
-		Users:      map[string]string{"IBMUSER": "SYS1"},
-		Store:      st,
-	}, "TERM0001")
+	s := NewSession(&Config{SystemName: "TEST", Backend: newFakeAPI()}, "TERM0001")
 	return s, s.Start()
+}
+
+// get reads a record through the session's API client.
+func get(t *testing.T, s *Session, id string) (string, error) {
+	t.Helper()
+	c, err := s.api().Get(s.ctx(), id)
+	return c.Name + "|" + c.Zip + "|" + c.By, err
 }
 
 // fill types values into named fields, like an operator would.
@@ -79,9 +78,8 @@ func TestUpdateCustomerWithValidation(t *testing.T) {
 	if d.mode != modeInquiry || !strings.Contains(d.msg, "UPDATED") {
 		t.Fatalf("update failed: %q", d.msg)
 	}
-	c, _ := s.cfg.Store.Get("000105")
-	if c.Name != "EVERGREEN TIMBER" || c.Zip != "97402" || c.By != "IBMUSER" {
-		t.Fatalf("stored record = %+v", c)
+	if got, _ := get(t, s, "000105"); got != "EVERGREEN TIMBER|97402|IBMUSER" {
+		t.Fatalf("stored record = %s", got)
 	}
 }
 
@@ -101,8 +99,8 @@ func TestBrowseSelectAndDelete(t *testing.T) {
 	if s.prog != b || !strings.Contains(b.msg, "DELETED") {
 		t.Fatalf("expected browse with message, got %T %q", s.prog, b.msg)
 	}
-	if _, err := s.cfg.Store.Get(first); err == nil {
-		t.Fatal("record still present")
+	if _, err := get(t, s, first); err != api.ErrNotFound {
+		t.Fatalf("record still present: %v", err)
 	}
 }
 
@@ -135,5 +133,64 @@ func TestDots(t *testing.T) {
 		if a[i] != b[i] {
 			t.Fatalf("leaders misaligned at %d: %q vs %q", i, a, b)
 		}
+	}
+}
+
+func TestUpdateConflict(t *testing.T) {
+	s, scr := login(t)
+	fill(t, scr, "option", "2 101")
+	scr = s.Submit(t3.AIDEnter, scr)
+	scr = s.Submit(t3.PF(4), scr)
+	d := s.prog.(*detail)
+
+	// Another user changes the record after this one started editing.
+	other := d.cust
+	other.Phone = "937-555-0199"
+	if _, err := s.api().Update(s.ctx(), other); err != nil {
+		t.Fatal(err)
+	}
+
+	fill(t, scr, "city", "kettering")
+	s.Submit(t3.AIDEnter, scr)
+	if !strings.HasPrefix(d.msg, "CUS0213E") || d.cust.Phone != "937-555-0199" {
+		t.Fatalf("expected conflict and refreshed record, got %q %+v", d.msg, d.cust)
+	}
+}
+
+func TestServerSideValidationAndAdd(t *testing.T) {
+	s, scr := login(t)
+	fill(t, scr, "option", "3")
+	scr = s.Submit(t3.AIDEnter, scr)
+	fill(t, scr, "name", "new co", "city", "reno", "state", "n1", "zip", "89501", "limit", "1000")
+	scr = s.Submit(t3.AIDEnter, scr)
+	d := s.prog.(*detail)
+	if d.errField != "state" || !strings.HasPrefix(d.msg, "CUS0232E") {
+		t.Fatalf("expected state error from the API, got %q %q", d.errField, d.msg)
+	}
+	fill(t, scr, "state", "nv")
+	s.Submit(t3.AIDEnter, scr)
+	if d.mode != modeInquiry || d.cust.ID != "000125" || !strings.Contains(d.msg, "ADDED") {
+		t.Fatalf("add failed: %q %+v", d.msg, d.cust)
+	}
+}
+
+func TestHostDown(t *testing.T) {
+	s := NewSession(&Config{SystemName: "TEST", Backend: api.NewClient("http://127.0.0.1:1")}, "TERM0001")
+	scr := s.Start()
+	fill(t, scr, "userid", "ibmuser", "password", "sys1")
+	s.Submit(t3.AIDEnter, scr)
+	if l := s.prog.(*logon); !strings.HasPrefix(l.msg, "CUS0298E") {
+		t.Fatalf("expected host-down message, got %q", l.msg)
+	}
+}
+
+func TestExpiredSessionReturnsToLogon(t *testing.T) {
+	s, scr := login(t)
+	s.api().(*fakeAPI).user = "" // the API forgets the session
+	fill(t, scr, "option", "1")
+	s.Submit(t3.AIDEnter, scr)
+	l, ok := s.prog.(*logon)
+	if !ok || !strings.HasPrefix(l.msg, "IKJ56400I") || s.user != "" {
+		t.Fatalf("expected logon with expiry message, got %T %+v", s.prog, s.prog)
 	}
 }

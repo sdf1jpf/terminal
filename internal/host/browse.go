@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sdf1jpf/terminal/internal/customer"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
@@ -14,23 +15,34 @@ const pageRows = 13
 type browse struct {
 	filter string
 	top    int
+	list   []customer.Customer
 	ids    []string // customer ids on the current page, by row
 	msg    string
 	errRow int // 1-based row index with a bad selection code, 0 for none
+}
+
+// enter re-reads the list from the API whenever the screen is shown.
+func (b *browse) enter(s *Session) { b.refresh(s) }
+
+func (b *browse) refresh(s *Session) {
+	list, err := s.api().List(s.ctx(), b.filter)
+	if err != nil {
+		b.msg = s.fail(err)
+		return
+	}
+	b.list = list
+	b.top = min(b.top, max(len(list)-pageRows, 0))
 }
 
 func (b *browse) Render(s *Session) *t3.Screen {
 	scr := t3.NewScreen()
 	header(scr, s, "CUSM01", "CUSTOMER BROWSE")
 
-	list := s.cfg.Store.List(b.filter)
-	b.top = min(b.top, max(len(list)-pageRows, 0))
-
 	label(scr, 4, 2, "NAME STARTS WITH ===>")
 	scr.Input(4, 24, 20, "filter", b.filter)
-	if len(list) > 0 {
-		end := min(b.top+pageRows, len(list))
-		scr.Text(4, 58, fmt.Sprintf("ROW %d TO %d OF %d", b.top+1, end, len(list)), t3.WithColor(t3.White))
+	if len(b.list) > 0 {
+		end := min(b.top+pageRows, len(b.list))
+		scr.Text(4, 58, fmt.Sprintf("ROW %d TO %d OF %d", b.top+1, end, len(b.list)), t3.WithColor(t3.White))
 	}
 
 	scr.Text(5, 2, "SELECT: S=SHOW  U=UPDATE  D=DELETE", t3.WithColor(t3.Blue))
@@ -39,8 +51,8 @@ func (b *browse) Render(s *Session) *t3.Screen {
 	scr.Text(8, 2, strings.Repeat("-", 77), t3.WithColor(t3.Blue))
 
 	b.ids = b.ids[:0]
-	for i := 0; i < pageRows && b.top+i < len(list); i++ {
-		c := list[b.top+i]
+	for i := 0; i < pageRows && b.top+i < len(b.list); i++ {
+		c := b.list[b.top+i]
 		row := 9 + i
 		var opts []t3.Opt
 		if b.errRow == i+1 {
@@ -58,9 +70,9 @@ func (b *browse) Render(s *Session) *t3.Screen {
 			c.ID, c.Name, c.City, c.State, money(c.Balance), c.Status), t3.WithColor(color))
 		b.ids = append(b.ids, c.ID)
 	}
-	if len(list) == 0 {
+	if len(b.list) == 0 {
 		scr.Text(9, 4, "NO CUSTOMERS MATCH THE FILTER", t3.WithColor(t3.Yellow))
-	} else if b.top+pageRows >= len(list) {
+	} else if b.top+pageRows >= len(b.list) {
 		bottom := strings.Repeat("*", 30) + " BOTTOM OF DATA " + strings.Repeat("*", 30)
 		scr.Text(9+len(b.ids), 4, bottom, t3.WithColor(t3.Blue))
 	}
@@ -80,12 +92,19 @@ func (b *browse) Render(s *Session) *t3.Screen {
 func (b *browse) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 	b.msg, b.errRow = "", 0
 	f := scr.Fields()
-	if nf := strings.ToUpper(f["filter"]); nf != b.filter {
+	if nf := strings.ToUpper(f["filter"]); nf != b.filter && aid == t3.AIDEnter {
 		b.filter, b.top = nf, 0
+		b.refresh(s)
+		return b
 	}
 	switch aid {
 	case t3.AIDEnter:
-		return b.selection(s, f)
+		if next := b.selection(s, f); next != b {
+			return next
+		}
+		if b.errRow == 0 {
+			b.refresh(s) // Enter with nothing selected re-reads the file
+		}
 	case t3.PF(3), t3.PF(12):
 		return &menu{}
 	case t3.PF(5):
@@ -96,14 +115,14 @@ func (b *browse) Handle(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		}
 		b.top = max(b.top-pageRows, 0)
 	case t3.PF(8):
-		n := len(s.cfg.Store.List(b.filter))
-		if b.top+pageRows >= n {
+		if b.top+pageRows >= len(b.list) {
 			b.msg = "CUS0102W ALREADY AT BOTTOM OF DATA"
 		} else {
-			b.top += pageRows
+			b.top = min(b.top+pageRows, len(b.list)-pageRows) // keep the last page full
 		}
 	case t3.AIDClear:
 		b.filter, b.top = "", 0
+		b.refresh(s)
 	default:
 		b.msg = invalidKey(aid)
 	}
@@ -129,7 +148,9 @@ func (b *browse) selection(s *Session, f map[string]string) Program {
 			b.errRow = i + 1
 			return b
 		}
-		d.load(s, id)
+		if !d.load(s, id) {
+			d.mode = modeInquiry
+		}
 		return d
 	}
 	return b

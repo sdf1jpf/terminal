@@ -1,12 +1,13 @@
 package host
 
 import (
+	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/sdf1jpf/terminal/internal/store"
+	"github.com/sdf1jpf/terminal/internal/api"
+	"github.com/sdf1jpf/terminal/internal/customer"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
@@ -23,7 +24,7 @@ const (
 type detail struct {
 	mode     mode
 	back     Program
-	cust     store.Customer
+	cust     customer.Customer
 	loaded   bool
 	vals     map[string]string // operator input kept across a failed edit
 	errField string
@@ -38,20 +39,26 @@ func (b *browse) setMsg(m string) { b.msg = m }
 func (m *menu) setMsg(msg string) { m.msg = msg }
 
 func newAdd(back Program) *detail {
-	return &detail{mode: modeAdd, back: back, loaded: true, cust: store.Customer{Status: "A"}}
+	return &detail{mode: modeAdd, back: back, loaded: true, cust: customer.Customer{Status: "A"}}
 }
 
-func (d *detail) load(s *Session, id string) {
+// load reads a customer from the API, reporting whether it was found.
+func (d *detail) load(s *Session, id string) bool {
 	id = padID(id)
-	c, err := s.cfg.Store.Get(id)
+	c, err := s.api().Get(s.ctx(), id)
 	if err != nil {
-		d.loaded = false
-		d.cust = store.Customer{ID: id}
-		d.msg = "CUS0201E CUSTOMER " + id + " NOT FOUND"
+		d.loaded, d.vals = false, nil
+		d.cust = customer.Customer{ID: id}
 		d.errField = "id"
-		return
+		if errors.Is(err, api.ErrNotFound) {
+			d.msg = "CUS0201E CUSTOMER " + id + " NOT FOUND"
+		} else {
+			d.msg = s.fail(err)
+		}
+		return false
 	}
 	d.cust, d.loaded, d.vals = c, true, nil
+	return true
 }
 
 func padID(id string) string {
@@ -66,23 +73,23 @@ type fieldDef struct {
 	name, label string
 	length      int
 	numeric     bool
-	get         func(c store.Customer) string
+	get         func(c customer.Customer) string
 }
 
 var detailFields = []fieldDef{
-	{"name", "NAME", 30, false, func(c store.Customer) string { return c.Name }},
-	{"addr", "ADDRESS", 30, false, func(c store.Customer) string { return c.Address }},
-	{"city", "CITY", 18, false, func(c store.Customer) string { return c.City }},
-	{"state", "STATE", 2, false, func(c store.Customer) string { return c.State }},
-	{"zip", "ZIP CODE", 5, true, func(c store.Customer) string { return c.Zip }},
-	{"phone", "PHONE", 12, false, func(c store.Customer) string { return c.Phone }},
-	{"limit", "CREDIT LIMIT", 9, true, func(c store.Customer) string {
+	{"name", "NAME", 30, false, func(c customer.Customer) string { return c.Name }},
+	{"addr", "ADDRESS", 30, false, func(c customer.Customer) string { return c.Address }},
+	{"city", "CITY", 18, false, func(c customer.Customer) string { return c.City }},
+	{"state", "STATE", 2, false, func(c customer.Customer) string { return c.State }},
+	{"zip", "ZIP CODE", 5, true, func(c customer.Customer) string { return c.Zip }},
+	{"phone", "PHONE", 12, false, func(c customer.Customer) string { return c.Phone }},
+	{"limit", "CREDIT LIMIT", 9, true, func(c customer.Customer) string {
 		if c.Limit == 0 && c.ID == "" {
 			return ""
 		}
 		return strconv.Itoa(c.Limit)
 	}},
-	{"status", "STATUS (A/H/C)", 1, false, func(c store.Customer) string { return c.Status }},
+	{"status", "STATUS (A/H/C)", 1, false, func(c customer.Customer) string { return c.Status }},
 }
 
 func (d *detail) editable() bool { return d.mode == modeUpdate || d.mode == modeAdd }
@@ -228,11 +235,10 @@ func (d *detail) handleInquiry(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		id := scr.Fields()["id"]
 		if strings.TrimSpace(id) == "" {
 			d.msg, d.errField, d.loaded = "CUS0202E ENTER A CUSTOMER NUMBER", "id", false
-			d.cust = store.Customer{}
+			d.cust = customer.Customer{}
 			return d
 		}
-		d.load(s, id)
-		if d.loaded {
+		if d.load(s, id) {
 			d.msg = "CUS0203I CUSTOMER " + d.cust.ID + " DISPLAYED"
 		}
 	case t3.PF(3), t3.PF(12):
@@ -242,7 +248,9 @@ func (d *detail) handleInquiry(s *Session, aid t3.AID, scr *t3.Screen) Program {
 			d.msg, d.errField = "CUS0204E DISPLAY A CUSTOMER FIRST", "id"
 			return d
 		}
-		d.load(s, d.cust.ID) // re-read for the latest copy
+		if !d.load(s, d.cust.ID) { // re-read for the latest copy
+			return d
+		}
 		d.mode = modeUpdate
 		if aid == t3.PF(9) {
 			d.mode = modeDelete
@@ -277,19 +285,44 @@ func (d *detail) handleEdit(s *Session, aid t3.AID, scr *t3.Screen) Program {
 		d.msg = "CUS0211W NO FIELDS WERE CHANGED"
 		return d
 	}
-	c, field, msg := validate(d.cust, d.vals)
-	if field != "" {
-		d.errField, d.msg = field, msg
-		return d
-	}
-	saved, err := s.cfg.Store.Put(c, s.user)
+	c := d.cust
+	c.Name, c.Address, c.City = d.vals["name"], d.vals["addr"], d.vals["city"]
+	c.State, c.Zip, c.Phone, c.Status = d.vals["state"], d.vals["zip"], d.vals["phone"], d.vals["status"]
+	limit, err := strconv.Atoi(strings.TrimSpace(d.vals["limit"]))
 	if err != nil {
-		d.msg = "CUS0299E FILE ERROR: " + strings.ToUpper(err.Error())
+		d.errField, d.msg = "limit", fieldMessage(&customer.ValidationError{
+			Field: "limit", Message: "credit limit must be a whole, positive number"})
 		return d
 	}
+	c.Limit = limit
+
+	var saved customer.Customer
 	verb := "UPDATED"
 	if d.mode == modeAdd {
+		saved, err = s.api().Create(s.ctx(), c)
 		verb = "ADDED"
+	} else {
+		saved, err = s.api().Update(s.ctx(), c)
+	}
+	var verr *customer.ValidationError
+	switch {
+	case errors.As(err, &verr):
+		d.errField, d.msg = verr.Field, fieldMessage(verr)
+		return d
+	case errors.Is(err, api.ErrConflict):
+		id := d.cust.ID
+		if d.load(s, id) {
+			d.msg = "CUS0213E " + id + " WAS CHANGED BY ANOTHER USER - REVIEW AND RESUBMIT"
+		}
+		return d
+	case errors.Is(err, api.ErrNotFound):
+		id := d.cust.ID
+		d.mode, d.loaded, d.vals = modeInquiry, false, nil
+		d.msg, d.errField = "CUS0214E CUSTOMER "+id+" NO LONGER EXISTS", "id"
+		return d
+	case err != nil:
+		d.msg = s.fail(err)
+		return d
 	}
 	d.cust, d.vals, d.mode = saved, nil, modeInquiry
 	d.msg = "CUS0212I CUSTOMER " + saved.ID + " " + verb
@@ -299,8 +332,9 @@ func (d *detail) handleEdit(s *Session, aid t3.AID, scr *t3.Screen) Program {
 func (d *detail) handleDelete(s *Session, aid t3.AID) Program {
 	switch aid {
 	case t3.PF(10):
-		if err := s.cfg.Store.Delete(d.cust.ID); err != nil {
-			d.msg = "CUS0299E FILE ERROR: " + strings.ToUpper(err.Error())
+		err := s.api().Delete(s.ctx(), d.cust.ID)
+		if err != nil && !errors.Is(err, api.ErrNotFound) {
+			d.msg = s.fail(err)
 			return d
 		}
 		msg := "CUS0220I CUSTOMER " + d.cust.ID + " DELETED"
@@ -320,37 +354,16 @@ func (d *detail) handleDelete(s *Session, aid t3.AID) Program {
 	return d
 }
 
-var (
-	reState = regexp.MustCompile(`^[A-Z]{2}$`)
-	reZip   = regexp.MustCompile(`^[0-9]{5}$`)
-	rePhone = regexp.MustCompile(`^[0-9]{3}-[0-9]{3}-[0-9]{4}$`)
-)
+// fieldMessageIDs gives each field's edit error its own message number.
+var fieldMessageIDs = map[string]string{
+	"name": "CUS0230E", "city": "CUS0231E", "state": "CUS0232E", "zip": "CUS0233E",
+	"phone": "CUS0234E", "limit": "CUS0235E", "status": "CUS0236E", "addr": "CUS0237E",
+}
 
-// validate applies the edit rules and returns the updated record, or the
-// name of the first field in error with its message.
-func validate(c store.Customer, v map[string]string) (store.Customer, string, string) {
-	get := func(k string) string { return strings.ToUpper(strings.TrimSpace(v[k])) }
-	c.Name, c.Address, c.City = get("name"), get("addr"), get("city")
-	c.State, c.Zip, c.Phone, c.Status = get("state"), get("zip"), get("phone"), get("status")
-	switch {
-	case c.Name == "":
-		return c, "name", "CUS0230E CUSTOMER NAME IS REQUIRED"
-	case c.City == "":
-		return c, "city", "CUS0231E CITY IS REQUIRED"
-	case !reState.MatchString(c.State):
-		return c, "state", "CUS0232E STATE MUST BE A TWO LETTER CODE"
-	case !reZip.MatchString(c.Zip):
-		return c, "zip", "CUS0233E ZIP CODE MUST BE FIVE DIGITS"
-	case c.Phone != "" && !rePhone.MatchString(c.Phone):
-		return c, "phone", "CUS0234E PHONE MUST BE IN THE FORM NNN-NNN-NNNN"
+func fieldMessage(e *customer.ValidationError) string {
+	id, ok := fieldMessageIDs[e.Field]
+	if !ok {
+		id = "CUS0239E"
 	}
-	limit, err := strconv.Atoi(get("limit"))
-	if err != nil || limit < 0 {
-		return c, "limit", "CUS0235E CREDIT LIMIT MUST BE A WHOLE, POSITIVE NUMBER"
-	}
-	c.Limit = limit
-	if !strings.Contains("AHC", c.Status) || c.Status == "" {
-		return c, "status", "CUS0236E STATUS MUST BE A (ACTIVE), H (HOLD) OR C (CLOSED)"
-	}
-	return c, "", ""
+	return id + " " + strings.ToUpper(e.Message)
 }

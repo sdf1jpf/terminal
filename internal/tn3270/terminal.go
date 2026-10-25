@@ -16,9 +16,6 @@ type Options struct {
 	// Latency is an artificial host response delay, so the keyboard visibly
 	// locks with "X ()" after each AID. Zero disables it.
 	Latency time.Duration
-	// Renderer is the lipgloss renderer to style output with. Nil uses the
-	// default (stdout) renderer; SSH sessions supply their own.
-	Renderer *lipgloss.Renderer
 }
 
 // Terminal is a Bubble Tea model emulating a 3278 display station.
@@ -38,10 +35,6 @@ type hostReply struct{ scr *Screen }
 
 // New returns a terminal connected to host.
 func New(host Host, opts Options) *Terminal {
-	r := opts.Renderer
-	if r == nil {
-		r = lipgloss.DefaultRenderer()
-	}
 	if opts.LUName == "" {
 		opts.LUName = "TERM0001"
 	}
@@ -50,7 +43,7 @@ func New(host Host, opts Options) *Terminal {
 		opts:   opts,
 		scr:    host.Start(),
 		styles: map[styleKey]lipgloss.Style{},
-		r:      r,
+		r:      lipgloss.DefaultRenderer(),
 	}
 }
 
