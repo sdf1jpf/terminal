@@ -11,16 +11,21 @@ export interface Product {
 	on_hand: number;
 	reorder_point: number;
 	status: string; // A=active, D=discontinued
+	vendor: string; // who supplies it, e.g. V00001; "" for none
+	unit_cost: number; // what it costs us, whole dollars
 	version: number;
 	updated: string; // RFC 3339, UTC
 	updated_by: string;
 }
 
 export const productFields = [
-	"sku", "description", "unit_price", "on_hand", "reorder_point", "status", "version", "updated", "updated_by",
+	"sku", "description", "unit_price", "on_hand", "reorder_point", "status", "vendor", "unit_cost",
+	"version", "updated", "updated_by",
 ] as const;
 
-export type ProductEdit = Pick<Product, "sku" | "description" | "unit_price" | "on_hand" | "reorder_point" | "status">;
+export type ProductEdit = Pick<
+	Product, "sku" | "description" | "unit_price" | "on_hand" | "reorder_point" | "status" | "vendor" | "unit_cost"
+>;
 
 const reSku = /^[A-Z0-9][A-Z0-9-]{0,9}$/;
 const MAX = 9_999_999;
@@ -36,6 +41,8 @@ export function parseProduct(body: Record<string, unknown>): { fields: ProductEd
 		on_hand: int(body, "on_hand"),
 		reorder_point: int(body, "reorder_point"),
 		status: up("status"),
+		vendor: up("vendor"),
+		unit_cost: int(body, "unit_cost"),
 	};
 	str(body, "updated"), str(body, "updated_by");
 	const version = int(body, "version");
@@ -49,6 +56,8 @@ export function parseProduct(body: Record<string, unknown>): { fields: ProductEd
 	if (f.on_hand < 0 || f.on_hand > MAX) throw bad("onhand", "quantity on hand must be a whole, positive number");
 	if (f.reorder_point < 0 || f.reorder_point > MAX) throw bad("reorder", "reorder point must be a whole, positive number");
 	if (!["A", "D"].includes(f.status)) throw bad("status", "status must be A (active) or D (discontinued)");
+	if (f.vendor !== "" && !/^V\d{5}$/.test(f.vendor)) throw bad("vendor", "vendor must be a vendor number such as V00001");
+	if (f.unit_cost < 0 || f.unit_cost > MAX) throw bad("cost", "unit cost must be a whole number of dollars");
 	return { fields, version };
 }
 
@@ -82,11 +91,19 @@ export async function getProduct(db: D1Database, sku: string): Promise<Product> 
 	return row;
 }
 
+// checkVendor makes sure a product's vendor is on file.
+async function checkVendor(db: D1Database, vendor: string): Promise<void> {
+	if (vendor === "") return;
+	const row = await db.prepare("SELECT 1 FROM vendors WHERE id = ?").bind(vendor).first();
+	if (!row) throw new HttpError(422, "invalid", `vendor ${vendor} is not on file`, "vendor");
+}
+
 export async function createProduct(db: D1Database, f: ProductEdit, user: string): Promise<Product> {
+	await checkVendor(db, f.vendor);
 	const row = await db.prepare(
-		`INSERT INTO products (sku, description, unit_price, on_hand, reorder_point, status, version, updated, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT (sku) DO NOTHING RETURNING *`,
-	).bind(f.sku, f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, new Date().toISOString(), user)
+		`INSERT INTO products (sku, description, unit_price, on_hand, reorder_point, status, vendor, unit_cost, version, updated, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT (sku) DO NOTHING RETURNING *`,
+	).bind(f.sku, f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, f.vendor, f.unit_cost, new Date().toISOString(), user)
 		.first<Product>();
 	if (!row) throw new HttpError(422, "invalid", `product ${f.sku} is already on file`, "sku");
 	return row;
@@ -95,11 +112,12 @@ export async function createProduct(db: D1Database, f: ProductEdit, user: string
 // updateProduct applies an edit if the product is still at version. The
 // SKU is the key and cannot change.
 export async function updateProduct(db: D1Database, sku: string, f: ProductEdit, version: number, user: string): Promise<Product> {
+	await checkVendor(db, f.vendor);
 	const row = await db.prepare(
-		`UPDATE products SET description = ?, unit_price = ?, on_hand = ?, reorder_point = ?, status = ?,
+		`UPDATE products SET description = ?, unit_price = ?, on_hand = ?, reorder_point = ?, status = ?, vendor = ?, unit_cost = ?,
 		     version = version + 1, updated = ?, updated_by = ?
 		 WHERE sku = ? AND version = ? RETURNING *`,
-	).bind(f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, new Date().toISOString(), user, sku, version)
+	).bind(f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, f.vendor, f.unit_cost, new Date().toISOString(), user, sku, version)
 		.first<Product>();
 	if (row) return row;
 	await getProduct(db, sku); // 404 if it is gone

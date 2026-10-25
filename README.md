@@ -395,6 +395,34 @@ for a product we don't carry, which is rejected), and each customer pays
 the billed invoices we sent it an 810 for. EDI traffic also shows in the
 customer's event history.
 
+## Purchasing
+
+Stock is bought from vendors (simulated suppliers) on purchase orders, sent
+to them by EDI. Menu option `P` (`P V00002` for one vendor) opens **PURCHASE
+ORDERS** (CUSV01), newest first; PF4 lists the **VENDORS** (CUSV03). Each
+product names its vendor and unit cost on the product screen (option 8),
+which also shows how many are on order.
+
+- **PF5 opens a PO** for the vendor in the `VENDOR` field. On **PURCHASE
+  ORDER** (CUSV02), add lines by SKU and quantity: only products the vendor
+  supplies, costed at their unit cost. `D` removes a line, PF9 twice
+  cancels the PO.
+- **PF10 sends it** to the vendor as an 850. The vendor answers with an 855
+  (`CONFIRMED`, with a ship date) and an 856 ship notice (`IN TRANSIT`).
+- **Receiving puts the goods in stock.** Type what came in under `RCV` and
+  press Enter, or PF11 (or `R` on the list) to receive everything still due.
+  Each receipt is kept for the ledger. The PO is `RECEIVED` once every line
+  is in.
+
+PF6 on the list submits **CUSREORD**, which orders every active product at
+or below its reorder point back up to twice that point, counting what is
+already on order, with one PO per vendor, and sends them. PF10 submits
+**VENDSIM**, which plays the vendors: they confirm sent POs and ship
+confirmed ones. Vendors trade under their vendor number as interchange ID,
+and their traffic shows on the EDI mailbox (`E V00002`).
+
+The same steps are in the API under `/v1/vendors` and `/v1/purchase-orders`.
+
 ## Batch jobs
 
 Batch work runs the way it would under JES. Submitting a job records it as
@@ -412,6 +440,8 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSCRREV` | Credit review. STEP010 lists active accounts at 90% of their limit or more. STEP020 puts active accounts that are over their limit on hold, and records each hold in the change history as made by `CUSCRREV`. RC 0004 if it held any. |
 | `CUSSTMT` | Statements for every open account with a balance, with the last 30 days of activity. |
 | `EDISIM` | EDI trading partner simulator: customers send 850 purchase orders and pay invoices sent as 810s with 820 remittances. |
+| `CUSREORD` | Reorder: purchase orders to vendors for every product at or below its reorder point, sent as 850s. RC 0004 if a low product has no vendor. |
+| `VENDSIM` | EDI vendor simulator: STEP010 vendors confirm sent POs with 855s, STEP020 they ship confirmed ones with 856s. |
 
 In the terminal, menu option 7 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,

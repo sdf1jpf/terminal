@@ -2,24 +2,26 @@ import { newActivity } from "./activity";
 import { newAdd, newInquiry } from "./detail";
 import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
+import { newPOs } from "./purchasing";
 import { invalidKey, header, keys, label, message, newScreen, right, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program } from "./program";
 
 // The ISPF-style primary option menu.
 
 const options = [
-	["1", "BROWSE", "Browse the customer master file"],
-	["2", "INQUIRY", "Display a customer by number"],
+	["1", "BROWSE", "Customer master file"],
+	["2", "INQUIRY", "Customer by number"],
 	["3", "ADD", "Add a new customer"],
-	["4", "REPORTS", "Credit exposure summary"],
-	["5", "EVENTS", "Event history: changes, invoices, payments"],
-	["7", "JOBS", "Submit batch jobs and view their output"],
-	["8", "PRODUCTS", "Product file and stock on hand"],
-	["9", "INVOICES", "Build, bill and collect invoices"],
-	["E", "EDI", "EDI mailbox: orders and payments from customers' systems"],
-	["O", "OPERATOR", "Operator console: SYSLOG and the job schedule"],
+	["4", "REPORTS", "Credit exposure"],
+	["5", "EVENTS", "Customer event history"],
+	["7", "JOBS", "Batch jobs and output"],
+	["8", "PRODUCTS", "Products and stock"],
+	["9", "INVOICES", "Build, bill, collect"],
+	["E", "EDI", "EDI mailbox"],
+	["P", "PURCHASING", "Purchase orders, vendors"],
+	["O", "OPERATOR", "Console, SYSLOG, schedule"],
 	["H", "HELD", "Held output, reprint"],
-	["T", "TUTORIAL", "Keyboard and PF key guide"],
+	["T", "TUTORIAL", "Keyboard and PF keys"],
 	["X", "EXIT", "Log off"],
 ];
 
@@ -35,23 +37,31 @@ export const menu: Program<MenuState> = {
 		label(scr, 4, 2, "OPTION ===>");
 		scr.input(4, 14, 40, "option", m.option ?? "");
 
+		// Two columns of options, then the session details. Descriptions are
+		// cut to fit their column.
+		const perCol = Math.ceil(options.length / 2);
 		options.forEach(([key, name, desc], i) => {
-			scr.text(6 + i, 4, key, { color: "white", bright: true });
-			scr.text(6 + i, 7, name, { color: "turquoise" });
-			scr.text(6 + i, 18, desc, { color: "green" });
+			const row = 6 + (i % perCol);
+			const col = i < perCol ? 4 : right(scr, 42);
+			const width = i < perCol ? right(scr, 42) - col - 16 : scr.cols - col - 14;
+			scr.text(row, col, key, { color: "white", bright: true });
+			scr.text(row, col + 3, name, { color: "turquoise" });
+			scr.text(row, col + 14, desc.slice(0, width), { color: "green" });
 		});
 
 		const info = [
 			["USERID", ctx.user],
-			["TIME", time(ctx).slice(0, 5)],
 			["TERMINAL", ctx.terminal],
 			["SYSTEM", ctx.system],
-			["HOST", ctx.host.toUpperCase().slice(0, 14)],
+			["HOST", ctx.host.toUpperCase().slice(0, 30)],
 		];
-		info.forEach(([k, v], i) => {
-			label(scr, 6 + i, right(scr, 56), k);
-			scr.text(6 + i, right(scr, 65), "- " + v, { color: "white" });
-		});
+		let col = 4;
+		for (const [k, v] of info) {
+			if (col + k.length + v.length + 1 > scr.cols) break;
+			label(scr, 7 + perCol, col, k);
+			scr.text(7 + perCol, col + k.length + 1, v, { color: "white" });
+			col += k.length + v.length + 4;
+		}
 
 		scr.text(20, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
 		scr.text(21, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
@@ -115,6 +125,9 @@ export const menu: Program<MenuState> = {
 			case "E":
 			case "EDI":
 				return newEdi(m, arg);
+			case "P":
+			case "PURCHASING":
+				return newPOs(m, arg);
 			case "O":
 			case "OPERATOR":
 			case "LOG":

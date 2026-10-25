@@ -115,6 +115,27 @@ export interface EdiState {
 }
 export interface EdiDocState { p: "edidoc"; back: State; id: string; top?: number; msg?: string }
 
+export interface POsState {
+	p: "pos";
+	back: State;
+	vendor?: string; // only this vendor's purchase orders; "" for all
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface POState {
+	p: "po";
+	back: State;
+	id: string;
+	top?: number;
+	vals?: Record<string, string>; // the add line fields, kept across a failed add
+	confirm?: boolean; // PF9 was pressed once: press it again to cancel the PO
+	errField?: string;
+	msg?: string;
+}
+export interface VendorsState { p: "vendors"; back: State; top?: number; errSel?: string; msg?: string }
+
 export interface ConsoleState {
 	p: "console";
 	back: State;
@@ -149,7 +170,7 @@ export interface OutputState { p: "output"; back: State; id: string; top?: numbe
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
-	| EdiState | EdiDocState | ConsoleState | ScheduleState | SpoolState | OutputState;
+	| EdiState | EdiDocState | POsState | POState | VendorsState | ConsoleState | ScheduleState | SpoolState | OutputState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -186,7 +207,7 @@ export function isCode(err: unknown, code: string): err is HttpError {
 
 // messenger panels can show a message passed back from a child screen.
 export function setMsg(s: State, msg: string): boolean {
-	if (s.p === "browse" || s.p === "menu" || s.p === "invoices" || s.p === "edi") {
+	if (s.p === "browse" || s.p === "menu" || s.p === "invoices" || s.p === "edi" || s.p === "pos") {
 		s.msg = msg;
 		return true;
 	}

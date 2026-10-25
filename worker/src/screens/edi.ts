@@ -1,6 +1,7 @@
 import { getInterchange, listInterchanges, typeNames, type Interchange } from "../edi";
 import { submitJob } from "../jobs";
 import { padID } from "./detail";
+import { vendorID } from "./purchasing";
 import { dots, header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, value, type Color, type Ctx } from "./screen";
 import { fail, isCode, pf, type EdiDocState, type EdiState, type Program, type State } from "./program";
 
@@ -18,8 +19,11 @@ function listLine(id: string, dir: string, type: string, partner: string, status
 	return `${pad(id, 8)} ${pad(dir, 3)} ${pad(type, 4)} ${pad(partner, 7)} ${pad(status, 10)} ${pad(ref, 24)} ${at}`;
 }
 
+// partnerID reads a typed partner: a customer number, or a vendor's (V1).
+const partnerID = (typed: string) => (/^v/i.test(typed.trim()) ? vendorID(typed) : padID(typed));
+
 export function newEdi(back: State, partner = ""): EdiState {
-	return { p: "edi", back, partner: partner.trim() ? padID(partner) : "" };
+	return { p: "edi", back, partner: partner.trim() ? partnerID(partner) : "" };
 }
 
 const invoiceIn = (ref: string) => ref.match(/INV\d{5}/)?.[0] ?? "";
@@ -38,12 +42,12 @@ export const edi: Program<EdiState> = {
 		const rows = listRows(ctx);
 		const top = Math.min(s.top ?? 0, Math.max(list.length - rows, 0));
 
-		label(scr, 4, 2, "PARTNER (CUSTOMER) ===>");
-		scr.input(4, 26, 6, "partner", s.partner ?? "", { numeric: true, bright: s.errField === "partner" });
+		label(scr, 4, 2, "PARTNER (CUST/VENDOR) ===>");
+		scr.input(4, 29, 6, "partner", s.partner ?? "", { bright: s.errField === "partner" });
 		if (list.length > 0) {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(5, 2, "SELECT: S=SHOW    850 PO IN, 997 ACK OUT, 810 INVOICE OUT, 820 PAYMENT IN", { color: "blue" });
+		scr.text(5, 2, "SELECT: S=SHOW   CUSTOMERS 850 IN 810 OUT 820 IN  VENDORS 850 OUT 855 856 IN", { color: "blue" });
 		scr.text(7, 2, "S " + listLine("ID", "DIR", "TYPE", "PARTNER", "STATUS", "REFERENCE", "RECEIVED/SENT"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		const shown = list.slice(top, top + rows);
@@ -66,7 +70,7 @@ export const edi: Program<EdiState> = {
 	async handle(ctx, s, input) {
 		s.msg = s.errSel = s.errField = undefined;
 		const typed = (input.fields.partner ?? "").trim();
-		const partner = typed ? padID(typed) : "";
+		const partner = typed ? partnerID(typed) : "";
 		if (input.aid === "ENTER" && input.modified.has("partner") && partner !== (s.partner ?? "")) {
 			s.partner = partner;
 			s.top = 0;

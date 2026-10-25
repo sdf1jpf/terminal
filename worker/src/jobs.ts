@@ -10,6 +10,7 @@ import type { Customer } from "./customer";
 import { partnersOrder, partnersPay, processInterchange } from "./edi";
 import { HttpError } from "./http";
 import type { Env } from "./index";
+import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
 import { outputLines, spoolStmts } from "./spool";
 import { logStmt } from "./syslog";
 
@@ -70,6 +71,19 @@ export const jobLibrary: Record<string, JobDef> = {
 		steps: [
 			{ name: "STEP010", run: partnersOrder },
 			{ name: "STEP020", run: partnersPay },
+		],
+	},
+	CUSREORD: {
+		title: "REORDER LOW STOCK FROM VENDORS",
+		short: "REORDER",
+		steps: [{ name: "STEP010", run: reorder }],
+	},
+	VENDSIM: {
+		title: "EDI VENDOR SIMULATOR",
+		short: "VENDOR SIM",
+		steps: [
+			{ name: "STEP010", run: vendorsConfirm },
+			{ name: "STEP020", run: vendorsShip },
 		],
 	},
 };
