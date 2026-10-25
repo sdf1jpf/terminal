@@ -29,7 +29,7 @@ func (r *report) refresh(s *Session) bool {
 }
 
 func (r *report) Render(s *Session) *t3.Screen {
-	scr := t3.NewScreen()
+	scr := s.newScreen()
 	header(scr, s, "CUSR01", "CREDIT EXPOSURE SUMMARY")
 
 	list := slices.Clone(r.list)
@@ -50,23 +50,27 @@ func (r *report) Render(s *Session) *t3.Screen {
 		label(scr, 7, 4, dots("OVERALL UTILIZATION", 24))
 		value(scr, 7, 30, fmt.Sprintf("%11d%%", bal*100/limit))
 	}
-	label(scr, 4, 50, "ACTIVE")
-	scr.Text(4, 60, fmt.Sprintf("%5d", status["A"]), t3.WithColor(t3.Green))
-	label(scr, 5, 50, "ON HOLD")
-	scr.Text(5, 60, fmt.Sprintf("%5d", status["H"]), t3.WithColor(t3.Yellow))
-	label(scr, 6, 50, "CLOSED")
-	scr.Text(6, 60, fmt.Sprintf("%5d", status["C"]), t3.WithColor(t3.Pink))
+	col := right(scr, 50)
+	label(scr, 4, col, "ACTIVE")
+	scr.Text(4, col+10, fmt.Sprintf("%5d", status["A"]), t3.WithColor(t3.Green))
+	label(scr, 5, col, "ON HOLD")
+	scr.Text(5, col+10, fmt.Sprintf("%5d", status["H"]), t3.WithColor(t3.Yellow))
+	label(scr, 6, col, "CLOSED")
+	scr.Text(6, col+10, fmt.Sprintf("%5d", status["C"]), t3.WithColor(t3.Pink))
 
+	// The list fills rows 11 to three above the bottom, and the bars take
+	// up any extra width: 10 rows of 30 on a 24x80 screen.
+	top, width := scr.Rows()-14, 30+scr.Cols()-t3.MinCols
 	sort.Slice(list, func(i, j int) bool { return list[i].Balance > list[j].Balance })
 	scr.Text(9, 4, "TOP EXPOSURES                   BALANCE  UTILIZATION", t3.WithColor(t3.White), t3.Bright)
-	scr.Text(10, 4, strings.Repeat("-", 74), t3.WithColor(t3.Blue))
-	for i := 0; i < 10 && i < len(list); i++ {
+	scr.Text(10, 4, strings.Repeat("-", scr.Cols()-6), t3.WithColor(t3.Blue))
+	for i := 0; i < top && i < len(list); i++ {
 		c := list[i]
 		pct := 0
 		if c.Limit > 0 {
 			pct = c.Balance * 100 / c.Limit
 		}
-		bar := min(pct*30/100, 30)
+		bar := min(pct*width/100, width)
 		color := t3.Green
 		switch {
 		case pct >= 90:
@@ -76,12 +80,12 @@ func (r *report) Render(s *Session) *t3.Screen {
 		}
 		row := 11 + i
 		value(scr, row, 4, fmt.Sprintf("%-24.24s %14s %4d%%", c.Name, money(c.Balance), pct))
-		scr.Text(row, 51, strings.Repeat("#", bar)+strings.Repeat(".", 30-bar), t3.WithColor(color))
+		scr.Text(row, 51, strings.Repeat("#", bar)+strings.Repeat(".", width-bar), t3.WithColor(color))
 	}
 
 	message(scr, r.msg)
 	keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF12=CANCEL")
-	scr.SetCursor(24, 2)
+	scr.SetCursor(scr.Rows(), 2)
 	return scr
 }
 

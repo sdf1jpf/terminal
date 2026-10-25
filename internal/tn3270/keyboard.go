@@ -44,12 +44,12 @@ func (s *Screen) Type(r rune, insert bool) Lock {
 	}
 	if insert {
 		start, n := s.fieldBounds(fa)
-		last := wrap(start + n - 1)
+		last := s.wrap(start + n - 1)
 		if ch := s.buf[last].ch; ch != 0 && ch != ' ' {
 			return LockOverflow
 		}
-		for p := last; p != s.cursor; p = wrap(p - 1) {
-			s.buf[p].ch = s.buf[wrap(p-1)].ch
+		for p := last; p != s.cursor; p = s.wrap(p - 1) {
+			s.buf[p].ch = s.buf[s.wrap(p-1)].ch
 		}
 	}
 	if !a.Mixed {
@@ -65,7 +65,7 @@ func (s *Screen) Type(r rune, insert bool) Lock {
 // attribute byte (the end of the field), skips to the next input field,
 // like the 3270 auto-skip behaviour.
 func (s *Screen) advanceAfterType() {
-	next := wrap(s.cursor + 1)
+	next := s.wrap(s.cursor + 1)
 	if s.buf[next].isAttr {
 		if a, ok := s.nextUnprotected(s.cursor); ok {
 			s.cursor = a
@@ -86,7 +86,7 @@ func (s *Screen) Backspace() Lock {
 	if s.cursor == start {
 		return LockNone
 	}
-	s.cursor = wrap(s.cursor - 1)
+	s.cursor = s.wrap(s.cursor - 1)
 	return s.Delete()
 }
 
@@ -101,9 +101,9 @@ func (s *Screen) Delete() Lock {
 		return LockProtected
 	}
 	start, n := s.fieldBounds(fa)
-	last := wrap(start + n - 1)
-	for p := s.cursor; p != last; p = wrap(p + 1) {
-		s.buf[p].ch = s.buf[wrap(p+1)].ch
+	last := s.wrap(start + n - 1)
+	for p := s.cursor; p != last; p = s.wrap(p + 1) {
+		s.buf[p].ch = s.buf[s.wrap(p+1)].ch
 	}
 	s.buf[last].ch = 0
 	s.buf[fa].attr.modified = true
@@ -120,8 +120,8 @@ func (s *Screen) EraseEOF() Lock {
 		return LockProtected
 	}
 	start, n := s.fieldBounds(fa)
-	end := wrap(start + n)
-	for p := s.cursor; p != end; p = wrap(p + 1) {
+	end := s.wrap(start + n)
+	for p := s.cursor; p != end; p = s.wrap(p + 1) {
 		s.buf[p].ch = 0
 	}
 	s.buf[fa].attr.modified = true
@@ -136,7 +136,7 @@ func (s *Screen) EraseInput() {
 		}
 		start, n := s.fieldBounds(i)
 		for j := 0; j < n; j++ {
-			s.buf[wrap(start+j)].ch = 0
+			s.buf[s.wrap(start+j)].ch = 0
 		}
 		s.buf[i].attr.modified = true
 	}
@@ -154,8 +154,8 @@ func (s *Screen) Tab() {
 // unprotected field if already there.
 func (s *Screen) BackTab() {
 	fa := s.fieldAttr(s.cursor)
-	if !s.buf[fa].attr.Protected && !s.buf[s.cursor].isAttr && wrap(fa+1) != s.cursor {
-		s.cursor = wrap(fa + 1)
+	if !s.buf[fa].attr.Protected && !s.buf[s.cursor].isAttr && s.wrap(fa+1) != s.cursor {
+		s.cursor = s.wrap(fa + 1)
 		return
 	}
 	if a, ok := s.prevUnprotected(s.cursor); ok {
@@ -166,8 +166,8 @@ func (s *Screen) BackTab() {
 // NewLine moves to the first unprotected field at or after the start of
 // the next row.
 func (s *Screen) NewLine() {
-	row, _ := RowCol(s.cursor)
-	if a, ok := s.nextUnprotected(Addr(row+1, 1) - 1); ok {
+	row, _ := s.RowCol(s.cursor)
+	if a, ok := s.nextUnprotected(s.Addr(row+1, 1) - 1); ok {
 		s.cursor = a
 	}
 }
@@ -182,20 +182,20 @@ func (s *Screen) EndOfField() {
 	start, n := s.fieldBounds(fa)
 	pos := start
 	for i := 0; i < n; i++ {
-		if ch := s.buf[wrap(start+i)].ch; ch != 0 && ch != ' ' {
-			pos = wrap(start + i + 1)
+		if ch := s.buf[s.wrap(start+i)].ch; ch != 0 && ch != ' ' {
+			pos = s.wrap(start + i + 1)
 		}
 	}
-	if pos == wrap(start+n) {
-		pos = wrap(start + n - 1)
+	if pos == s.wrap(start+n) {
+		pos = s.wrap(start + n - 1)
 	}
 	s.cursor = pos
 }
 
 // Move shifts the cursor by drow/dcol with wrap-around, like the arrow keys.
 func (s *Screen) Move(drow, dcol int) {
-	s.cursor = wrap(s.cursor + drow*Cols + dcol)
+	s.cursor = s.wrap(s.cursor + drow*s.cols + dcol)
 }
 
 // MoveTo puts the cursor at an absolute buffer address (mouse click).
-func (s *Screen) MoveTo(addr int) { s.cursor = wrap(addr) }
+func (s *Screen) MoveTo(addr int) { s.cursor = s.wrap(addr) }

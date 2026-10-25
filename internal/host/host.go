@@ -51,13 +51,27 @@ type Session struct {
 	user    string
 	prog    Program
 	expired bool
+
+	rows, cols int // size of the terminal's presentation space
 }
 
 func NewSession(cfg *Config, lu string) *Session {
-	return &Session{cfg: cfg, lu: lu, prog: &logon{}}
+	return &Session{cfg: cfg, lu: lu, prog: &logon{}, rows: t3.MinRows, cols: t3.MinCols}
 }
 
 func (s *Session) Start() *t3.Screen { return s.prog.Render(s) }
+
+// Redraw renders the current program again at the terminal's new size.
+func (s *Session) Redraw(rows, cols int) *t3.Screen {
+	s.rows, s.cols = max(rows, t3.MinRows), max(cols, t3.MinCols)
+	return s.prog.Render(s)
+}
+
+// newScreen returns a blank screen the size of the terminal. Panels are
+// laid out for 24x80 and spread into any extra room: the message and PF
+// key lines stay on the last two rows, the right-hand heading fields stay
+// at the right edge, and lists show as many rows as fit.
+func (s *Session) newScreen() *t3.Screen { return t3.NewScreenSize(s.rows, s.cols) }
 
 func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
 	var next Program
@@ -102,19 +116,23 @@ func (s *Session) fail(err error) string {
 
 // Screen layout helpers shared by the application panels.
 
-func center(text string) int { return (t3.Cols-len(text))/2 + 1 }
+func center(scr *t3.Screen, text string) int { return (scr.Cols()-len(text))/2 + 1 }
+
+// right returns the column that is col on a 24x80 screen, measured from
+// the right edge, so that right-hand fields follow the edge of a wider one.
+func right(scr *t3.Screen, col int) int { return col + scr.Cols() - t3.MinCols }
 
 // header draws the standard two-line panel heading.
 func header(scr *t3.Screen, s *Session, mapID, title string) {
 	now := time.Now()
 	scr.Text(1, 2, mapID, t3.WithColor(t3.Blue))
-	scr.Text(1, center(title), title, t3.WithColor(t3.White), t3.Bright)
-	scr.Text(1, 70, now.Format("01/02/06"), t3.WithColor(t3.Blue))
+	scr.Text(1, center(scr, title), title, t3.WithColor(t3.White), t3.Bright)
+	scr.Text(1, right(scr, 70), now.Format("01/02/06"), t3.WithColor(t3.Blue))
 	scr.Text(2, 2, s.cfg.SystemName+" CUSTOMER INFORMATION SYSTEM", t3.WithColor(t3.Blue))
-	scr.Text(2, 70, now.Format("15:04:05"), t3.WithColor(t3.Blue))
+	scr.Text(2, right(scr, 70), now.Format("15:04:05"), t3.WithColor(t3.Blue))
 }
 
-// message draws the row-23 message line. The severity is taken from the
+// message draws the message line, the second to last row. The severity is taken from the
 // last letter of the message ID, IBM style: E=error, W=warning, I=info.
 func message(scr *t3.Screen, msg string) {
 	if msg == "" {
@@ -128,15 +146,15 @@ func message(scr *t3.Screen, msg string) {
 	case 'W':
 		color = t3.Yellow
 	}
-	if len(msg) > 78 {
-		msg = msg[:78]
+	if n := scr.Cols() - 2; len(msg) > n {
+		msg = msg[:n]
 	}
-	scr.Text(23, 2, msg, t3.WithColor(color), t3.Bright)
+	scr.Text(scr.Rows()-1, 2, msg, t3.WithColor(color), t3.Bright)
 }
 
-// keys draws the row-24 PF key legend.
+// keys draws the PF key legend on the last row.
 func keys(scr *t3.Screen, legend string) {
-	scr.Text(24, 2, legend, t3.WithColor(t3.Turquoise))
+	scr.Text(scr.Rows(), 2, legend, t3.WithColor(t3.Turquoise))
 }
 
 func label(scr *t3.Screen, row, col int, text string) {

@@ -24,7 +24,7 @@ var helpRows = [][2]string{
 }
 
 func (h *help) Render(s *Session) *t3.Screen {
-	scr := t3.NewScreen()
+	scr := s.newScreen()
 	header(scr, s, "CUSH00", "TUTORIAL - USING THIS TERMINAL")
 
 	scr.Text(4, 4, "This is a block-mode terminal. You fill in fields locally, then an AID", t3.WithColor(t3.Green))
@@ -34,11 +34,11 @@ func (h *help) Render(s *Session) *t3.Screen {
 		scr.Text(7+i, 4, r[0], t3.WithColor(t3.White), t3.Bright)
 		scr.Text(7+i, 22, r[1], t3.WithColor(t3.Turquoise))
 	}
-	scr.Text(22, 4, "Status line: X () host busy   X -f protected   X NUM numeric only   X > full",
+	scr.Text(scr.Rows()-2, 4, "Status line: X () host busy   X -f protected   X NUM numeric only   X > full",
 		t3.WithColor(t3.Blue))
 
 	keys(scr, "PF3=RETURN")
-	scr.SetCursor(24, 2)
+	scr.SetCursor(scr.Rows(), 2)
 	return scr
 }
 

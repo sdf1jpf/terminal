@@ -212,8 +212,8 @@ curl -s -H "cf-access-token: $(cloudflared access token -app=$API)" $API/v1/cust
 
 ## What makes it feel like a 3270
 
-The terminal is block mode, not a line-by-line TUI. The screen is a 24x80
-buffer of fields, and each field starts with an attribute byte that takes up a
+The terminal is block mode, not a line-by-line TUI. The screen is a buffer
+of fields, and each field starts with an attribute byte that takes up a
 screen position, just as on real hardware. Fields can be protected, numeric,
 non-display (for passwords), intensified, and use any of the 7 extended
 colors. When a field fills up, the cursor skips to the next one, and input is
@@ -221,6 +221,15 @@ folded to upper case. The keyboard locks with `X -f` (you typed into a
 protected position), `X NUM` (a letter in a numeric field) or `X >` (insert
 mode ran out of room), and Reset clears the lock. You also get insert mode,
 Erase EOF, Erase Input, and the cursor's row/col in the status line.
+
+The screen fills your terminal window and follows it as you resize, the way
+emulators like QWS3270 do. The smallest size is a 3278 Model 2 (24x80, plus
+two lines for the status area); a bigger window gets a bigger presentation
+space. Panels keep their 24x80 layout and spread into the extra room: the
+message and PF key lines stay at the bottom, the date and time stay at the
+right edge, and the browse list and the credit report show as many rows as
+fit. Anything you have typed but not yet sent survives a resize. If the window
+changes while the host is busy, the screen is redrawn when the reply arrives.
 
 ## Keyboard
 

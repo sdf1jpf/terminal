@@ -23,7 +23,7 @@ var menuOptions = []struct{ key, name, desc string }{
 }
 
 func (m *menu) Render(s *Session) *t3.Screen {
-	scr := t3.NewScreen()
+	scr := s.newScreen()
 	header(scr, s, "CUSM00", "PRIMARY OPTION MENU")
 
 	label(scr, 4, 2, "OPTION ===>")
@@ -44,8 +44,8 @@ func (m *menu) Render(s *Session) *t3.Screen {
 		{"HOST", truncate(strings.ToUpper(s.api().Host()), 14)},
 	}
 	for i, kv := range info {
-		label(scr, 6+i, 56, kv[0])
-		scr.Text(6+i, 65, "- "+kv[1], t3.WithColor(t3.White))
+		label(scr, 6+i, right(scr, 56), kv[0])
+		scr.Text(6+i, right(scr, 65), "- "+kv[1], t3.WithColor(t3.White))
 	}
 
 	scr.Text(14, 4, "Enter an option number, or a command such as 2 000105 to jump", t3.WithColor(t3.Blue))

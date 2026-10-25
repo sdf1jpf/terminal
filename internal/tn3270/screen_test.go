@@ -7,8 +7,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func form() *Screen {
-	s := NewScreen()
+func form() *Screen { return formSize(MinRows, MinCols) }
+
+func formSize(rows, cols int) *Screen {
+	s := NewScreenSize(rows, cols)
 	s.Text(2, 2, "NAME ===>")
 	s.Input(2, 12, 5, "name", "")
 	s.Text(3, 2, "ZIP  ===>")
@@ -93,7 +95,7 @@ func TestTabbing(t *testing.T) {
 	}
 	s.Move(0, 2)
 	s.BackTab()
-	if r, c := RowCol(s.Cursor()); r != 3 || c != 12 {
+	if r, c := s.RowCol(s.Cursor()); r != 3 || c != 12 {
 		t.Fatalf("backtab inside a field should go to its start, got %d,%d", r, c)
 	}
 }
@@ -107,16 +109,17 @@ func TestInitialValuesAndHidden(t *testing.T) {
 	if !s.CursorTo("pw") {
 		t.Fatal("CursorTo failed")
 	}
-	if r, c := RowCol(s.Cursor()); r != 5 || c != 10 {
+	if r, c := s.RowCol(s.Cursor()); r != 5 || c != 10 {
 		t.Fatalf("cursor at %d,%d", r, c)
 	}
 }
 
 type echoHost struct{}
 
-func (echoHost) Start() *Screen { return form() }
+func (echoHost) Start() *Screen                { return form() }
+func (echoHost) Redraw(rows, cols int) *Screen { return formSize(rows, cols) }
 func (echoHost) Submit(aid AID, s *Screen) *Screen {
-	n := NewScreen()
+	n := NewScreenSize(s.Rows(), s.Cols())
 	n.Text(1, 2, aid.String()+" "+s.Fields()["name"])
 	return n
 }
@@ -134,5 +137,49 @@ func TestTerminalRoundTrip(t *testing.T) {
 	term.Update(cmd())
 	if term.lock != LockNone || !strings.Contains(term.View(), "PF5 HI") {
 		t.Fatalf("host reply not displayed:\n%s", term.View())
+	}
+}
+
+func TestResizeKeepsInput(t *testing.T) {
+	term := New(echoHost{}, Options{})
+	term.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	term.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")})
+
+	term.Update(tea.WindowSizeMsg{Width: 132, Height: 45})
+	if r, c := term.scr.Rows(), term.scr.Cols(); r != 43 || c != 132 {
+		t.Fatalf("screen is %dx%d after resize, want 43x132", r, c)
+	}
+	if got := term.scr.Fields()["name"]; got != "HI" || !term.scr.Modified()["name"] {
+		t.Fatalf("input lost on resize: %q modified=%v", got, term.scr.Modified())
+	}
+	if r, c := term.scr.RowCol(term.scr.Cursor()); r != 2 || c != 14 {
+		t.Fatalf("cursor at %d,%d after resize, want 2,14", r, c)
+	}
+	lines := strings.Split(term.View(), "\n")
+	if len(lines) != 45 {
+		t.Fatalf("view has %d lines, want 45", len(lines))
+	}
+	if !strings.Contains(lines[44], "002/014") {
+		t.Fatalf("OIA does not show the cursor: %q", lines[44])
+	}
+
+	// Too small for a Model 2: keep the last layout and say so.
+	term.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	if term.scr.Cols() != 132 || !strings.Contains(term.View(), "too small") {
+		t.Fatal("expected the too-small notice")
+	}
+}
+
+func TestResizeWaitsForHost(t *testing.T) {
+	term := New(echoHost{}, Options{})
+	term.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+	_, cmd := term.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	term.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if term.scr.Cols() != 80 {
+		t.Fatal("screen was redrawn while the host was busy")
+	}
+	term.Update(cmd())
+	if r, c := term.scr.Rows(), term.scr.Cols(); r != 28 || c != 100 {
+		t.Fatalf("screen is %dx%d after the reply, want 28x100", r, c)
 	}
 }
