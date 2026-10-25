@@ -87,10 +87,21 @@ jobs:
             exit 1
           fi
           auth=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
-          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "${auth[@]}" "$URL/v1/health"
-          echo
+          # Access answers a refused request with a 302 to its login page,
+          # which curl -f counts as success, so check status codes ourselves.
+          expect() {
+            want=$1; shift
+            code=$(curl -sS -o body.txt -w '%{http_code}' "$@")
+            cat body.txt; echo
+            if [ "$code" != "$want" ]; then
+              echo "::error::${@: -1} returned HTTP $code, expected $want"
+              [ "$code" = 302 ] && echo "::error::Cloudflare Access redirected to its login page: check the service token and that the Access app has a Service Auth policy including it"
+              exit 1
+            fi
+          }
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null "${auth[@]}" "$URL/v1/health"
+          expect 200 "${auth[@]}" "$URL/v1/health"
           # Without a token, Access must turn the request away.
-          code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/v1/customers")
-          if [ "$code" = 200 ]; then echo "::error::$URL/v1/customers answered without Cloudflare Access"; exit 1; fi
+          expect 302 "$URL/v1/customers"
           # With the service token, Access and the Worker's JWT check let it in.
-          curl -fsS "${auth[@]}" -X POST "$URL/v1/session"
+          expect 201 "${auth[@]}" -X POST "$URL/v1/session"
