@@ -1,73 +1,106 @@
-// Logon sessions. Users come from the CUSTAPI_USERS secret; sessions live
-// in D1 keyed by a SHA-256 of the bearer token.
+// Logon via Cloudflare Access. Access sits in front of the Worker, signs
+// people in with the team's identity provider, and forwards each allowed
+// request with a signed JWT in the Cf-Access-Jwt-Assertion header. The
+// Worker checks that JWT itself too, so a request that reaches it some other
+// way (a preview URL, a misconfigured policy) is still refused.
+//
+// https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/
 
 import { HttpError } from "./http";
 import type { Env } from "./index";
 
-const enc = new TextEncoder();
+export const ASSERTION_HEADER = "Cf-Access-Jwt-Assertion";
 
-async function sha256(s: string): Promise<ArrayBuffer> {
-	return crypto.subtle.digest("SHA-256", enc.encode(s));
+const CLOCK_SKEW_S = 60;
+const KEYS_TTL_MS = 3_600_000;
+
+interface Claims {
+	iss?: string;
+	aud?: string | string[];
+	exp?: number;
+	nbf?: number;
+	email?: string;
+	common_name?: string; // service tokens: the client ID
 }
 
-function hex(buf: ArrayBuffer | Uint8Array): string {
-	return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+// Signing keys per team domain, refetched hourly or when a new kid appears.
+const keyCache = new Map<string, { keys: Map<string, CryptoKey>; fetched: number }>();
 
-// parseUsers reads "USER:PASSWORD,USER2:PASSWORD2". Userids and passwords
-// are case-insensitive, as on the mainframe.
-export function parseUsers(spec: string | undefined): Map<string, string> {
-	const users = new Map<string, string>();
-	for (const pair of (spec ?? "").split(",")) {
-		const i = pair.indexOf(":");
-		if (i <= 0 || i === pair.length - 1) continue;
-		users.set(pair.slice(0, i).trim().toUpperCase(), pair.slice(i + 1).trim().toUpperCase());
+async function signingKey(team: string, kid: string): Promise<CryptoKey | undefined> {
+	let entry = keyCache.get(team);
+	if (!entry || !entry.keys.has(kid) || Date.now() - entry.fetched > KEYS_TTL_MS) {
+		const res = await fetch(`https://${team}/cdn-cgi/access/certs`);
+		if (!res.ok) throw new Error(`fetching Access certs: ${res.status}`);
+		const { keys } = await res.json<{ keys: (JsonWebKey & { kid: string })[] }>();
+		const imported = new Map<string, CryptoKey>();
+		for (const jwk of keys) {
+			imported.set(
+				jwk.kid,
+				await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]),
+			);
+		}
+		entry = { keys: imported, fetched: Date.now() };
+		keyCache.set(team, entry);
 	}
-	return users;
+	return entry.keys.get(kid);
 }
 
-export async function checkPassword(env: Env, userid: string, password: string): Promise<boolean> {
-	const users = parseUsers(env.CUSTAPI_USERS);
-	if (users.size === 0) {
-		throw new HttpError(500, "internal", "no users configured: set the CUSTAPI_USERS secret");
+function b64url(s: string): Uint8Array {
+	const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+	return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+function decode<T>(part: string): T {
+	return JSON.parse(new TextDecoder().decode(b64url(part)));
+}
+
+// verify returns the JWT's claims if it is signed by the team's Access keys,
+// meant for this application, and current; otherwise undefined.
+async function verify(env: Env, jwt: string): Promise<Claims | undefined> {
+	const team = env.ACCESS_TEAM_DOMAIN!;
+	const parts = jwt.split(".");
+	if (parts.length !== 3) return undefined;
+	let header: { alg?: string; kid?: string };
+	let claims: Claims;
+	try {
+		header = decode(parts[0]);
+		claims = decode(parts[1]);
+	} catch {
+		return undefined;
 	}
-	const want = users.get(userid);
-	// Compare digests so the comparison is constant-time and length-independent,
-	// and still do it for unknown users so timing does not reveal valid ids.
-	const [a, b] = await Promise.all([sha256(want ?? crypto.randomUUID()), sha256(password.toUpperCase())]);
-	return crypto.subtle.timingSafeEqual(a, b) && want !== undefined;
+	if (header.alg !== "RS256" || !header.kid) return undefined;
+	const key = await signingKey(team, header.kid);
+	if (!key) return undefined;
+	const signed = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+	if (!(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64url(parts[2]), signed))) return undefined;
+
+	const now = Date.now() / 1000;
+	const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+	if (claims.iss !== `https://${team}`) return undefined;
+	if (!aud.includes(env.ACCESS_AUD)) return undefined;
+	if (typeof claims.exp !== "number" || claims.exp < now - CLOCK_SKEW_S) return undefined;
+	if (typeof claims.nbf === "number" && claims.nbf > now + CLOCK_SKEW_S) return undefined;
+	return claims;
 }
 
-export async function createSession(env: Env, userid: string): Promise<{ token: string; expiresAt: Date }> {
-	const token = hex(crypto.getRandomValues(new Uint8Array(32)));
-	const hours = Number(env.SESSION_TTL_HOURS) || 8;
-	const now = Date.now();
-	const expiresAt = new Date(now + hours * 3_600_000);
-	await env.DB.batch([
-		env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now),
-		env.DB.prepare("INSERT INTO sessions (token_hash, userid, expires_at) VALUES (?, ?, ?)")
-			.bind(hex(await sha256(token)), userid, expiresAt.getTime()),
-	]);
-	return { token, expiresAt };
-}
-
-function bearer(req: Request): string {
-	const h = req.headers.get("Authorization") ?? "";
-	return h.startsWith("Bearer ") ? h.slice(7) : "";
+// userIdFor turns an Access identity into a mainframe-style userid: the
+// email's local part, upper case, letters and digits only, at most eight
+// characters. Service tokens (used by CI) log on as SERVICE.
+export function userIdFor(claims: Claims): string {
+	if (!claims.email) return "SERVICE";
+	const local = claims.email.split("@")[0].toUpperCase().replace(/[^A-Z0-9]/g, "");
+	return local.slice(0, 8) || "USER";
 }
 
 // authenticate returns the logged-on userid or throws 401.
 export async function authenticate(env: Env, req: Request): Promise<string> {
-	const token = bearer(req);
-	if (token) {
-		const row = await env.DB.prepare("SELECT userid FROM sessions WHERE token_hash = ? AND expires_at > ?")
-			.bind(hex(await sha256(token)), Date.now())
-			.first<{ userid: string }>();
-		if (row) return row.userid;
+	if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
+		// Local development only: `wrangler dev` with DEV_USER in .dev.vars.
+		if (env.DEV_USER) return env.DEV_USER.toUpperCase();
+		throw new HttpError(500, "internal", "Cloudflare Access is not configured: set ACCESS_TEAM_DOMAIN and ACCESS_AUD");
 	}
-	throw new HttpError(401, "unauthorized", "not logged on or session expired");
-}
-
-export async function endSession(env: Env, req: Request): Promise<void> {
-	await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(hex(await sha256(bearer(req)))).run();
+	const jwt = req.headers.get(ASSERTION_HEADER);
+	const claims = jwt ? await verify(env, jwt) : undefined;
+	if (!claims) throw new HttpError(401, "unauthorized", "not signed in through Cloudflare Access");
+	return userIdFor(claims);
 }

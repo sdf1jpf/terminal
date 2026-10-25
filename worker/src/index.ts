@@ -2,22 +2,24 @@
 // terminal's client for it is internal/api/client.go.
 //
 //	GET    /v1/health
-//	POST   /v1/session              {"userid","password"} -> {"token",...}
-//	DELETE /v1/session              log off
+//	POST   /v1/session              logon: -> {"userid"}
 //	GET    /v1/customers?prefix=X   list, ordered by name
 //	POST   /v1/customers            create
 //	GET    /v1/customers/{id}
 //	PUT    /v1/customers/{id}       update; "version" must match
 //	DELETE /v1/customers/{id}
+//
+// Everything except health is behind Cloudflare Access; see auth.ts.
 
-import { authenticate, checkPassword, createSession, endSession } from "./auth";
+import { authenticate } from "./auth";
 import { customerFields, parseEditable, type Customer } from "./customer";
-import { errorResponse, HttpError, json, noContent, readJSON, str } from "./http";
+import { errorResponse, HttpError, json, noContent, readJSON } from "./http";
 
 export interface Env {
 	DB: D1Database;
-	CUSTAPI_USERS?: string; // secret: "USER:PASSWORD,..."
-	SESSION_TTL_HOURS?: string;
+	ACCESS_TEAM_DOMAIN?: string; // e.g. "example.cloudflareaccess.com"
+	ACCESS_AUD?: string; // the Access application's audience tag
+	DEV_USER?: string; // wrangler dev only, when Access is not configured
 }
 
 export default {
@@ -40,12 +42,7 @@ async function route(req: Request, env: Env): Promise<Response> {
 	if (path === "/v1/health") {
 		if (m === "GET") return json(200, { status: "ok" });
 	} else if (path === "/v1/session") {
-		if (m === "POST") return logon(req, env);
-		if (m === "DELETE") {
-			await authenticate(env, req);
-			await endSession(env, req);
-			return noContent();
-		}
+		if (m === "POST") return json(201, { userid: await authenticate(env, req) });
 	} else if (path === "/v1/customers") {
 		if (m === "GET") {
 			await authenticate(env, req);
@@ -67,16 +64,6 @@ async function route(req: Request, env: Env): Promise<Response> {
 		throw new HttpError(404, "not_found", "no such endpoint");
 	}
 	throw new HttpError(405, "method_not_allowed", `${m} is not allowed on ${path}`);
-}
-
-async function logon(req: Request, env: Env): Promise<Response> {
-	const body = await readJSON(req, ["userid", "password"]);
-	const userid = str(body, "userid").trim().toUpperCase();
-	if (!(await checkPassword(env, userid, str(body, "password")))) {
-		throw new HttpError(401, "bad_logon", "userid or password not authorized");
-	}
-	const { token, expiresAt } = await createSession(env, userid);
-	return json(201, { token, userid, expires_at: expiresAt.toISOString() });
 }
 
 async function list(env: Env, prefix: string): Promise<Response> {

@@ -1,2 +1,3 @@
-# Copy to .dev.vars for `npm run dev`. Comma-separated USER:PASSWORD pairs.
-CUSTAPI_USERS=IBMUSER:SYS1,GUEST:GUEST
+# Copy to .dev.vars for `npm run dev`. With Cloudflare Access not configured
+# locally, every request is treated as this user.
+DEV_USER=IBMUSER

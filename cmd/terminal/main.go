@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,7 +30,7 @@ func main() {
 
 	sess := host.NewSession(&host.Config{
 		SystemName: *sysName,
-		Backend:    api.NewClient(*apiURL),
+		Backend:    api.NewClient(*apiURL, access(*apiURL)),
 	}, *lu)
 	term := tn3270.New(sess, tn3270.Options{LUName: *lu, Latency: *latency})
 	p := tea.NewProgram(term, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -37,4 +38,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// access picks how to get through Cloudflare Access: a service token from
+// the environment, nothing for a local `wrangler dev`, or else a browser
+// sign-in with cloudflared.
+func access(apiURL string) api.Access {
+	if id, secret := os.Getenv("CF_ACCESS_CLIENT_ID"), os.Getenv("CF_ACCESS_CLIENT_SECRET"); id != "" && secret != "" {
+		return api.ServiceToken{ID: id, Secret: secret}
+	}
+	if u, err := url.Parse(apiURL); err == nil {
+		switch u.Hostname() {
+		case "localhost", "127.0.0.1", "::1":
+			return nil
+		}
+	}
+	return api.Cloudflared{App: apiURL}
 }
