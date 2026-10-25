@@ -16,7 +16,7 @@
   // Cloudflare Access guards every request; the Worker verifies its JWT.
   // Both values come from the Access application (see README).
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    "ACCESS_TEAM_DOMAIN": "parkerfrank.cloudflareaccess.com",
+    "ACCESS_AUD": "c457acd9b4bf7e5a727c091d870ae26ae95747d77cd47c44a55a21ba54997073"
   }
 }
