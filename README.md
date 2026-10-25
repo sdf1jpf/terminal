@@ -315,6 +315,30 @@ products show in pink. `S` shows a product and `U` updates it, and PF5 adds
 one (CUSP02). Products are never deleted, only discontinued (status `D`).
 `seed.sql` loads 15 demo products.
 
+## Invoices
+
+Menu option 9 (`9 000105`), or the selection code `I` on the browse list,
+opens the **INVOICE LIST** (CUSI01) for a customer, newest first; leave the
+customer number blank to list every invoice. PF5 opens a new invoice for an
+active customer, and `S` shows one on the **INVOICE** screen (CUSI02).
+
+An invoice goes OPEN, then BILLED, then PAID:
+
+- **Open:** type a SKU and quantity on the add line and press Enter. The line
+  is priced from the product file and its quantity comes out of stock at once.
+  Overtype a line's quantity to change it, or type `D` beside it to remove
+  it; stock moves by the difference. PF9 twice cancels the invoice and
+  returns all its stock.
+- **PF10 bills it:** the total is posted to the customer's account as an
+  invoice (`I`) transaction, and the lines can no longer be changed.
+- **PF11 marks it paid:** a payment (`P`) for the total is posted.
+
+The same steps are in the API under `/v1/invoices` (see the route list in
+`worker/src/index.ts`).
+
+Each step runs as one D1 transaction, so stock, the invoice and the
+customer's balance always move together.
+
 ## Account activity and change history
 
 From the menu, option 5 (`5 000105`) opens **ACCOUNT ACTIVITY**: type `I` or

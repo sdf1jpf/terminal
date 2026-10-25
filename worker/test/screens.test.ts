@@ -126,8 +126,8 @@ describe("screen protocol", () => {
 
 	it("reports an invalid option and an inactive key", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "9").send("ENTER");
-		expect(t.message).toBe("ISPD117E INVALID OPTION 9");
+		await t.fill("option", "99").send("ENTER");
+		expect(t.message).toBe("ISPD117E INVALID OPTION 99");
 		await t.send("PF6");
 		expect(t.message).toBe("CUS0000W PF6 IS NOT ACTIVE ON THIS SCREEN");
 	});
@@ -398,6 +398,87 @@ describe("product screens", () => {
 		await t.fill("sel:GSK-100", "u").send("ENTER");
 		expect(t.scr.map).toBe("CUSP02");
 		expect(t.row(1)).toContain("PRODUCT UPDATE");
+	});
+});
+
+describe("invoice screens", () => {
+	it("opens an invoice from the browse list, edits its lines, bills it and marks it paid", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "1").send("ENTER");
+		await t.fill("sel:000110", "i").send("ENTER");
+		expect(t.scr.map).toBe("CUSI01");
+		expect(t.row(4)).toContain("JUNIPER SOFTWARE LABS");
+		expect(t.row(9)).toContain("NO INVOICES FOR THIS CUSTOMER");
+
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.message).toMatch(/^CUS0502I INVOICE INV\d{5} OPENED FOR 000110$/);
+		const id = t.row(4).match(/INV\d{5}/)![0];
+		expect(t.row(4)).toContain("OPEN");
+		expect(t.scr.cursor).toEqual({ field: "sku" });
+
+		await t.fill("sku", "vlv-0100", "qty", "2").send("ENTER");
+		expect(t.message).toBe("CUS0511E ONLY 0 OF VLV-0100 ON HAND");
+		expect(t.scr.cursor).toEqual({ field: "qty" });
+		expect(t.field("sku")?.value).toBe("VLV-0100");
+
+		await t.fill("sku", "chn-0080", "qty", "").send("ENTER");
+		expect(t.message).toMatch(/^CUS0513I LINE 1 ADDED: 1 CHN-0080 AT \$/);
+		await t.fill("sku", "blt-0516", "qty", "10", "po", "po 99").send("ENTER");
+		expect(t.message).toMatch(/^CUS0513I LINE 2 ADDED: 10 BLT-0516/);
+		expect(t.row(13)).toMatch(/2 BLT-0516/);
+		expect(t.field("po")?.value).toBe("PO 99");
+
+		await t.fill("qty:2", "20", "sel:1", "d").send("ENTER");
+		expect(t.message).toBe(`CUS0514I INVOICE ${id} UPDATED`);
+		expect(t.row(12)).toMatch(/2 BLT-0516 .* 20 /);
+		expect(t.field("qty:1")).toBeUndefined();
+
+		t.cursorField = "qty:2";
+		await t.send("PF1");
+		expect(t.row(1)).toContain("QUANTITY");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI02");
+
+		await t.send("PF10");
+		expect(t.message).toMatch(new RegExp(`^CUS0507I INVOICE ${id} BILLED, \\$[\\d,]+ POSTED TO 000110$`));
+		expect(t.row(4)).toContain("BILLED");
+		expect(t.field("sku")).toBeUndefined();
+		expect(t.field("qty:2")).toBeUndefined();
+		await t.send("PF9");
+		expect(t.message).toMatch(/^CUS0000W/);
+		await t.send("PF11");
+		expect(t.message).toMatch(/^CUS0508I/);
+		expect(t.row(4)).toContain("PAID");
+
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI01");
+		expect(t.row(9)).toMatch(new RegExp(`${id} 000110 +PO 99 +PAID`));
+	});
+
+	it("cancels an open invoice with PF9 twice", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "9 116").send("ENTER");
+		expect(t.scr.map).toBe("CUSI01");
+		await t.send("PF5");
+		const id = t.row(4).match(/INV\d{5}/)![0];
+		await t.fill("sku", "saf-glv", "qty", "3").send("ENTER");
+		await t.send("PF9");
+		expect(t.message).toMatch(/^CUS0505W/);
+		await t.send("PF9");
+		expect(t.scr.map).toBe("CUSI01");
+		expect(t.message).toBe(`CUS0506I INVOICE ${id} CANCELLED, STOCK RETURNED`);
+	});
+
+	it("will not open an invoice for a customer on hold", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "9").send("ENTER");
+		await t.send("PF5");
+		expect(t.message).toMatch(/^CUS0501E/);
+		await t.fill("cust", "103").send("ENTER");
+		expect(t.row(4)).toContain("CONSOLIDATED FREIGHT");
+		await t.send("PF5");
+		expect(t.message).toBe("CUS0503E CUSTOMER IS ON HOLD - NO NEW INVOICES");
 	});
 });
 
