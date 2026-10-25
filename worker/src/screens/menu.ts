@@ -18,7 +18,7 @@ const options = [
 	["9", "INVOICES", "Build, bill and collect invoices"],
 	["E", "EDI", "EDI mailbox: orders and payments from customers' systems"],
 	["O", "OPERATOR", "Operator console: SYSLOG and the job schedule"],
-	["H", "HELD", "Held output: print, reprint or purge job output and reports"],
+	["H", "HELD", "Held output, reprint"],
 	["T", "TUTORIAL", "Keyboard and PF key guide"],
 	["X", "EXIT", "Log off"],
 ];
