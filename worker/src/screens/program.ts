@@ -68,9 +68,29 @@ export interface ProductState {
 	msg?: string;
 }
 
+export interface InvoicesState {
+	p: "invoices";
+	back: State;
+	cust?: string; // only this customer's invoices; "" for all
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface InvoiceState {
+	p: "invoice";
+	back: State;
+	id: string;
+	top?: number;
+	vals?: Record<string, string>; // the add line fields, kept across a failed add
+	confirm?: boolean; // PF9 was pressed once: press it again to cancel the invoice
+	errField?: string;
+	msg?: string;
+}
+
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | HistoryState
-	| JobsState | JobLogState | ProductsState | ProductState;
+	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -107,7 +127,7 @@ export function isCode(err: unknown, code: string): err is HttpError {
 
 // messenger panels can show a message passed back from a child screen.
 export function setMsg(s: State, msg: string): boolean {
-	if (s.p === "browse" || s.p === "menu") {
+	if (s.p === "browse" || s.p === "menu" || s.p === "invoices") {
 		s.msg = msg;
 		return true;
 	}

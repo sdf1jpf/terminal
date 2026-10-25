@@ -10,6 +10,7 @@ import { browse } from "./browse";
 import { detail } from "./detail";
 import { fieldHelp } from "./fieldhelp";
 import { help } from "./help";
+import { invoice, invoices } from "./invoices";
 import { joblog, jobs } from "./jobs";
 import { product, products } from "./products";
 import { menu } from "./menu";
@@ -22,7 +23,7 @@ export const requestKeys = [
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
-	menu, browse, detail, report, help, activity, history, jobs, joblog, products, product,
+	menu, browse, detail, report, help, activity, history, jobs, joblog, products, product, invoices, invoice,
 };
 
 // The commarea's own version. Bump it when a state shape changes in a way

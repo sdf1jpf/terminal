@@ -1,5 +1,6 @@
 import { newActivity, newHistory } from "./activity";
 import { newAdd, newInquiry } from "./detail";
+import { newInvoices } from "./invoices";
 import { invalidKey, header, keys, label, message, newScreen, right, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program } from "./program";
 
@@ -14,6 +15,7 @@ const options = [
 	["6", "HISTORY", "Who changed a customer, and when"],
 	["7", "JOBS", "Submit batch jobs and view their output"],
 	["8", "PRODUCTS", "Product file and stock on hand"],
+	["9", "INVOICES", "Build, bill and collect invoices"],
 	["T", "TUTORIAL", "Keyboard and PF key guide"],
 	["X", "EXIT", "Log off"],
 ];
@@ -104,6 +106,9 @@ export const menu: Program<MenuState> = {
 			case "8":
 			case "PRODUCTS":
 				return { p: "products", filter: arg };
+			case "9":
+			case "INVOICES":
+				return newInvoices(m, arg);
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };

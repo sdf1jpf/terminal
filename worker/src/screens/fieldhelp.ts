@@ -1,7 +1,8 @@
 // Field help: PF1 with the cursor in an input field explains that field,
 // as CICS and ISPF applications do. Help is looked up by panel and field
 // name first ("browse.status"), then by field name alone. Selection fields
-// ("sel:000101", "sel0") share the "sel" entry for their panel.
+// ("sel:000101", "sel0") share the "sel" entry for their panel, and invoice
+// line quantities ("qty:3") share the "qty" entry.
 
 import type { State } from "./program";
 
@@ -51,7 +52,7 @@ const help: Record<string, FieldHelp> = {
 			"Type a code beside a customer and press Enter:",
 			"  S  show the customer          U  update it",
 			"  D  delete it                  A  account activity",
-			"  H  change history",
+			"  H  change history             I  invoices",
 		],
 	},
 	id: {
@@ -169,6 +170,41 @@ const help: Record<string, FieldHelp> = {
 		title: "STATUS",
 		lines: ["  A  active", "  D  discontinued: kept on file, but cannot be sold"],
 	},
+	"invoices.cust": {
+		title: "CUSTOMER NUMBER",
+		lines: [
+			"Lists only this customer's invoices. Leave it blank to list them all.",
+			"PF5 opens a new invoice for the customer in this field.",
+		],
+	},
+	"invoices.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type S beside an invoice and press Enter to show it."],
+	},
+	"invoice.sku": {
+		title: "ADD LINE: SKU",
+		lines: [
+			"The SKU of a product to add to the invoice, such as BRG-6204. The line",
+			"is priced at the product's unit price and its quantity comes out of",
+			"stock. Discontinued products cannot be sold.",
+		],
+	},
+	"invoice.qty": {
+		title: "QUANTITY",
+		lines: [
+			"How many units, from 1 to 99999. On the add line it may be left blank",
+			"for one unit. Overtype a line's quantity to change it: stock moves by",
+			"the difference. Use D in the selection column to remove a line.",
+		],
+	},
+	"invoice.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type D beside a line and press Enter to remove it and return its stock."],
+	},
+	po: {
+		title: "PO NUMBER",
+		lines: ["The customer's purchase order number, up to 22 characters. Optional."],
+	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],
@@ -178,6 +214,6 @@ const help: Record<string, FieldHelp> = {
 // fieldHelp returns the help for the field the cursor was in, if any.
 export function fieldHelp(s: State, field: string): FieldHelp | undefined {
 	if (!field) return undefined;
-	const name = field.startsWith("sel") ? "sel" : field;
+	const name = field.startsWith("sel") ? "sel" : field.split(":")[0];
 	return help[`${s.p}.${name}`] ?? help[name];
 }
