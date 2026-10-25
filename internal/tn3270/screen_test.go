@@ -142,6 +142,27 @@ func TestTerminalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEscDigitIsPFKey(t *testing.T) {
+	term := New(echoHost{}, Options{})
+	update(term, tea.KeyMsg{Type: tea.KeyEsc})
+	if !strings.Contains(term.View(), "PF?") {
+		t.Fatal("OIA does not show that Esc is waiting for a PF digit")
+	}
+	update(term, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("6")})
+	if !strings.Contains(term.View(), "PF6") {
+		t.Fatalf("Esc 6 did not send PF6:\n%s", term.View())
+	}
+	update(term, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("0"), Alt: true})
+	if !strings.Contains(term.View(), "PF10") {
+		t.Fatalf("Alt+0 did not send PF10:\n%s", term.View())
+	}
+	// Without Esc first, a digit is typed as usual.
+	update(term, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("6")})
+	if term.lock == LockWait || strings.Contains(term.View(), "PF?") {
+		t.Fatal("a plain digit was taken as a PF key")
+	}
+}
+
 // update applies msg and runs the commands it returns, as Bubble Tea would.
 func update(term *Terminal, msg tea.Msg) {
 	for _, cmd := term.Update(msg); cmd != nil; {

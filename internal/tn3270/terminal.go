@@ -32,6 +32,7 @@ type Terminal struct {
 	lock   Lock
 	insert bool
 	print  string // print indicator in the status line, until the next key
+	esc    bool   // Esc was pressed: a digit next is a PF key
 	width  int
 	height int
 	styles map[styleKey]lipgloss.Style
@@ -111,6 +112,17 @@ var pfKeys = map[string]int{
 	"pgup": 7, "pgdown": 8,
 }
 
+// escPF maps the key after Esc to a PF key, for keyboards (and macOS
+// settings) that keep the function keys from the terminal: Esc then 6 is
+// PF6, 0 is PF10, - and = are PF11 and PF12. Typed quickly the pair can
+// arrive as one Alt key, which works too except Alt+1-3, the PA keys.
+var escPF = map[string]int{
+	"1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6,
+	"7": 7, "8": 8, "9": 9, "0": 10, "-": 11, "=": 12,
+	"alt+4": 4, "alt+5": 5, "alt+6": 6, "alt+7": 7, "alt+8": 8,
+	"alt+9": 9, "alt+0": 10, "alt+-": 11, "alt+=": 12,
+}
+
 func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := k.String()
 	if s == "ctrl+c" {
@@ -120,6 +132,8 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return t, nil
 	}
 	t.print = ""
+	esc := t.esc
+	t.esc = false
 	if s == "ctrl+p" {
 		// Like a 3270 local copy: the screen goes to the printer, here a
 		// text file, without involving the host.
@@ -133,6 +147,10 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if s == "esc" || s == "ctrl+r" {
 		t.lock = LockNone
 		t.insert = false
+		t.esc = s == "esc"
+		if t.esc {
+			t.print = "PF?"
+		}
 		return t, nil
 	}
 	if t.lock != LockNone {
@@ -140,6 +158,9 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if n, ok := pfKeys[s]; ok {
+		return t, t.send(PF(n))
+	}
+	if n, ok := escPF[s]; ok && (esc || strings.HasPrefix(s, "alt+")) {
 		return t, t.send(PF(n))
 	}
 	switch s {
