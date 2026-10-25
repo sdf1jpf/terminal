@@ -135,6 +135,9 @@ const help: Record<string, FieldHelp> = {
 			"  CUSREORD  reorder: purchase orders to vendors for low stock",
 			"  VENDSIM   EDI vendors: confirm (855) and ship (856) our orders",
 			"  CUSPICK   pick tickets for shipments waiting in the warehouse",
+			"  CUSTRIAL  journal the latest activity and print the trial balance",
+			"  CUSCLOSE  month-end close: journal, trial balance, close the period",
+			"  CUSDUNN   dunning letters for invoices more than 30 days old",
 			"",
 			"Press PF5 to refresh the list as the job runs.",
 		],
@@ -316,6 +319,21 @@ const help: Record<string, FieldHelp> = {
 			"ordered by EDI, sends its system an 856 ship notice. The invoice can",
 			"be billed once it has shipped: PF11 here, or PF10 on the invoice.",
 		],
+	},
+	"ledger.period": {
+		title: "PERIOD",
+		lines: [
+			"The accounting period to show, as YYYY-MM. Blank shows the open one.",
+			"Balances are as of the end of the period; IN PERIOD is its own",
+			"activity. Entries go to the open period when they are journaled:",
+			"PF10 journals the latest activity (CUSTRIAL) and PF5 twice runs the",
+			"month-end close (CUSCLOSE), which journals, prints the trial balance,",
+			"closes the period and opens the next.",
+		],
+	},
+	"ledger.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type S beside an account and press Enter to list its entries in the period."],
 	},
 	"vendors.sel": {
 		title: "SELECTION CODE",

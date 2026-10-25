@@ -445,6 +445,40 @@ PF6 on the list submits **CUSPICK**, which prints a pick ticket for every
 shipment still in picking. Releases and shipments show in the customer's
 event history. The API is under `/v1/shipments`.
 
+## Accounts receivable and the general ledger
+
+Menu option `A` opens the **GENERAL LEDGER** (CUSA01): the trial balance
+for the open period (or any period typed at `PERIOD`), each account's
+balance as of the period's end and its activity in the period, and a check
+that the receivables control account agrees with what customers owe. `S`
+beside an account lists its entries on **ACCOUNT LEDGER** (CUSA02).
+
+The ledger is fed in batch from the subledgers:
+
+| Source | Debit | Credit |
+| --- | --- | --- |
+| Invoice posted to a customer | 1200 Accounts receivable | 4000 Sales |
+| Payment posted | 1000 Cash | 1200 Accounts receivable |
+| Cost of a billed invoice (at product unit cost) | 5000 Cost of goods sold | 1300 Inventory |
+| Goods received on a purchase order | 1300 Inventory | 2000 Accounts payable |
+
+The first run also posts opening balances against 3000 Retained earnings
+for the customer balances and the stock that were on file before the
+ledger began. Each source row is journaled once.
+
+- **PF10** submits **CUSTRIAL**: journal the latest activity and print the
+  trial balance.
+- **PF5** (twice) submits **CUSCLOSE**, the month-end close: journal, print
+  the trial balance, close the period and open the next. Later activity
+  goes to the new period.
+- **PF6** submits **CUSDUNN**: a dunning letter to each customer with an
+  invoice billed more than 30 days ago (terms net 30). Each invoice gets a
+  reminder, a second notice once it is 30 days past due, and a final notice
+  after 60, which also puts the account on hold. Each level goes out once,
+  and the letters show in the customer's event history.
+
+The trial balance and entries are also at `/v1/ledger`.
+
 ## Batch jobs
 
 Batch work runs the way it would under JES. Submitting a job records it as
@@ -465,6 +499,9 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSREORD` | Reorder: purchase orders to vendors for every product at or below its reorder point, sent as 850s. RC 0004 if a low product has no vendor. |
 | `VENDSIM` | EDI vendor simulator: STEP010 vendors confirm sent POs with 855s, STEP020 they ship confirmed ones with 856s. |
 | `CUSPICK` | Pick tickets for every shipment waiting in the warehouse, lines in bin order. |
+| `CUSTRIAL` | Journal the latest activity into the open period and print the trial balance. RC 0004 if the AR control account and the customer accounts disagree. |
+| `CUSCLOSE` | Month-end close: STEP010 journal, STEP020 trial balance, STEP030 close the period and open the next. |
+| `CUSDUNN` | Dunning letters for invoices more than 30 days old; final notices put the account on hold. RC 0004 if any letters were printed. |
 
 In the terminal, menu option 7 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,

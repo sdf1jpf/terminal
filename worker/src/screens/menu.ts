@@ -4,6 +4,7 @@ import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
 import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
+import { newLedger } from "./ledger";
 import { invalidKey, header, keys, label, message, newScreen, right, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program } from "./program";
 
@@ -21,6 +22,7 @@ const options = [
 	["E", "EDI", "EDI mailbox"],
 	["P", "PURCHASING", "Purchase orders, vendors"],
 	["S", "SHIPPING", "Pick, pack and ship"],
+	["A", "ACCOUNTS", "Ledger, close, dunning"],
 	["O", "OPERATOR", "Console, SYSLOG, schedule"],
 	["H", "HELD", "Held output, reprint"],
 	["T", "TUTORIAL", "Keyboard and PF keys"],
@@ -138,6 +140,10 @@ export const menu: Program<MenuState> = {
 			case "S":
 			case "SHIPPING":
 				return newShipments(m, arg);
+			case "A":
+			case "ACCOUNTS":
+			case "LEDGER":
+				return newLedger(m, arg);
 			case "H":
 			case "HELD":
 			case "SPOOL":

@@ -5,6 +5,7 @@ import { partnerPO, processInterchange, receive } from "../src/edi";
 import { addLine, billInvoice, createInvoice, payInvoice } from "../src/invoices";
 import { accessJWT } from "./access";
 import { shipInvoice } from "./ship";
+import { journal } from "../src/ledger";
 
 const worker = (exports as unknown as { default: Fetcher }).default;
 
@@ -879,6 +880,39 @@ describe("held output", () => {
 		expect(t.field("filter")!.value ?? "").toBe("");
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSM00");
+	});
+});
+
+describe("ledger screens", () => {
+	it("shows the trial balance, an account's entries, and guards the close", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "a").send("ENTER");
+		expect(t.scr.map).toBe("CUSA01");
+		expect(t.row(4)).toMatch(/OPEN/);
+		expect(t.row(9)).toMatch(/1000 CASH +ASSET/);
+		await t.send("PF10");
+		expect(t.message).toMatch(/^\$HASP100 CUSTRIAL ON INTRDR - JOB\d{5} SUBMITTED/);
+		await journal(env.DB, "TEST");
+		await t.send("ENTER");
+		expect(t.row(19)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
+		expect(t.row(20)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
+
+		await t.send("PF5");
+		expect(t.message).toBe("CUS0903W PRESS PF5 AGAIN TO RUN THE MONTH-END CLOSE AND CLOSE THE PERIOD");
+		await t.send("ENTER");
+		await t.fill("period", "2026-1").send("ENTER");
+		expect(t.message).toBe("CUS0902E PERIOD MUST BE YYYY-MM, SUCH AS 2026-10");
+		await t.fill("period", "1999-01").send("ENTER");
+		expect(t.message).toBe("CUS0901E PERIOD 1999-01 NOT FOUND");
+		await t.fill("period", "").send("ENTER");
+
+		await t.fill("sel:1200", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSA02");
+		expect(t.row(4)).toContain("1200 ACCOUNTS RECEIVABLE");
+		const rows = [...Array(t.scr.rows).keys()].map((r) => t.row(r + 1));
+		expect(rows.some((r) => /OPEN:AR +OPENING CUSTOMER/.test(r))).toBe(true);
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSA01");
 	});
 });
 
