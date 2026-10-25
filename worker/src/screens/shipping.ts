@@ -112,7 +112,7 @@ export const shipments: Program<ShipmentsState> = {
 			case pf(6):
 				try {
 					const job = await submitJob(ctx.db, ctx.jobs, ctx.user, "CUSPICK");
-					s.msg = `$HASP100 CUSPICK ON INTRDR - ${job.id} SUBMITTED - OUTPUT ON OPTION 7`;
+					s.msg = `$HASP100 CUSPICK ON INTRDR - ${job.id} SUBMITTED - OUTPUT ON OPTION 5.1`;
 				} catch (e) {
 					s.msg = fail(e);
 				}

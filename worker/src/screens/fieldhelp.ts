@@ -15,11 +15,13 @@ const help: Record<string, FieldHelp> = {
 	"menu.option": {
 		title: "OPTION",
 		lines: [
-			"Type an option number or name from the list and press Enter.",
+			"Type an option from the list and press Enter. On the primary menu the",
+			"numbers open a submenu for each module; PF3 comes back.",
 			"",
-			"Options 2, 5 and 9 take a customer number, so 2 105 or 5 000105 jumps",
-			"straight to that customer. Option 1 takes the start of a name, so",
-			"1 KEY browses the customers whose name begins with KEY.",
+			"A fast path such as 1.2 or =1.2 goes straight to an option from any",
+			"menu, and a name such as INQUIRY, EDI or SYSLOG works anywhere too.",
+			"A second word is passed to the option: 1.2 105 shows customer 000105,",
+			"1.1 KEY browses the names that begin with KEY. =X logs off.",
 		],
 	},
 	"browse.filter": {

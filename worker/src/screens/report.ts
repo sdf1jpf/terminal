@@ -68,7 +68,7 @@ export const report: Program<ReportState> = {
 		switch (input.aid) {
 			case pf(3):
 			case pf(12):
-				return { p: "menu" };
+				return r.back ?? { p: "menu" };
 			case pf(5):
 			case "ENTER":
 			case "CLEAR":
@@ -78,7 +78,7 @@ export const report: Program<ReportState> = {
 				// The report goes to the spool as it is now, at 80 columns.
 				const lines = textLines(await report.render({ ...ctx, rows: 24, cols: MIN_COLS }, { p: "report" }));
 				const id = await spoolReport(ctx.db, ctx.user, "CUSR01", "CREDIT EXPOSURE SUMMARY", lines);
-				r.msg = `CUS0302I REPORT PRINTED TO THE SPOOL AS ${id} - SEE OPTION H`;
+				r.msg = `CUS0302I REPORT PRINTED TO THE SPOOL AS ${id} - SEE OPTION 5.4`;
 				return r;
 			}
 		}

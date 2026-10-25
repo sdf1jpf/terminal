@@ -9,9 +9,10 @@ import type { Ctx, Screen } from "./screen";
 
 export type Mode = "inquiry" | "update" | "add" | "delete";
 
-export interface MenuState { p: "menu"; option?: string; msg?: string }
+export interface MenuState { p: "menu"; sub?: string; option?: string; msg?: string } // sub: the submenu shown, unset for the primary menu
 export interface BrowseState {
 	p: "browse";
+	back?: MenuState; // the menu to return to; unset for the primary menu
 	filter?: string; // name starts with
 	city?: string; // city starts with
 	state?: string;
@@ -31,7 +32,7 @@ export interface DetailState {
 	errField?: string;
 	msg?: string;
 }
-export interface ReportState { p: "report"; msg?: string }
+export interface ReportState { p: "report"; back?: MenuState; msg?: string }
 export interface HelpState { p: "help"; back: State; field?: string } // field: help for that field
 export interface ActivityState {
 	p: "activity";
@@ -63,7 +64,7 @@ export interface JobsState {
 }
 export interface JobLogState { p: "joblog"; back: State; id: string; top?: number; msg?: string }
 
-export interface ProductsState { p: "products"; filter?: string; top?: number; msg?: string; errSel?: string }
+export interface ProductsState { p: "products"; back?: MenuState; filter?: string; top?: number; msg?: string; errSel?: string }
 export interface ProductState {
 	p: "product";
 	mode: "inquiry" | "update" | "add";

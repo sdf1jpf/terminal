@@ -135,12 +135,52 @@ describe("screen protocol", () => {
 		await t.send("PF6");
 		expect(t.message).toBe("CUS0000W PF6 IS NOT ACTIVE ON THIS SCREEN");
 	});
+
+	it("opens a submenu per module and returns with PF3", async () => {
+		const t = await Terminal.logon();
+		for (let r = 6; r <= 12; r++) expect(t.row(r).trimEnd().length).toBeLessThan(60); // one column, nothing cut
+		expect(t.row(8)).toContain("3  INVENTORY");
+
+		await t.fill("option", "1").send("ENTER");
+		expect(t.scr.map).toBe("CUSM10");
+		expect(t.row(t.scr.rows)).toContain("PF3=RETURN");
+		await t.fill("option", "2 105").send("ENTER");
+		expect(t.scr.map).toBe("CUSM02");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM10");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM00");
+
+		// A fast path, from the primary menu or a submenu, returns to the
+		// option's own submenu.
+		await t.fill("option", "=3.3").send("ENTER");
+		expect(t.scr.map).toBe("CUSV03");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM30");
+		await t.fill("option", "5.3").send("ENTER");
+		expect(t.scr.map).toBe("CUSO02");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM50");
+
+		// Names work from any menu; = alone goes back to the top.
+		await t.fill("option", "inquiry 105").send("ENTER");
+		expect(t.scr.map).toBe("CUSM02");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM10");
+		await t.fill("option", "1.9").send("ENTER");
+		expect(t.message).toBe("ISPD117E INVALID OPTION 1.9");
+		await t.fill("option", "=").send("ENTER");
+		expect(t.scr.map).toBe("CUSM00");
+		await t.fill("option", "2").send("ENTER");
+		await t.fill("option", "=x").send("ENTER");
+		expect(t.logoff).toMatch(/^IKJ56470I/);
+	});
 });
 
 describe("customer screens", () => {
 	it("updates a customer, with validation", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 105").send("ENTER");
+		await t.fill("option", "1.2 105").send("ENTER");
 		expect(t.scr.map).toBe("CUSM02");
 		expect(t.row(6)).toContain("EVERGREEN TIMBER CO");
 
@@ -159,7 +199,7 @@ describe("customer screens", () => {
 
 	it("warns when nothing was changed", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 106").send("ENTER");
+		await t.fill("option", "1.2 106").send("ENTER");
 		await t.send("PF4");
 		await t.send("ENTER");
 		expect(t.message).toBe("CUS0211W NO FIELDS WERE CHANGED");
@@ -167,12 +207,12 @@ describe("customer screens", () => {
 
 	it("detects a conflicting update", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 107").send("ENTER");
+		await t.fill("option", "1.2 107").send("ENTER");
 		await t.send("PF4");
 
 		// Another user changes the record after this one started editing.
 		const other = await Terminal.logon();
-		await other.fill("option", "2 107").send("ENTER");
+		await other.fill("option", "1.2 107").send("ENTER");
 		await other.send("PF4");
 		await other.fill("phone", "937-555-0199").send("ENTER");
 		expect(other.message).toMatch(/UPDATED$/);
@@ -184,7 +224,7 @@ describe("customer screens", () => {
 
 	it("adds a customer after a server-side edit error", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "3").send("ENTER");
+		await t.fill("option", "1.3").send("ENTER");
 		expect(t.row(1)).toContain("ADD CUSTOMER");
 		await t.fill("name", "new co", "city", "reno", "state", "n1", "zip", "89501", "limit", "1000").send("ENTER");
 		expect(t.message).toMatch(/^CUS0232E/);
@@ -195,14 +235,14 @@ describe("customer screens", () => {
 
 	it("says when a customer is not found", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 999999").send("ENTER");
+		await t.fill("option", "1.2 999999").send("ENTER");
 		expect(t.message).toBe("CUS0201E CUSTOMER 999999 NOT FOUND");
 		expect(t.scr.cursor).toEqual({ field: "id" });
 	});
 
 	it("browses, selects and deletes", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "1").send("ENTER");
+		await t.fill("option", "1.1").send("ENTER");
 		expect(t.scr.map).toBe("CUSM01");
 		expect(t.row(4)).toContain("ROW 1 TO 13 OF");
 		const first = t.scr.cursor?.field ?? "";
@@ -245,20 +285,20 @@ describe("customer screens", () => {
 
 	it("shows the credit report", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "4").send("ENTER");
+		await t.fill("option", "4.2").send("ENTER");
 		expect(t.scr.map).toBe("CUSR01");
 		expect(t.row(4)).toMatch(/CUSTOMERS ON FILE.*\d+/);
 		await t.send("PF5");
 		expect(t.message).toMatch(/^CUS0301I REPORT REFRESHED AT/);
 		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM00");
+		expect(t.scr.map).toBe("CUSM40");
 	});
 });
 
 describe("activity and history screens", () => {
 	it("numbers the event history and shows an event's details by line number", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "5 104").send("ENTER");
+		await t.fill("option", "1.4 104").send("ENTER");
 		expect(t.scr.map).toBe("CUSM03");
 		expect(t.row(1)).toContain("EVENT HISTORY");
 		expect(t.row(4)).toContain("DELTA MARINE SUPPLY");
@@ -314,12 +354,12 @@ describe("activity and history screens", () => {
 		expect(t.row(9)).toContain(inv.id);
 		await t.send("PF3");
 		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM00");
+		expect(t.scr.map).toBe("CUSM10");
 	});
 
 	it("lists record changes as events", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 117").send("ENTER");
+		await t.fill("option", "1.2 117").send("ENTER");
 		await t.send("PF4");
 		await t.fill("city", "montpelier").send("ENTER");
 		await t.send("PF5");
@@ -334,7 +374,7 @@ describe("activity and history screens", () => {
 
 	it("keeps the history after the customer is deleted", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 102").send("ENTER");
+		await t.fill("option", "1.2 102").send("ENTER");
 		await t.send("PF4");
 		await t.fill("city", "salem").send("ENTER");
 		await t.send("PF9");
@@ -342,7 +382,7 @@ describe("activity and history screens", () => {
 		expect(t.message).toBe("CUS0220I CUSTOMER 000102 DELETED");
 
 		await t.send("PF3");
-		await t.fill("option", "5 102").send("ENTER");
+		await t.fill("option", "1.4 102").send("ENTER");
 		expect(t.scr.map).toBe("CUSM03");
 		expect(t.message).toBe("CUS0251I CUSTOMER 000102 HAS BEEN DELETED - HISTORY ONLY");
 		expect(t.row(11)).toContain("DELETED  RECORD DELETED");
@@ -354,7 +394,7 @@ describe("activity and history screens", () => {
 		// The old option 6 still gets there.
 		await t.send("PF3");
 		await t.send("PF3");
-		await t.fill("option", "6 102").send("ENTER");
+		await t.fill("option", "1.4 102").send("ENTER");
 		expect(t.scr.map).toBe("CUSM03");
 	});
 
@@ -394,7 +434,7 @@ describe("search and field help", () => {
 
 	it("explains the field the cursor is in, and goes on to the tutorial", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "8").send("ENTER");
+		await t.fill("option", "3.1").send("ENTER");
 		t.cursorField = "filter";
 		await t.send("PF1");
 		expect(t.scr.map).toBe("CUSH01");
@@ -420,7 +460,7 @@ describe("search and field help", () => {
 describe("product screens", () => {
 	it("lists products, flags low stock, and adds and updates one", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "8").send("ENTER");
+		await t.fill("option", "3.1").send("ENTER");
 		expect(t.scr.map).toBe("CUSP01");
 		expect(t.row(9)).toContain("BLT-0516");
 		const grs = t.scr.fields.find((f) => f.text?.startsWith("GRS-EP2"));
@@ -452,7 +492,7 @@ describe("product screens", () => {
 describe("invoice screens", () => {
 	it("opens an invoice from the browse list, edits its lines, bills it and marks it paid", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "1").send("ENTER");
+		await t.fill("option", "1.1").send("ENTER");
 		await t.fill("sel:000110", "i").send("ENTER");
 		expect(t.scr.map).toBe("CUSI01");
 		expect(t.row(4)).toContain("JUNIPER SOFTWARE LABS");
@@ -533,7 +573,7 @@ describe("invoice screens", () => {
 		await shipInvoice(env.DB, inv.id);
 		await billInvoice(env.DB, "IBMUSER", inv.id);
 		const t = await Terminal.logon();
-		await t.fill("option", "9 119").send("ENTER");
+		await t.fill("option", "2.1 119").send("ENTER");
 		expect(t.row(5)).toMatch(/BALANCE \$740 .* UNPAID \$140/);
 		expect(t.row(9)).toMatch(/BILLED/);
 		await t.fill(`sel:${inv.id}`, "p").send("ENTER");
@@ -545,7 +585,7 @@ describe("invoice screens", () => {
 
 	it("cancels an open invoice with PF9 twice", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "9 116").send("ENTER");
+		await t.fill("option", "2.1 116").send("ENTER");
 		expect(t.scr.map).toBe("CUSI01");
 		await t.send("PF5");
 		const id = t.row(4).match(/INV\d{5}/)![0];
@@ -559,7 +599,7 @@ describe("invoice screens", () => {
 
 	it("finds a SKU to add with the product search", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "9 117").send("ENTER");
+		await t.fill("option", "2.1 117").send("ENTER");
 		await t.send("PF5");
 		expect(t.scr.map).toBe("CUSI02");
 		expect(t.row(t.scr.rows)).toContain("PF4=FIND SKU");
@@ -607,7 +647,7 @@ describe("invoice screens", () => {
 
 	it("will not open an invoice for a customer on hold", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "9").send("ENTER");
+		await t.fill("option", "2.1").send("ENTER");
 		await t.send("PF5");
 		expect(t.message).toMatch(/^CUS0501E/);
 		await t.fill("cust", "103").send("ENTER");
@@ -644,7 +684,7 @@ describe("EDI screens", () => {
 
 		// The customer's event history has it too, and its detail shows the X12.
 		await t.send("PF3");
-		await t.fill("option", "5 121").send("ENTER");
+		await t.fill("option", "1.4 121").send("ENTER");
 		const n = [...Array(t.scr.rows).keys()].map((r) => t.row(r + 1)).find((l) => l.includes(`850 ACCEPTED`))!.trim().split(" ")[0];
 		await t.fill("line", n).send("ENTER");
 		expect(t.row(6)).toContain("EDI 850 PURCHASE ORDER RECEIVED");
@@ -705,7 +745,7 @@ describe("purchasing screens", () => {
 
 	it("shows the vendor, cost and stock on order on the product", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "8").send("ENTER");
+		await t.fill("option", "3.1").send("ENTER");
 		await t.fill("sel:HYD-0250", "u").send("ENTER");
 		expect(t.field("vendor")?.value).toBe("V00003");
 		expect(t.field("cost")?.value).toBe("83");
@@ -721,7 +761,7 @@ describe("purchasing screens", () => {
 describe("batch job screens", () => {
 	it("submits a job, lists it, and shows its output", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "7").send("ENTER");
+		await t.fill("option", "5.1").send("ENTER");
 		expect(t.scr.map).toBe("CUSJ01");
 		expect(t.row(9)).toContain("NO JOBS ON THE SPOOL");
 
@@ -753,7 +793,7 @@ describe("batch job screens", () => {
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSJ01");
 		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM00");
+		expect(t.scr.map).toBe("CUSM50");
 	});
 });
 
@@ -806,7 +846,7 @@ describe("operator console", () => {
 		expect(t.message).toBe("CUS0102W ALREADY AT BOTTOM OF DATA");
 
 		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM00");
+		expect(t.scr.map).toBe("CUSM50");
 	});
 
 	it("changes the job schedule", async () => {
@@ -850,9 +890,9 @@ describe("operator console", () => {
 describe("held output", () => {
 	it("prints a report to the spool, browses, prints and purges it", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "4").send("ENTER");
+		await t.fill("option", "4.2").send("ENTER");
 		await t.send("PF9");
-		const id = t.message.match(/^CUS0302I REPORT PRINTED TO THE SPOOL AS (TSU\d{5}) - SEE OPTION H$/)![1];
+		const id = t.message.match(/^CUS0302I REPORT PRINTED TO THE SPOOL AS (TSU\d{5}) - SEE OPTION 5.4$/)![1];
 
 		await t.send("PF3");
 		await t.fill("option", "h cusr").send("ENTER");
@@ -879,7 +919,7 @@ describe("held output", () => {
 		await t.fill("filter", "").send("ENTER");
 		expect(t.field("filter")!.value ?? "").toBe("");
 		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM00");
+		expect(t.scr.map).toBe("CUSM50");
 	});
 });
 

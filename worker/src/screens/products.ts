@@ -83,7 +83,7 @@ export const products: Program<ProductsState> = {
 				return s;
 			case pf(3):
 			case pf(12):
-				return { p: "menu" };
+				return s.back ?? { p: "menu" };
 			case pf(5):
 				return newProduct(s);
 			case pf(7):

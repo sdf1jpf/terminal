@@ -133,7 +133,7 @@ export const browse: Program<BrowseState> = {
 			}
 			case pf(3):
 			case pf(12):
-				return { p: "menu" };
+				return b.back ?? { p: "menu" };
 			case pf(5):
 				return newAdd(b);
 			case pf(7):
