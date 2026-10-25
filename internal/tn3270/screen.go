@@ -61,6 +61,7 @@ func Numeric(a *Attr)     { a.Numeric = true }
 func Hidden(a *Attr)      { a.Hidden = true }
 func Underline(a *Attr)   { a.Highlight = HlUnderscore }
 func Reverse(a *Attr)     { a.Highlight = HlReverse }
+func Blink(a *Attr)       { a.Highlight = HlBlink }
 func NoUnderline(a *Attr) { a.Highlight = HlNone }
 func MixedCase(a *Attr)   { a.Mixed = true }
 func WithColor(c Color) Opt {
@@ -92,6 +93,13 @@ func NewScreenSize(rows, cols int) *Screen {
 	s.buf[0] = cell{isAttr: true, attr: Attr{Protected: true}}
 	s.cursor = 1
 	return s
+}
+
+// Clone returns a copy of the screen, input and modified tags included.
+func (s *Screen) Clone() *Screen {
+	c := *s
+	c.buf = append([]cell(nil), s.buf...)
+	return &c
 }
 
 // Rows and Cols return the size of the presentation space.

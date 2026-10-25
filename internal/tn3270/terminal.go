@@ -40,6 +40,8 @@ type Terminal struct {
 
 type hostReply struct{ scr *Screen }
 
+type redrawReply struct{ scr *Screen }
+
 // New returns a terminal connected to host.
 func New(host Host, opts Options) *Terminal {
 	if opts.LUName == "" {
@@ -60,14 +62,22 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		t.width, t.height = msg.Width, msg.Height
-		t.fit()
+		return t, t.fit()
 	case hostReply:
 		if msg.scr == nil {
 			return t, tea.Quit
 		}
 		t.scr = msg.scr
 		t.lock = LockNone
-		t.fit() // the window may have changed while the host was busy
+		return t, t.fit() // the window may have changed while the host was busy
+	case redrawReply:
+		t.lock = LockNone
+		if msg.scr == nil {
+			return t, nil // keep the old layout; the next resize tries again
+		}
+		msg.scr.Carry(t.scr)
+		t.scr = msg.scr
+		return t, t.fit()
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && t.lock == LockNone {
 			x0, y0 := t.origin()
@@ -223,20 +233,21 @@ func (t *Terminal) send(aid AID) tea.Cmd {
 }
 
 // fit asks the host to lay the current panel out again when the window
-// no longer matches the presentation space, keeping what has been typed.
-// The screen fills the window except for the status line and its rule.
-func (t *Terminal) fit() {
+// no longer matches the presentation space. The host may have to ask the
+// server, so the keyboard locks until the new layout arrives, and what has
+// been typed is carried over to it. The screen fills the window except for
+// the status line and its rule.
+func (t *Terminal) fit() tea.Cmd {
 	rows, cols := t.height-2, t.width
 	if t.lock == LockWait || t.width == 0 || rows < MinRows || cols < MinCols {
-		return
+		return nil
 	}
 	if rows == t.scr.Rows() && cols == t.scr.Cols() {
-		return
+		return nil
 	}
-	if next := t.host.Redraw(rows, cols); next != nil {
-		next.Carry(t.scr)
-		t.scr = next
-	}
+	t.lock = LockWait
+	host := t.host
+	return func() tea.Msg { return redrawReply{scr: host.Redraw(rows, cols)} }
 }
 
 // origin returns the top-left corner of the 3270 screen within the window.
