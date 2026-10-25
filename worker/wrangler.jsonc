@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "customer-api",
+  "account_id": "d64e67ce2f5262eef1178cd4d08c5380",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "observability": { "enabled": true },
@@ -8,8 +9,7 @@
     {
       "binding": "DB",
       "database_name": "customer-api",
-      // Replace with the id printed by: npx wrangler d1 create customer-api
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "c9ee382c-5ace-414f-b2ba-5dc6f2ef6ea7",
       "migrations_dir": "migrations"
     }
   ],

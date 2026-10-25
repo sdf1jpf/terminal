@@ -60,22 +60,24 @@ Log on with **IBMUSER / SYS1** (or GUEST / GUEST).
 
 ## Deploy the API to Cloudflare
 
+`worker/wrangler.jsonc` already points at the `customer-api` D1 database in
+the project's Cloudflare account. To deploy to a different account, change
+`account_id`, run `npx wrangler d1 create customer-api`, and put the new
+`database_id` in `wrangler.jsonc`.
+
 ```sh
 cd worker
 npm ci
 npx wrangler login
 
-# 1. Create the database, then paste the printed database_id into wrangler.jsonc
-npx wrangler d1 create customer-api
-
-# 2. Create the tables, and optionally load the 24 demo customers
+# 1. Create the tables, and optionally load the 24 demo customers
 npm run db:migrate:remote
 npm run db:seed:remote
 
-# 3. Set who may log on (stored encrypted as a Worker secret)
+# 2. Set who may log on (stored encrypted as a Worker secret)
 npx wrangler secret put CUSTAPI_USERS      # e.g. IBMUSER:SOMEPASS,JDOE:OTHERPASS
 
-# 4. Deploy
+# 3. Deploy
 npm run deploy                             # prints https://customer-api.<you>.workers.dev
 ```
 
