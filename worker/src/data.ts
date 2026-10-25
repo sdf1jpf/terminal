@@ -6,11 +6,23 @@ import { diff } from "./activity";
 import { HttpError } from "./http";
 import type { Customer, Editable } from "./customer";
 
-export async function listCustomers(db: D1Database, prefix: string): Promise<Customer[]> {
-	const like = prefix.toUpperCase().replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+// Search narrows a customer list. Name and city match from the start;
+// state and status must match exactly. Empty fields match everything.
+export interface Search {
+	city?: string;
+	state?: string;
+	status?: string;
+}
+
+export async function listCustomers(db: D1Database, prefix: string, search: Search = {}): Promise<Customer[]> {
+	const starts = (s: string) => s.toUpperCase().replace(/[\\%_]/g, (c) => "\\" + c) + "%";
 	const { results } = await db.prepare(
-		"SELECT * FROM customers WHERE name LIKE ? ESCAPE '\\' ORDER BY name, id",
-	).bind(like).all<Customer>();
+		`SELECT * FROM customers
+		 WHERE name LIKE ?1 ESCAPE '\\' AND city LIKE ?2 ESCAPE '\\'
+		   AND (?3 = '' OR state = ?3) AND (?4 = '' OR status = ?4)
+		 ORDER BY name, id`,
+	).bind(starts(prefix), starts(search.city ?? ""), (search.state ?? "").toUpperCase(), (search.status ?? "").toUpperCase())
+		.all<Customer>();
 	return results;
 }
 

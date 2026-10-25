@@ -25,6 +25,7 @@ class Terminal {
 	scr!: Screen;
 	vals: Record<string, string> = {};
 	modified = new Set<string>();
+	cursorField = ""; // the field the cursor is in, sent with the next key
 	logoff = "";
 
 	constructor(readonly token: string, public rows = 24, public cols = 80) {}
@@ -38,7 +39,7 @@ class Terminal {
 	async send(aid: string) {
 		const res = await post({
 			v: 1, aid, state: aid === "START" ? undefined : this.state, fields: this.vals,
-			modified: [...this.modified], cursor: { row: 1, col: 1, field: "" },
+			modified: [...this.modified], cursor: { row: 1, col: 1, field: this.cursorField },
 			rows: this.rows, cols: this.cols, terminal: "TERM0001", system: "TEST",
 		}, this.token);
 		expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -50,6 +51,7 @@ class Terminal {
 		this.scr = res.body.screen;
 		this.vals = {};
 		this.modified.clear();
+		this.cursorField = "";
 		for (const f of this.scr.fields) if (f.name) this.vals[f.name] = f.value ?? "";
 		return this;
 	}
@@ -317,6 +319,53 @@ describe("activity and history screens", () => {
 		expect(t.scr.map).toBe("CUSM01");
 		await t.fill(first, "h").send("ENTER");
 		expect(t.scr.map).toBe("CUSM04");
+	});
+});
+
+describe("search and field help", () => {
+	it("searches the browse list by city, state and status", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF4");
+		await t.fill("state", "or").send("ENTER");
+		expect(t.row(4)).toContain("ROW 1 TO 2 OF 2");
+		expect(t.row(9)).toContain("000105");
+		expect(t.row(10)).toContain("OCEANIC CANNERY");
+
+		await t.fill("state", "", "status", "h", "city", "fre").send("ENTER");
+		expect(t.row(4)).toContain("ROW 1 TO 1 OF 1");
+		expect(t.row(9)).toContain("REDWOOD ELECTRIC");
+
+		await t.fill("status", "x").send("ENTER");
+		expect(t.message).toMatch(/^CUS0105E/);
+		expect(t.scr.cursor).toEqual({ field: "status" });
+
+		await t.send("CLEAR");
+		expect(t.row(4)).toMatch(/ROW 1 TO 13 OF 2\d/);
+	});
+
+	it("explains the field the cursor is in, and goes on to the tutorial", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "5 104").send("ENTER");
+		t.cursorField = "type";
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH01");
+		expect(t.row(1)).toContain("HELP - TYPE");
+		expect(t.row(4)).toContain("I  invoice");
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH00");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM03");
+
+		// Browse's status field is a search, so its help says so.
+		await t.send("PF3");
+		await t.send("PF4");
+		t.cursorField = "status";
+		await t.send("PF1");
+		expect(t.row(4)).toContain("Lists only the customers with this status");
+		await t.send("PF3");
+		// Outside a field PF1 is the tutorial.
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH00");
 	});
 });
 
