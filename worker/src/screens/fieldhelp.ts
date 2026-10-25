@@ -130,6 +130,45 @@ const help: Record<string, FieldHelp> = {
 			"Press PF5 to refresh the list as the job runs.",
 		],
 	},
+	"products.filter": {
+		title: "SKU STARTS WITH",
+		lines: ["Lists only the products whose SKU begins with these characters."],
+	},
+	"products.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type a code beside a product and press Enter:", "  S  show the product           U  update it"],
+	},
+	sku: {
+		title: "SKU",
+		lines: [
+			"The stock keeping unit: the product's code, 1 to 10 letters, digits or",
+			"dashes, such as BRG-6204. It cannot be changed once the product is added.",
+		],
+	},
+	desc: {
+		title: "DESCRIPTION",
+		lines: ["What the product is, up to 30 characters. Required."],
+	},
+	price: {
+		title: "UNIT PRICE",
+		lines: ["The price of one unit in whole dollars. Invoice lines are priced from it."],
+	},
+	onhand: {
+		title: "QUANTITY ON HAND",
+		lines: [
+			"How many units are in stock. Invoice lines take stock as they are added",
+			"and give it back when they are removed. Type a new count to receive",
+			"stock or correct a stock take.",
+		],
+	},
+	reorder: {
+		title: "REORDER POINT",
+		lines: ["When the quantity on hand falls to this number or below, the product", "is flagged LOW and shown in yellow."],
+	},
+	"product.status": {
+		title: "STATUS",
+		lines: ["  A  active", "  D  discontinued: kept on file, but cannot be sold"],
+	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],

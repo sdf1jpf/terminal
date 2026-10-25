@@ -13,6 +13,7 @@ const options = [
 	["5", "ACTIVITY", "Post invoices and payments"],
 	["6", "HISTORY", "Who changed a customer, and when"],
 	["7", "JOBS", "Submit batch jobs and view their output"],
+	["8", "PRODUCTS", "Product file and stock on hand"],
 	["T", "TUTORIAL", "Keyboard and PF key guide"],
 	["X", "EXIT", "Log off"],
 ];
@@ -47,8 +48,8 @@ export const menu: Program<MenuState> = {
 			scr.text(6 + i, right(scr, 65), "- " + v, { color: "white" });
 		});
 
-		scr.text(16, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
-		scr.text(17, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
+		scr.text(17, 4, "Enter an option number, or a command such as 2 000105 to jump", { color: "blue" });
+		scr.text(18, 4, "straight to a customer. Press PF1 at any time for help.", { color: "blue" });
 
 		message(scr, m.msg ?? "");
 		keys(scr, "PF1=HELP  PF3=LOGOFF  PF4=BROWSE  PF12=CANCEL");
@@ -100,6 +101,9 @@ export const menu: Program<MenuState> = {
 			case "7":
 			case "JOBS":
 				return { p: "jobs", back: m };
+			case "8":
+			case "PRODUCTS":
+				return { p: "products", filter: arg };
 			case "T":
 			case "TUTORIAL":
 				return { p: "help", back: m };

@@ -369,6 +369,38 @@ describe("search and field help", () => {
 	});
 });
 
+describe("product screens", () => {
+	it("lists products, flags low stock, and adds and updates one", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "8").send("ENTER");
+		expect(t.scr.map).toBe("CUSP01");
+		expect(t.row(9)).toContain("BLT-0516");
+		const grs = t.scr.fields.find((f) => f.text?.startsWith("GRS-EP2"));
+		expect(grs?.color).toBe("yellow");
+		expect(grs?.text).toMatch(/LOW$/);
+
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSP02");
+		await t.fill("sku", "gsk-100", "desc", "flange gasket", "price", "4", "onhand", "x", "reorder", "50", "status", "a").send("ENTER");
+		expect(t.message).toMatch(/^CUS0413E/);
+		await t.fill("onhand", "200").send("ENTER");
+		expect(t.message).toBe("CUS0407I PRODUCT GSK-100 ADDED");
+		expect(t.row(8)).toContain("$800");
+
+		await t.send("PF4");
+		await t.fill("onhand", "10").send("ENTER");
+		expect(t.message).toBe("CUS0407I PRODUCT GSK-100 UPDATED");
+		expect(t.row(6)).toContain("LOW STOCK");
+
+		await t.send("PF3");
+		await t.fill("filter", "gsk").send("ENTER");
+		expect(t.row(4)).toContain("ROW 1 TO 1 OF 1");
+		await t.fill("sel:GSK-100", "u").send("ENTER");
+		expect(t.scr.map).toBe("CUSP02");
+		expect(t.row(1)).toContain("PRODUCT UPDATE");
+	});
+});
+
 describe("batch job screens", () => {
 	it("submits a job, lists it, and shows its output", async () => {
 		const t = await Terminal.logon();
