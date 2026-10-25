@@ -1,0 +1,275 @@
+import { exports } from "cloudflare:workers";
+import { describe, expect, it } from "vitest";
+import { accessJWT } from "./access";
+
+const worker = (exports as unknown as { default: Fetcher }).default;
+
+interface Field {
+	row: number; col: number; text?: string; name?: string; length?: number; value?: string;
+	color?: string; bright?: boolean; numeric?: boolean;
+}
+interface Screen { map: string; rows: number; cols: number; fields: Field[]; cursor?: { field?: string; row?: number; col?: number } }
+
+async function post(body: unknown, token?: string) {
+	const headers: Record<string, string> = { "Content-Type": "application/json" };
+	if (token) headers["Cf-Access-Jwt-Assertion"] = token;
+	const res = await worker.fetch("https://api.test/v1/screen", { method: "POST", headers, body: JSON.stringify(body) });
+	return { status: res.status, body: await res.json<any>() };
+}
+
+// Terminal plays the part of the Go client: it keeps the commarea, lets the
+// test type into fields, and sends AID keys.
+class Terminal {
+	state = "";
+	scr!: Screen;
+	vals: Record<string, string> = {};
+	modified = new Set<string>();
+	logoff = "";
+
+	constructor(readonly token: string, public rows = 24, public cols = 80) {}
+
+	static async logon(rows = 24, cols = 80) {
+		const t = new Terminal(await accessJWT(), rows, cols);
+		await t.send("START");
+		return t;
+	}
+
+	async send(aid: string) {
+		const res = await post({
+			v: 1, aid, state: aid === "START" ? undefined : this.state, fields: this.vals,
+			modified: [...this.modified], cursor: { row: 1, col: 1, field: "" },
+			rows: this.rows, cols: this.cols, terminal: "TERM0001", system: "TEST",
+		}, this.token);
+		expect(res.status, JSON.stringify(res.body)).toBe(200);
+		if (res.body.logoff) {
+			this.logoff = res.body.logoff.message;
+			return this;
+		}
+		this.state = res.body.state;
+		this.scr = res.body.screen;
+		this.vals = {};
+		this.modified.clear();
+		for (const f of this.scr.fields) if (f.name) this.vals[f.name] = f.value ?? "";
+		return this;
+	}
+
+	fill(...kv: string[]) {
+		for (let i = 0; i < kv.length; i += 2) {
+			const f = this.scr.fields.find((f) => f.name === kv[i]);
+			expect(f, `field ${kv[i]}`).toBeDefined();
+			this.vals[kv[i]] = kv[i + 1].toUpperCase();
+			this.modified.add(kv[i]);
+		}
+		return this;
+	}
+
+	field(name: string) {
+		return this.scr.fields.find((f) => f.name === name);
+	}
+
+	// row renders one row of the screen as text.
+	row(n: number): string {
+		const line = Array(this.scr.cols).fill(" ");
+		for (const f of this.scr.fields) {
+			if (f.row !== n) continue;
+			const s = f.text ?? (f.value ?? "").padEnd(f.length ?? 0);
+			for (let i = 0; i < s.length && f.col - 1 + i < line.length; i++) line[f.col - 1 + i] = s[i];
+		}
+		return line.join("");
+	}
+
+	get message() {
+		return this.row(this.scr.rows - 1).trim();
+	}
+}
+
+describe("screen protocol", () => {
+	it("requires Access", async () => {
+		const res = await post({ v: 1, aid: "START", rows: 24, cols: 80 });
+		expect(res.status).toBe(401);
+	});
+
+	it("starts at the menu with the Access userid", async () => {
+		const t = await Terminal.logon();
+		expect(t.scr.map).toBe("CUSM00");
+		expect(t.message).toMatch(/^IKJ56455I IBMUSER LOGON IN PROGRESS/);
+		expect(t.scr.cursor).toEqual({ field: "option" });
+		expect(t.row(t.scr.rows)).toContain("PF3=LOGOFF");
+		expect(t.row(2)).toContain("TEST CUSTOMER INFORMATION SYSTEM");
+	});
+
+	it("rejects bad requests", async () => {
+		const token = await accessJWT();
+		expect((await post({ v: 2, aid: "START", rows: 24, cols: 80 }, token)).status).toBe(400);
+		expect((await post({ v: 1, aid: "START", rows: 24, cols: 80, pw: "x" }, token)).status).toBe(400);
+		const t = await Terminal.logon();
+		const res = await post({ v: 1, aid: "PF99", state: t.state, rows: 24, cols: 80 }, token);
+		expect(res.status).toBe(400);
+	});
+
+	it("goes back to the menu when the commarea is damaged", async () => {
+		const t = await Terminal.logon();
+		t.state = "garbage";
+		await t.send("ENTER");
+		expect(t.scr.map).toBe("CUSM00");
+		expect(t.message).toMatch(/^CUS0001W/);
+	});
+
+	it("logs off", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF3");
+		expect(t.logoff).toMatch(/^IKJ56470I IBMUSER LOGGED OFF AT/);
+	});
+
+	it("reports an invalid option and an inactive key", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "9").send("ENTER");
+		expect(t.message).toBe("ISPD117E INVALID OPTION 9");
+		await t.send("PF6");
+		expect(t.message).toBe("CUS0000W PF6 IS NOT ACTIVE ON THIS SCREEN");
+	});
+});
+
+describe("customer screens", () => {
+	it("updates a customer, with validation", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2 105").send("ENTER");
+		expect(t.scr.map).toBe("CUSM02");
+		expect(t.row(6)).toContain("EVERGREEN TIMBER CO");
+
+		await t.send("PF4");
+		expect(t.row(1)).toContain("CUSTOMER UPDATE");
+		await t.fill("zip", "123").send("ENTER");
+		expect(t.message).toBe("CUS0233E ZIP CODE MUST BE FIVE DIGITS");
+		expect(t.scr.cursor).toEqual({ field: "zip" });
+		expect(t.field("zip")?.bright).toBe(true);
+
+		await t.fill("zip", "97402", "name", "evergreen timber").send("ENTER");
+		expect(t.message).toBe("CUS0212I CUSTOMER 000105 UPDATED");
+		expect(t.row(6)).toContain("EVERGREEN TIMBER ");
+		expect(t.row(16)).toMatch(/LAST UPDATED.*BY IBMUSER/);
+	});
+
+	it("warns when nothing was changed", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2 106").send("ENTER");
+		await t.send("PF4");
+		await t.send("ENTER");
+		expect(t.message).toBe("CUS0211W NO FIELDS WERE CHANGED");
+	});
+
+	it("detects a conflicting update", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2 107").send("ENTER");
+		await t.send("PF4");
+
+		// Another user changes the record after this one started editing.
+		const other = await Terminal.logon();
+		await other.fill("option", "2 107").send("ENTER");
+		await other.send("PF4");
+		await other.fill("phone", "937-555-0199").send("ENTER");
+		expect(other.message).toMatch(/UPDATED$/);
+
+		await t.fill("city", "kettering").send("ENTER");
+		expect(t.message).toMatch(/^CUS0213E 000107 WAS CHANGED BY ANOTHER USER/);
+		expect(t.field("phone")?.value).toBe("937-555-0199");
+	});
+
+	it("adds a customer after a server-side edit error", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "3").send("ENTER");
+		expect(t.row(1)).toContain("ADD CUSTOMER");
+		await t.fill("name", "new co", "city", "reno", "state", "n1", "zip", "89501", "limit", "1000").send("ENTER");
+		expect(t.message).toMatch(/^CUS0232E/);
+		await t.fill("state", "nv").send("ENTER");
+		expect(t.message).toMatch(/^CUS0212I CUSTOMER \d{6} ADDED$/);
+		expect(t.row(1)).toContain("CUSTOMER INQUIRY");
+	});
+
+	it("says when a customer is not found", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2 999999").send("ENTER");
+		expect(t.message).toBe("CUS0201E CUSTOMER 999999 NOT FOUND");
+		expect(t.scr.cursor).toEqual({ field: "id" });
+	});
+
+	it("browses, selects and deletes", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "1").send("ENTER");
+		expect(t.scr.map).toBe("CUSM01");
+		expect(t.row(4)).toContain("ROW 1 TO 13 OF");
+		const first = t.scr.cursor?.field ?? "";
+		expect(first).toMatch(/^sel:\d{6}$/);
+
+		await t.fill(first, "x").send("ENTER");
+		expect(t.message).toBe('CUS0103E INVALID SELECTION CODE "X"');
+		expect(t.scr.cursor).toEqual({ field: first });
+
+		await t.fill(first, "d").send("ENTER");
+		expect(t.row(1)).toContain("DELETE CUSTOMER");
+		await t.send("PF10");
+		expect(t.scr.map).toBe("CUSM01");
+		expect(t.message).toBe(`CUS0220I CUSTOMER ${first.slice(4)} DELETED`);
+		expect(t.field(first)).toBeUndefined();
+	});
+
+	it("filters, pages, and returns from help to the same page", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF4");
+		await t.fill("filter", "k").send("ENTER");
+		expect(t.row(9)).toContain("KEYSTONE STEEL");
+		expect(t.row(10)).toContain("BOTTOM OF DATA");
+
+		await t.send("CLEAR");
+		await t.send("PF7");
+		expect(t.message).toBe("CUS0101W ALREADY AT TOP OF DATA");
+		await t.send("PF8");
+		const top = t.row(4);
+		expect(top).not.toContain("ROW 1 TO");
+		await t.send("PF8");
+		expect(t.message).toBe("CUS0102W ALREADY AT BOTTOM OF DATA");
+
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH00");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM01");
+		expect(t.row(4)).toBe(top);
+	});
+
+	it("shows the credit report", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "4").send("ENTER");
+		expect(t.scr.map).toBe("CUSR01");
+		expect(t.row(4)).toMatch(/CUSTOMERS ON FILE.*\d+/);
+		await t.send("PF5");
+		expect(t.message).toMatch(/^CUS0301I REPORT REFRESHED AT/);
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM00");
+	});
+});
+
+describe("screen size", () => {
+	it("lays panels out for a larger window and redraws without acting", async () => {
+		const t = await Terminal.logon(40, 132);
+		expect(t.scr.rows).toBe(40);
+		expect(t.row(40)).toContain("PF3=LOGOFF");
+		expect(t.row(1).trimEnd()).toMatch(/\d\d\/\d\d\/\d\d$/);
+		expect(t.row(1).trimEnd().length).toBe(77 + 52);
+
+		await t.send("PF4");
+		expect(t.row(4)).toMatch(/ROW 1 TO \d+ OF/);
+		const state = t.state;
+
+		// A redraw keeps the commarea and the input is not acted on.
+		t.rows = 24;
+		t.cols = 80;
+		await t.fill("filter", "zzz").send("REDRAW");
+		expect(t.state).toBe(state);
+		expect(t.row(4)).toContain("ROW 1 TO 13 OF");
+	});
+
+	it("never goes below 24x80", async () => {
+		const t = await Terminal.logon(10, 10);
+		expect([t.scr.rows, t.scr.cols]).toEqual([24, 80]);
+	});
+});
