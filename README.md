@@ -1,8 +1,9 @@
 # terminal
 
 A terminal app that looks and behaves like an IBM 3270 mainframe application
-(think CICS or ISPF on a 3278 Model 2). It runs locally on your machine and
-talks to a REST API over HTTP.
+(think CICS or ISPF on a 3278 Model 2). The client is written in Go and runs
+locally on your machine. It talks to a REST API that runs as a Cloudflare
+Worker.
 
 ```
  CUSM01                         CUSTOMER BROWSE                      10/25/26
@@ -25,65 +26,39 @@ talks to a REST API over HTTP.
 ## Architecture
 
 ```
- your machine                                    Cloudflare Worker, or the Go server
+ your machine                                    Cloudflare
 ┌─────────────────────────────┐                 ┌─────────────────────────────┐
-│ terminal                    │    HTTP/JSON    │ customer-api                │
+│ terminal (Go)               │   HTTPS/JSON    │ customer-api Worker (TS)    │
 │   3270 screens, keyboard,   │────────────────▶│   logon / sessions          │
 │   field editing (Bubble Tea)│   Bearer token  │   validation, locking       │
-└─────────────────────────────┘◀────────────────│   customer store (JSON)     │
+└─────────────────────────────┘◀────────────────│   D1 database               │
                                                 └─────────────────────────────┘
 ```
 
-The terminal client does what a 3270 did locally: it draws screens, edits
-fields and handles the keyboard. When you press Enter or a PF key, it calls the
-API. The API is the system of record. It owns the data, checks logons and
-enforces the edit rules, so any other client gets the same behavior.
+The terminal does what a 3270 did locally: it draws screens, edits fields and
+handles the keyboard. When you press Enter or a PF key, it calls the API. The
+API is the system of record. It owns the data, checks logons and enforces the
+edit rules, so any other client gets the same behavior.
 
-## Run it
+## Quick start (everything local)
 
-Start the API, then the terminal in another window:
+You need Go 1.24 or later and Node.js 20 or later.
 
 ```sh
-go run ./cmd/customer-api                         # http://localhost:8080
-go run ./cmd/terminal                             # connects to localhost:8080
+# 1. Run the API locally with a local D1 database and the demo users
+cd worker
+npm ci
+cp .dev.vars.example .dev.vars
+npm run db:migrate:local && npm run db:seed:local
+npm run dev                                # http://localhost:8787
+
+# 2. In another window, run the terminal
+go run ./cmd/terminal                      # defaults to http://localhost:8787
 ```
 
 Log on with **IBMUSER / SYS1** (or GUEST / GUEST).
 
-To try it without a separate server, run `go run ./cmd/terminal -embedded`.
-That starts a private, in-memory API inside the terminal process.
-
-To install both commands:
-
-```sh
-go install ./cmd/terminal ./cmd/customer-api
-```
-
-### customer-api
-
-| Flag / env | Meaning |
-| --- | --- |
-| `-addr localhost:8080` | Listen address (use `:8080` to accept remote connections) |
-| `-data customers.json` | Persist customers to a JSON file (default: in memory) |
-| `CUSTAPI_USERS=USER:PASS,USER2:PASS2` | Replace the demo users |
-
-### terminal
-
-| Flag / env | Meaning |
-| --- | --- |
-| `-api URL` or `TERMINAL_API_URL` | API base URL (default `http://localhost:8080`) |
-| `-embedded` | Run a private in-memory API instead of connecting to one |
-| `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
-| `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
-
-## Deploy the API to Cloudflare Workers
-
-`worker/` is the same API, written in TypeScript for Cloudflare Workers. It
-stores customers and sessions in D1 (Cloudflare's SQLite database). It serves
-exactly the same endpoints, JSON and error codes as the Go server, so the
-terminal works with either one unchanged.
-
-You need Node.js 20 or later and a Cloudflare account.
+## Deploy the API to Cloudflare
 
 ```sh
 cd worker
@@ -107,21 +82,10 @@ npm run deploy                             # prints https://customer-api.<you>.w
 Then point the terminal at it:
 
 ```sh
-go run ./cmd/terminal -api https://customer-api.<you>.workers.dev
+go install ./cmd/terminal
+terminal -api https://customer-api.<you>.workers.dev
+# or: export TERMINAL_API_URL=https://customer-api.<you>.workers.dev
 ```
-
-To run the Worker locally, use a local D1 database and the demo users:
-
-```sh
-cd worker
-cp .dev.vars.example .dev.vars
-npm run db:migrate:local && npm run db:seed:local
-npm run dev                                # http://localhost:8787
-go run ./cmd/terminal -api http://localhost:8787
-```
-
-`npm test` runs the API tests inside the Workers runtime against a throwaway
-D1 database. `npm run typecheck` checks the TypeScript.
 
 Notes:
 
@@ -132,6 +96,14 @@ Notes:
 - **Brute-force protection:** the Worker doesn't throttle logon attempts. For
   a public deployment, add a Cloudflare rate-limiting rule on
   `POST /v1/session`, or put Cloudflare Access in front of the Worker.
+
+## Terminal options
+
+| Flag / env | Meaning |
+| --- | --- |
+| `-api URL` or `TERMINAL_API_URL` | API base URL (default `http://localhost:8787`) |
+| `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
+| `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
 
 ## The API
 
@@ -147,9 +119,6 @@ DELETE /v1/customers/{id}
 ```
 
 Every endpoint except health and logon needs `Authorization: Bearer <token>`.
-The Go server speaks plain HTTP. If clients will connect to it over a network,
-put it behind a TLS-terminating proxy. The Worker is served over HTTPS
-automatically.
 Errors look like this:
 
 ```json
@@ -161,9 +130,10 @@ The error codes are `unauthorized`, `bad_logon`, `not_found`, `conflict`
 `bad_request`.
 
 ```sh
-TOKEN=$(curl -s -XPOST localhost:8080/v1/session \
+API=http://localhost:8787
+TOKEN=$(curl -s -XPOST $API/v1/session \
   -d '{"userid":"ibmuser","password":"sys1"}' | jq -r .token)
-curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/v1/customers/000105
+curl -s -H "Authorization: Bearer $TOKEN" $API/v1/customers/000105
 ```
 
 ## How the terminal responds to the API
@@ -209,17 +179,24 @@ Erase EOF, Erase Input, and the cursor's row/col in the status line.
 | Esc or Ctrl+R | RESET |
 | Ctrl+C | Disconnect |
 
-## Layout
+## Development
+
+```sh
+go test ./...                              # terminal client
+cd worker && npm test && npm run typecheck # API, in the Workers runtime
+```
 
 ```
-cmd/terminal/        the local client
-cmd/customer-api/    the API server in Go (local use, tests, -embedded)
-worker/              the same API for Cloudflare Workers + D1 (TypeScript)
+cmd/terminal/        the terminal client (Go)
 internal/tn3270/     terminal emulation: screen buffer, fields, keyboard, rendering
 internal/host/       the application screens; they call a Backend interface
-internal/api/        REST server and HTTP client (the client implements Backend)
-internal/customer/   the shared record type and edit rules
-internal/store/      the server's customer file
+internal/api/        HTTP client for the API (implements host.Backend)
+internal/customer/   the customer record exchanged with the API
+worker/              the API: Cloudflare Worker + D1 (TypeScript)
+  src/               routes, auth, validation
+  migrations/        D1 schema
+  seed.sql           demo customers
+  test/              API tests (vitest, Workers runtime)
 ```
 
 To point the terminal at a different API, implement `host.Backend` (`Logon`,

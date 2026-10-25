@@ -1,4 +1,4 @@
--- Demo customers, matching the Go server's seed data.
+-- Demo customers.
 -- Load with: npm run db:seed:local   (or db:seed:remote)
 INSERT OR IGNORE INTO customers (id, name, address, city, state, zip, phone, credit_limit, balance, status, version, updated, updated_by) VALUES
   ('000101', 'ACME TOOL & DIE', '1200 INDUSTRIAL PKWY', 'DAYTON', 'OH', '45402', '937-555-0101', 50000, 12450, 'A', 1, '1987-03-14T09:30:00Z', 'IBMUSER'),

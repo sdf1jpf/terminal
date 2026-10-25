@@ -1,5 +1,6 @@
-// The customer record and its edit rules. These mirror
-// internal/customer/customer.go so either server gives the same answers.
+// The customer record and its edit rules. The JSON field names match
+// internal/customer/customer.go in the Go client, and validation errors
+// name the terminal's input fields (e.g. "addr", "limit").
 
 import { HttpError, int, str } from "./http";
 

@@ -1,5 +1,5 @@
-// Customer information API on Cloudflare Workers, backed by D1. It serves
-// the same contract as cmd/customer-api, so the terminal works with either:
+// Customer information API on Cloudflare Workers, backed by D1. The Go
+// terminal's client for it is internal/api/client.go.
 //
 //	GET    /v1/health
 //	POST   /v1/session              {"userid","password"} -> {"token",...}

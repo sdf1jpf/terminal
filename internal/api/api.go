@@ -1,5 +1,5 @@
-// Package api is the customer information REST API: the server that owns
-// the data and the client the terminal uses to reach it.
+// Package api is the terminal's client for the customer information REST
+// API, which is served by the Cloudflare Worker in worker/.
 //
 //	GET    /v1/health
 //	POST   /v1/session              {"userid","password"} -> {"token",...}
@@ -26,6 +26,8 @@ var (
 	ErrConflict     = errors.New("record was changed by another user")
 	ErrUnavailable  = errors.New("host not responding")
 )
+
+// Wire types and error codes; keep in step with worker/src.
 
 type LogonRequest struct {
 	UserID   string `json:"userid"`
@@ -55,6 +57,4 @@ const (
 	codeNotFound     = "not_found"
 	codeConflict     = "conflict"
 	codeInvalid      = "invalid"
-	codeBadRequest   = "bad_request"
-	codeInternal     = "internal"
 )

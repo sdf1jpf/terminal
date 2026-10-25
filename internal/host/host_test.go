@@ -1,40 +1,17 @@
 package host
 
 import (
-	"io"
-	"log"
-	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/sdf1jpf/terminal/internal/api"
-	"github.com/sdf1jpf/terminal/internal/store"
 	t3 "github.com/sdf1jpf/terminal/internal/tn3270"
 )
 
-func TestMain(m *testing.M) {
-	log.SetOutput(io.Discard) // API request logs
-	os.Exit(m.Run())
-}
-
-// newSession connects a session to a real API server over HTTP.
 func newSession(t *testing.T) (*Session, *t3.Screen) {
 	t.Helper()
-	srv := startAPI(t)
-	s := NewSession(&Config{SystemName: "TEST", Backend: api.NewClient(srv.URL)}, "TERM0001")
+	s := NewSession(&Config{SystemName: "TEST", Backend: newFakeAPI()}, "TERM0001")
 	return s, s.Start()
-}
-
-func startAPI(t *testing.T) *httptest.Server {
-	t.Helper()
-	st, err := store.Open("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(api.NewServer(st, map[string]string{"IBMUSER": "SYS1"}).Handler())
-	t.Cleanup(srv.Close)
-	return srv
 }
 
 // get reads a record through the session's API client.
@@ -198,13 +175,22 @@ func TestServerSideValidationAndAdd(t *testing.T) {
 }
 
 func TestHostDown(t *testing.T) {
-	srv := startAPI(t)
-	s := NewSession(&Config{SystemName: "TEST", Backend: api.NewClient(srv.URL)}, "TERM0001")
+	s := NewSession(&Config{SystemName: "TEST", Backend: api.NewClient("http://127.0.0.1:1")}, "TERM0001")
 	scr := s.Start()
-	srv.Close()
 	fill(t, scr, "userid", "ibmuser", "password", "sys1")
 	s.Submit(t3.AIDEnter, scr)
 	if l := s.prog.(*logon); !strings.HasPrefix(l.msg, "CUS0298E") {
 		t.Fatalf("expected host-down message, got %q", l.msg)
+	}
+}
+
+func TestExpiredSessionReturnsToLogon(t *testing.T) {
+	s, scr := login(t)
+	s.api().(*fakeAPI).user = "" // the API forgets the session
+	fill(t, scr, "option", "1")
+	s.Submit(t3.AIDEnter, scr)
+	l, ok := s.prog.(*logon)
+	if !ok || !strings.HasPrefix(l.msg, "IKJ56400I") || s.user != "" {
+		t.Fatalf("expected logon with expiry message, got %T %+v", s.prog, s.prog)
 	}
 }

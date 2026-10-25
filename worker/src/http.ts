@@ -1,4 +1,4 @@
-// JSON helpers and the error envelope shared with the Go server:
+// JSON helpers and the error envelope the Go client expects:
 // {"error": {"code", "message", "field"?}}.
 
 export type ErrorCode =
@@ -42,7 +42,7 @@ export function errorResponse(e: HttpError): Response {
 const MAX_BODY = 1 << 20;
 
 // readJSON parses a request body as a JSON object, rejecting oversized
-// bodies and keys outside `allowed`, as the Go server does.
+// bodies and keys outside `allowed`.
 export async function readJSON(req: Request, allowed: readonly string[]): Promise<Record<string, unknown>> {
 	const text = await req.text();
 	if (text.length > MAX_BODY) throw new HttpError(413, "bad_request", "request body too large");
