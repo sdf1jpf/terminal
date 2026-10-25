@@ -13,6 +13,15 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Batch jobs: POST /v1/jobs puts a job on this queue, and the consumer
+  // starts a JobRunner workflow for it (see src/jobs.ts).
+  "queues": {
+    "producers": [{ "binding": "JOBS", "queue": "customer-jobs" }],
+    "consumers": [{ "queue": "customer-jobs", "max_batch_size": 10, "max_retries": 5 }]
+  },
+  "workflows": [
+    { "binding": "JOB_RUNNER", "name": "customer-job-runner", "class_name": "JobRunner" }
+  ],
   // Cloudflare Access guards every request; the Worker verifies its JWT.
   // Both values come from the Access application (see README).
   "vars": {

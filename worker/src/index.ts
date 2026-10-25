@@ -11,20 +11,28 @@
 //	GET    /v1/customers/{id}/transactions   activity, newest first
 //	POST   /v1/customers/{id}/transactions   post an invoice or payment
 //	GET    /v1/customers/{id}/history        change history, newest first
+//	POST   /v1/jobs                 submit a batch job: {"name"}
+//	GET    /v1/jobs                 recent jobs, newest first
+//	GET    /v1/jobs/{id}            a job and its output listing
 //
 // Everything except health is behind Cloudflare Access; see auth.ts.
 
 import { customerHistory, diff, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
+import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
 import { customerFields, parseEditable, type Customer } from "./customer";
-import { errorResponse, HttpError, json, noContent, readJSON } from "./http";
+import { errorResponse, HttpError, json, noContent, readJSON, str } from "./http";
 
 export interface Env {
 	DB: D1Database;
 	ACCESS_TEAM_DOMAIN?: string; // e.g. "example.cloudflareaccess.com"
 	ACCESS_AUD?: string; // the Access application's audience tag
 	DEV_USER?: string; // wrangler dev only, when Access is not configured
+	JOBS: Queue<JobMessage>; // the batch job input queue
+	JOB_RUNNER: Workflow<JobMessage>;
 }
+
+export { JobRunner } from "./jobs";
 
 export default {
 	async fetch(req, env): Promise<Response> {
@@ -36,7 +44,8 @@ export default {
 			return errorResponse(new HttpError(500, "internal", "internal error"));
 		}
 	},
-} satisfies ExportedHandler<Env>;
+	queue: startJobs,
+} satisfies ExportedHandler<Env, JobMessage>;
 
 async function route(req: Request, env: Env): Promise<Response> {
 	const url = new URL(req.url);
@@ -77,6 +86,23 @@ async function route(req: Request, env: Env): Promise<Response> {
 			}
 		} else {
 			throw new HttpError(404, "not_found", "no such endpoint");
+		}
+	} else if (path === "/v1/jobs") {
+		if (m === "GET") {
+			await authenticate(env, req);
+			return json(200, await listJobs(env.DB));
+		}
+		if (m === "POST") {
+			const user = await authenticate(env, req);
+			const body = await readJSON(req, ["name"]);
+			return json(202, await submitJob(env, user, str(body, "name")));
+		}
+	} else if (path.startsWith("/v1/jobs/") && path.split("/").length === 4) {
+		if (m === "GET") {
+			await authenticate(env, req);
+			const job = await getJob(env.DB, decodeURIComponent(path.slice("/v1/jobs/".length)));
+			if (!job) throw notFound();
+			return json(200, job);
 		}
 	} else {
 		throw new HttpError(404, "not_found", "no such endpoint");

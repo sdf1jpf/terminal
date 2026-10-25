@@ -147,10 +147,13 @@ One-time setup:
    **Account → D1 → Edit** to it, and limit it to the Justin Frank account.
 2. **Add it to GitHub** as a repository secret named `CLOUDFLARE_API_TOKEN`
    (Settings → Secrets and variables → Actions → New repository secret).
-3. **Set up Cloudflare Access** as in [Who can log on](#who-can-log-on), and
+3. **Let the token create the batch job queue:** add **Account → Queues →
+   Edit** to the same token, or create the queue once yourself (see
+   [Batch jobs](#batch-jobs)).
+4. **Set up Cloudflare Access** as in [Who can log on](#who-can-log-on), and
    add the service token to GitHub as repository secrets
    `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
-4. **Optionally load the demo customers** with `npm run db:seed:remote`.
+5. **Optionally load the demo customers** with `npm run db:seed:remote`.
 
 The deploy job uses a GitHub environment named `production`. To require
 approval before each deploy, add required reviewers to that environment
@@ -196,6 +199,9 @@ DELETE /v1/customers/{id}
 GET    /v1/customers/{id}/transactions   invoices and payments, newest first
 POST   /v1/customers/{id}/transactions   post one: {"type":"I"|"P","amount","reference"}
 GET    /v1/customers/{id}/history        change history, newest first
+POST   /v1/jobs                 submit a batch job: {"name":"CUSAGING"}
+GET    /v1/jobs                 recent jobs, newest first
+GET    /v1/jobs/{id}            a job and its output listing
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -266,6 +272,28 @@ below shows each posting with the balance it left. Option 6 opens **CHANGE
 HISTORY**, which also works for a deleted customer. On the inquiry screen
 these are PF5 and PF6, and on the browse list the selection codes `A` and `H`.
 
+## Batch jobs
+
+Batch work runs the way it would under JES. Submitting a job records it as
+`QUEUED` and puts it on the `customer-jobs`
+[Cloudflare Queue](https://developers.cloudflare.com/queues/), the input
+queue. The queue's consumer starts a `JobRunner`
+[Workflow](https://developers.cloudflare.com/workflows/) for the job. Each job
+step is a durable workflow step that is retried if it fails. The job shows as
+`EXECUTING` while it runs, then `OUTPUT` with its highest condition code
+(`0000`, `0004`, or `ABEND`) and a JES-style output listing.
+
+| Job | What it does |
+| --- | --- |
+| `CUSAGING` | Aged balances report. Payments are applied to the oldest invoices first, and each balance is split into current, 31-60, 61-90 and over 90 days. RC 0004 if anything is over 90 days. |
+| `CUSCRREV` | Credit review. STEP010 lists active accounts at 90% of their limit or more. STEP020 puts active accounts that are over their limit on hold, and records each hold in the change history as made by `CUSCRREV`. RC 0004 if it held any. |
+| `CUSSTMT` | Statements for every open account with a balance, with the last 30 days of activity. |
+
+The deploy job creates the queue the first time, which needs
+**Account → Queues → Edit** on the `CLOUDFLARE_API_TOKEN`. You can also
+create it yourself with `npx wrangler queues create customer-jobs`. Wrangler
+creates the workflow when it deploys.
+
 ## Printing a screen
 
 Ctrl+P saves the screen as a text file, like a 3270 local copy, and the status
@@ -306,7 +334,7 @@ internal/host/       the application screens; they call a Backend interface
 internal/api/        HTTP client for the API (implements host.Backend)
 internal/customer/   the customer record exchanged with the API
 worker/              the API: Cloudflare Worker + D1 (TypeScript)
-  src/               routes, auth, validation
+  src/               routes, auth, validation, batch jobs
   migrations/        D1 schema
   seed.sql           demo customers
   test/              API tests (vitest, Workers runtime)
