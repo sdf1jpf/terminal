@@ -38,8 +38,16 @@ export interface ActivityState {
 	back: State;
 	id?: string;
 	top?: number;
-	vals?: Record<string, string>; // posting fields kept across a failed post
 	errField?: string;
+	msg?: string;
+}
+export interface EventState {
+	p: "event";
+	back: State;
+	id: string; // the customer
+	kind: "A" | "V" | "T"; // audit row, invoice, transaction
+	key: string;
+	line: number; // its line on the event history
 	msg?: string;
 }
 export interface HistoryState { p: "history"; back: State; id?: string; top?: number; errField?: string; msg?: string }
@@ -89,7 +97,7 @@ export interface InvoiceState {
 }
 
 export type State =
-	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | HistoryState
+	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState | HistoryState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState;
 
 // Input is what the operator sent with the AID key.

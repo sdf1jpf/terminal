@@ -1,6 +1,7 @@
 import { introspectWorkflowInstance } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { addLine, billInvoice, createInvoice, payInvoice } from "../src/invoices";
 import { accessJWT } from "./access";
 
 const worker = (exports as unknown as { default: Fetcher }).default;
@@ -252,44 +253,72 @@ describe("customer screens", () => {
 });
 
 describe("activity and history screens", () => {
-	it("posts invoices and payments, and moves between activity and history", async () => {
+	it("numbers the event history and shows an event's details by line number", async () => {
 		const t = await Terminal.logon();
 		await t.fill("option", "5 104").send("ENTER");
 		expect(t.scr.map).toBe("CUSM03");
+		expect(t.row(1)).toContain("EVENT HISTORY");
 		expect(t.row(4)).toContain("DELTA MARINE SUPPLY");
-		expect(t.row(13)).toContain("NO ACTIVITY ON FILE");
-		expect(t.scr.cursor).toEqual({ field: "type" });
+		expect(t.row(11)).toContain("NO EVENTS ON FILE");
+		expect(t.scr.cursor).toEqual({ field: "line" });
 
-		await t.fill("type", "x", "amount", "500").send("ENTER");
-		expect(t.message).toMatch(/^CUS0240E/);
-		expect(t.scr.cursor).toEqual({ field: "type" });
-		expect(t.field("amount")?.value).toBe("500");
+		const inv = await createInvoice(env.DB, "IBMUSER", "000104", "AUDIT-1");
+		await addLine(env.DB, inv.id, "BRG-6310", 4);
+		await billInvoice(env.DB, "IBMUSER", inv.id);
+		await payInvoice(env.DB, "IBMUSER", inv.id);
+		await t.send("ENTER");
+		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* PAYMENT  ${inv.id} +-\\$124 IBMUSER`));
+		expect(t.row(12)).toMatch(new RegExp(`^ +2 .* BILLED   ${inv.id} +\\$124 IBMUSER`));
+		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* OPENED   ${inv.id} PO AUDIT-1`));
 
-		await t.fill("type", "i", "ref", "inv 1001").send("ENTER");
-		expect(t.message).toBe("CUS0245I INVOICE OF $500 POSTED - BALANCE NOW $500");
-		await t.fill("type", "p", "amount", "900").send("ENTER");
-		expect(t.message).toBe("CUS0245I PAYMENT OF $900 POSTED - BALANCE NOW -$400");
-		expect(t.row(13)).toMatch(/PAYMENT .* -\$900 .* -\$400  IBMUSER/);
-		expect(t.row(14)).toContain("INV 1001");
+		await t.fill("line", "9").send("ENTER");
+		expect(t.message).toBe("CUS0246E LINE MUST BE 1 TO 3");
+		expect(t.scr.cursor).toEqual({ field: "line" });
+		await t.fill("line", "2").send("ENTER");
+		expect(t.scr.map).toBe("CUSM05");
+		expect(t.row(4)).toContain("LINE 2");
+		expect(t.row(6)).toContain("INVOICE BILLED");
+		expect(t.row(9)).toContain("$0"); // balance before
+		expect(t.row(10)).toContain("$124"); // balance after
+		expect(t.row(15)).toContain(`INVOICE ${inv.id}  PAID  PO AUDIT-1  TOTAL $124`);
+		expect(t.row(18)).toMatch(/1 BRG-6310 +BALL BEARING 6310-ZZ +4 +\$31 +\$124/);
+		await t.send("PF4");
+		expect(t.scr.map).toBe("CUSI02");
+		await t.send("PF3");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM03");
+
+		await t.fill("line", "3").send("ENTER");
+		expect(t.row(6)).toContain("INVOICE OPENED");
+		expect(t.row(10)).toContain(`INVOICE ${inv.id}`);
+		await t.send("PF3");
 
 		await t.send("PF6");
 		expect(t.scr.map).toBe("CUSM04");
-		// PF5 goes back to the same activity screen, so PF3 then leaves it.
+		// PF5 goes back to the same event history, so PF3 then leaves it.
 		await t.send("PF5");
 		expect(t.scr.map).toBe("CUSM03");
-		expect(t.row(13)).toContain("PAYMENT");
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI01");
+		expect(t.row(9)).toContain(inv.id);
+		await t.send("PF3");
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSM00");
 	});
 
-	it("refreshes the inquiry balance after posting", async () => {
+	it("lists record changes as events", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "2 113").send("ENTER");
+		await t.fill("option", "2 117").send("ENTER");
+		await t.send("PF4");
+		await t.fill("city", "montpelier").send("ENTER");
 		await t.send("PF5");
-		await t.fill("type", "i", "amount", "1250").send("ENTER");
-		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM02");
-		expect(t.row(6)).toContain("$20,000");
+		expect(t.scr.map).toBe("CUSM03");
+		expect(t.row(11)).toMatch(/^ +1 .* CHANGED  CITY BARRE > MONTPELIER/);
+		await t.fill("line", "1").send("ENTER");
+		expect(t.row(6)).toContain("RECORD CHANGED");
+		expect(t.row(8)).toContain("BARRE");
+		expect(t.row(9)).toContain("MONTPELIER");
+		expect(t.row(t.scr.rows)).not.toContain("PF4");
 	});
 
 	it("keeps the history after the customer is deleted", async () => {
@@ -345,16 +374,15 @@ describe("search and field help", () => {
 
 	it("explains the field the cursor is in, and goes on to the tutorial", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "5 104").send("ENTER");
-		t.cursorField = "type";
+		await t.fill("option", "8").send("ENTER");
+		t.cursorField = "filter";
 		await t.send("PF1");
 		expect(t.scr.map).toBe("CUSH01");
-		expect(t.row(1)).toContain("HELP - TYPE");
-		expect(t.row(4)).toContain("I  invoice");
+		expect(t.row(1)).toContain("HELP - SKU STARTS WITH");
 		await t.send("PF1");
 		expect(t.scr.map).toBe("CUSH00");
 		await t.send("PF3");
-		expect(t.scr.map).toBe("CUSM03");
+		expect(t.scr.map).toBe("CUSP01");
 
 		// Browse's status field is a search, so its help says so.
 		await t.send("PF3");
@@ -454,6 +482,22 @@ describe("invoice screens", () => {
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSI01");
 		expect(t.row(9)).toMatch(new RegExp(`${id} 000110 +PO 99 +PAID`));
+		expect(t.row(5)).toMatch(/BALANCE \$4,100 +LIMIT \$30,000 +AVAILABLE \$25,900 +UNPAID \$0/);
+	});
+
+	it("marks a billed invoice paid from the list", async () => {
+		const inv = await createInvoice(env.DB, "IBMUSER", "000119", "");
+		await addLine(env.DB, inv.id, "PLT-4848", 10);
+		await billInvoice(env.DB, "IBMUSER", inv.id);
+		const t = await Terminal.logon();
+		await t.fill("option", "9 119").send("ENTER");
+		expect(t.row(5)).toMatch(/BALANCE \$740 .* UNPAID \$140/);
+		expect(t.row(9)).toMatch(/BILLED/);
+		await t.fill(`sel:${inv.id}`, "p").send("ENTER");
+		expect(t.message).toBe(`CUS0508I INVOICE ${inv.id} PAID, $140 PAYMENT POSTED - BALANCE NOW $600`);
+		expect(t.row(9)).toMatch(/PAID/);
+		await t.fill(`sel:${inv.id}`, "p").send("ENTER");
+		expect(t.message).toMatch(/^CUS0519E INVOICE .* IS ALREADY PAID/);
 	});
 
 	it("cancels an open invoice with PF9 twice", async () => {

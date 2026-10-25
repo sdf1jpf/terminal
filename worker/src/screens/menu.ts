@@ -11,7 +11,7 @@ const options = [
 	["2", "INQUIRY", "Display a customer by number"],
 	["3", "ADD", "Add a new customer"],
 	["4", "REPORTS", "Credit exposure summary"],
-	["5", "ACTIVITY", "Post invoices and payments"],
+	["5", "EVENTS", "Event history: changes, invoices, payments"],
 	["6", "HISTORY", "Who changed a customer, and when"],
 	["7", "JOBS", "Submit batch jobs and view their output"],
 	["8", "PRODUCTS", "Product file and stock on hand"],
@@ -95,6 +95,7 @@ export const menu: Program<MenuState> = {
 			case "REPORTS":
 				return { p: "report" };
 			case "5":
+			case "EVENTS":
 			case "ACTIVITY":
 				return newActivity(ctx, m, arg);
 			case "6":

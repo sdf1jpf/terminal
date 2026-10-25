@@ -10,7 +10,7 @@ Worker.
  SYS1 CUSTOMER INFORMATION SYSTEM                                    11:23:06
 
  NAME STARTS WITH ===> ____________________                ROW 1 TO 13 OF 24
- SELECT: S=SHOW  U=UPDATE  D=DELETE  A=ACTIVITY  H=HISTORY
+ SELECT: S=SHOW  U=UPDATE  D=DELETE  A=EVENTS  H=HISTORY  I=INVOICES
  CITY ===> __________________  STATE ===> __  STATUS ===> _  A/H/C
  S CUST NO  NAME                     CITY            ST      BALANCE STAT
  -----------------------------------------------------------------------------
@@ -318,8 +318,10 @@ one (CUSP02). Products are never deleted, only discontinued (status `D`).
 ## Invoices
 
 Menu option 9 (`9 000105`), or the selection code `I` on the browse list,
-opens the **INVOICE LIST** (CUSI01) for a customer, newest first; leave the
-customer number blank to list every invoice. PF5 opens a new invoice for an
+opens the **INVOICE LIST** (CUSI01) for a customer, newest first, with the
+account's balance, credit limit, available credit and unpaid invoices; leave
+the customer number blank to list every invoice. `S` shows an invoice and
+`P` marks a billed one paid. PF5 opens a new invoice for an
 active customer, and `S` shows one on the **INVOICE** screen (CUSI02).
 
 An invoice goes OPEN, then BILLED, then PAID:
@@ -339,13 +341,19 @@ The same steps are in the API under `/v1/invoices` (see the route list in
 Each step runs as one D1 transaction, so stock, the invoice and the
 customer's balance always move together.
 
-## Account activity and change history
+## Event history and change history
 
-From the menu, option 5 (`5 000105`) opens **ACCOUNT ACTIVITY**: type `I` or
-`P`, an amount and an optional reference, and press Enter to post. The list
-below shows each posting with the balance it left. Option 6 opens **CHANGE
-HISTORY**, which also works for a deleted customer. On the inquiry screen
-these are PF5 and PF6, and on the browse list the selection codes `A` and `H`.
+From the menu, option 5 (`5 000105`) opens the customer's **EVENT HISTORY**
+(CUSM03): every record change, invoice opened, invoice billed and payment
+posted, newest first, with the account's balance, limit and available
+credit above. Each line is numbered: type a number in `SHOW LINE` and press
+Enter to see that event on **EVENT DETAIL** (CUSM05), including the
+invoice and its lines; PF4 there opens the invoice. The screen is read only:
+charges and payments come from the invoice screens (option 9).
+
+Option 6 opens **CHANGE HISTORY**, which also works for a deleted customer.
+On the inquiry screen these are PF5 and PF6, and on the browse list the
+selection codes `A` and `H`.
 
 ## Batch jobs
 
