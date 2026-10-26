@@ -318,7 +318,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 1 | CUSTOMERS | 1 Browse, 2 Inquiry, 3 Add, 4 Event history |
 | 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox |
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
-| 4 | ACCOUNTING | 1 General ledger, 2 Credit exposure report |
+| 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
 | 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output |
 | T, X | | Tutorial, log off |
 
@@ -520,6 +520,26 @@ ledger began. Each source row is journaled once.
 
 The trial balance and entries are also at `/v1/ledger`.
 
+## Reports and dashboard
+
+Menu option 4.2 opens the **REPORTS MENU** (CUSM42). The reports are drawn as
+character charts, the way a report writer on a 3270 would draw them, and PF9
+prints the whole of any of them to the spool at 80 columns.
+
+| Option | Panel | Shows |
+|---|---|---|
+| 4.2.1 `DASHBOARD` | CUSR05 | Sales this month, last month and a 12-month trend line; receivables with a bar split by aging bucket; inventory value, turns and products at their reorder point; accounts on hold or near their limit. PF4, PF6 and PF10 open the sales, aging and turns reports. |
+| 4.2.2 `SALES` | CUSR02 | Invoices posted (`##`) and payments collected (`==`) per month for the last 12 months as a bar chart, with the figures under it. |
+| 4.2.3 `AGING` | CUSR03 | Receivables in the CURRENT, 31-60, 61-90 and OVER 90 buckets as bars, then every account with a balance, oldest money first. Aged the same way as the `CUSAGING` job. |
+| 4.2.4 `TURNS` | CUSR04 | Inventory at cost, cost of sales and turns a year, then each product's turns as a bar: red under 1, yellow under 4. |
+| 4.2.5 `CREDIT` | CUSR01 | The credit exposure summary. |
+
+Turns are annualized from the last 365 days of billed invoice lines and
+goods received, or from the days since the first of them if that is
+shorter (but at least 30). Opening stock is today's stock plus what was
+sold less what was received, and turns are the cost of sales over the
+average of opening and closing stock.
+
 ## Batch jobs
 
 Batch work runs the way it would under JES. Submitting a job records it as
@@ -598,8 +618,8 @@ newest 10,000 lines.
 
 Job output and printed reports are held on the spool until someone deals
 with them, as under JES. Every job's output listing goes there under the
-job's ID when the job ends, and PF9 on the credit exposure summary (option 4.2)
-prints the report to it under a TSU ID, as from a TSO session.
+job's ID when the job ends, and PF9 on any of the reports (option 4.2) prints
+the report to it under a TSU ID, as from a TSO session.
 
 Menu option 5.4 (`5.4 CUS` for jobs starting CUS) opens the **HELD OUTPUT
 QUEUE** (CUSQ01), like SDSF's H panel. Beside an output group, `S` browses it
