@@ -1,7 +1,8 @@
 // Email, through Cloudflare Email Routing on the company's domain.
 //
-// Out: statements and dunning letters filed in the archive are mailed as
-// PDF attachments (job steps CUSSTMT.STEP020 and CUSDUNN.STEP020). The
+// Out: statements, dunning letters and commission statements filed in the
+// archive are mailed as PDF attachments (job steps CUSSTMT.STEP020,
+// CUSDUNN.STEP020 and CUSCOMM.STEP020). The
 // demo's customers are not real, so every message goes to one verified
 // address, the binding's destination (MAIL_TO), and names the customer it
 // is for. Each archived document is mailed once: a statement is filed per
@@ -98,7 +99,7 @@ async function record(db: D1Database, m: Omit<Mail, "seq" | "at">, log: string):
 
 // mailStep mails the documents of one kind that the job filed in the
 // archive, each once. Without mail set up it says so and ends with RC 4.
-export function mailStep(kind: "S" | "D") {
+export function mailStep(kind: "S" | "D" | "M") {
 	return async (_db: D1Database, job: Job, env: Env): Promise<StepResult> => {
 		const { results } = await env.DB.prepare(
 			"SELECT * FROM archive WHERE kind = ? AND archived_by = ? AND archived >= ? ORDER BY key",

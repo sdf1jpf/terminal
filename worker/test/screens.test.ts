@@ -1122,7 +1122,8 @@ describe("operator console", () => {
 		expect(t.scr.map).toBe("CUSO02");
 		expect(t.row(9)).toMatch(/CUSAGING 15 6 \* \* \* +ACTIVE \d{4}-\d\d-\d\d \d\d:15/);
 		expect(t.row(10)).toMatch(/CUSARCH +0 5 \* \* \* +ACTIVE/);
-		expect(t.row(13)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
+		expect(t.row(11)).toMatch(/CUSCOMM +0 6 1 \* \* +ACTIVE/);
+		expect(t.row(14)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
 
 		await t.fill("job", "cusstmt", "cron", "0 7 31 2 *").send("ENTER");
 		expect(t.message).toBe("CUS0702I SCHEDULE CUSSTMT SET TO 0 7 31 2 *");
@@ -1133,12 +1134,12 @@ describe("operator console", () => {
 		await t.fill("job", "nosuch", "cron", "@daily").send("ENTER");
 		expect(t.scr.cursor).toEqual({ field: "job" });
 
-		await t.fill("sel4", "r").send("ENTER"); // EDISIM
+		await t.fill("sel5", "r").send("ENTER"); // EDISIM, after CUSCOMM
 		expect(t.message).toBe("CUS0703I SCHEDULE EDISIM RELEASED");
-		expect(t.row(13)).toMatch(/EDISIM +0 \* \* \* \* +ACTIVE/);
-		await t.fill("sel4", "h").send("ENTER");
-		expect(t.row(13)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
-		await t.fill("sel3", "d").send("ENTER");
+		expect(t.row(14)).toMatch(/EDISIM +0 \* \* \* \* +ACTIVE/);
+		await t.fill("sel5", "h").send("ENTER");
+		expect(t.row(14)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
+		await t.fill("sel4", "d").send("ENTER");
 		expect(t.message).toBe("CUS0704I SCHEDULE CUSSTMT DELETED");
 		await t.fill("sel0", "x").send("ENTER");
 		expect(t.message).toMatch(/^CUS0103E/);

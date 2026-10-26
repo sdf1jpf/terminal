@@ -20,6 +20,7 @@ export interface Salesperson {
 	id: string;
 	name: string;
 	comm_pct10: number;
+	quota: number; // monthly net sales, whole dollars
 	status: "A" | "I";
 	updated: string;
 	updated_by: string;
@@ -83,23 +84,26 @@ export async function listSalespeople(db: D1Database): Promise<Salesperson[]> {
 // salesperson who still has territories or customers cannot be made
 // inactive.
 export async function saveSalesperson(
-	db: D1Database, user: string, id: string, f: { name: string; comm: string; status: string },
+	db: D1Database, user: string, id: string, f: { name: string; comm: string; status: string; quota?: string },
 ): Promise<Salesperson> {
 	const name = f.name.trim().toUpperCase();
 	if (name === "") throw bad("name", "salesperson name is required");
 	if (name.length > 24) throw bad("name", "salesperson name is limited to 24 characters");
 	const comm = parsePct("comm", f.comm || "0", 500);
 	const status = (f.status.trim().toUpperCase() || "A") as Salesperson["status"];
+	const q = (f.quota ?? "").trim().replace(/^\$/, "").replace(/,/g, "") || "0";
+	if (!/^\d{1,9}$/.test(q)) throw bad("quota", "the monthly quota is a whole number of dollars");
+	const quota = Number(q);
 	if (status !== "A" && status !== "I") throw bad("status", "status must be A (active) or I (inactive)");
 	const ts = now();
 	if (!id) {
 		const [, row] = await db.batch<Salesperson>([
 			db.prepare("INSERT OR IGNORE INTO counters (name, value) SELECT 'salesperson_id', COUNT(*) FROM salespeople"),
 			db.prepare(
-				`INSERT INTO salespeople (id, name, comm_pct10, status, updated, updated_by)
-				 SELECT printf('S%02d', value + 1), ?1, ?2, ?3, ?4, ?5 FROM counters WHERE name = 'salesperson_id'
+				`INSERT INTO salespeople (id, name, comm_pct10, status, quota, updated, updated_by)
+				 SELECT printf('S%02d', value + 1), ?1, ?2, ?3, ?6, ?4, ?5 FROM counters WHERE name = 'salesperson_id'
 				 RETURNING *`,
-			).bind(name, comm, status, ts, user),
+			).bind(name, comm, status, ts, user, quota),
 			db.prepare("UPDATE counters SET value = value + 1 WHERE name = 'salesperson_id'"),
 		]);
 		return row.results[0];
@@ -113,8 +117,8 @@ export async function saveSalesperson(
 		if (used?.customer) throw bad("status", `${id} is still assigned to customer ${used.customer} - reassign it first`);
 	}
 	const row = await db.prepare(
-		"UPDATE salespeople SET name = ?2, comm_pct10 = ?3, status = ?4, updated = ?5, updated_by = ?6 WHERE id = ?1 RETURNING *",
-	).bind(id, name, comm, status, ts, user).first<Salesperson>();
+		"UPDATE salespeople SET name = ?2, comm_pct10 = ?3, status = ?4, quota = ?7, updated = ?5, updated_by = ?6 WHERE id = ?1 RETURNING *",
+	).bind(id, name, comm, status, ts, user, quota).first<Salesperson>();
 	if (!row) throw new HttpError(404, "not_found", `salesperson ${id} not found`);
 	return row;
 }
@@ -583,47 +587,103 @@ export interface SalesRow {
 	invoices: number;
 	list: number; // what the lines come to at list
 	discount: number; // list less what was charged
-	net: number; // what was charged
+	net: number; // what was charged, before tax
 	comm_pct10: number; // salesperson rows only
 	commission: number;
+	quota: number; // salesperson rows only: the monthly quota
 }
+
+// commissionOn is the commission on one invoice's net sales, rounded to
+// the dollar; a salesperson's commission is the sum over their invoices.
+export const commissionOn = (net: number, pct10: number) => Math.round((net * pct10) / 1000);
 
 // salesBy totals the invoices billed in a month (YYYY-MM, UTC) by the
 // territory or the salesperson recorded on them. Net sales leave out sales
-// tax. Commission is the salesperson's rate on net sales.
+// tax. Commission is the salesperson's rate on each invoice's net sales.
 export async function salesBy(db: D1Database, by: "T" | "S", month: string): Promise<SalesRow[]> {
 	const col = by === "T" ? "territory" : "salesperson";
 	const { results } = await db.prepare(
-		`SELECT i.${col} AS key, COUNT(*) AS invoices, SUM(i.subtotal) AS net,
-		        SUM((SELECT COALESCE(SUM(l.quantity * l.list_price), 0) FROM invoice_lines l WHERE l.invoice_id = i.id)) AS list
-		 FROM invoices i WHERE i.status IN ('B', 'P') AND substr(i.billed, 1, 7) = ?1
-		 GROUP BY i.${col} ORDER BY i.${col}`,
-	).bind(month).all<{ key: string; invoices: number; net: number; list: number }>();
-	const names = new Map<string, { name: string; comm: number }>();
+		`SELECT i.${col} AS key, i.subtotal AS net,
+		        (SELECT COALESCE(SUM(l.quantity * l.list_price), 0) FROM invoice_lines l WHERE l.invoice_id = i.id) AS list
+		 FROM invoices i WHERE i.status IN ('B', 'P') AND substr(i.billed, 1, 7) = ?1`,
+	).bind(month).all<{ key: string; net: number; list: number }>();
+	const names = new Map<string, { name: string; comm: number; quota: number; active: boolean }>();
 	if (by === "T") {
-		for (const t of await listTerritories(db)) names.set(t.code, { name: t.name, comm: 0 });
+		for (const t of await listTerritories(db)) names.set(t.code, { name: t.name, comm: 0, quota: 0, active: true });
 	} else {
-		for (const s of await listSalespeople(db)) names.set(s.id, { name: s.name, comm: s.comm_pct10 });
+		for (const s of await listSalespeople(db)) names.set(s.id, { name: s.name, comm: s.comm_pct10, quota: s.quota, active: s.status === "A" });
 	}
-	// Every territory or active salesperson gets a row, sales or not.
+	// Every territory or active salesperson gets a row, sales or not, and
+	// anyone else who sold something.
 	const rows = new Map<string, SalesRow>();
 	const row = (key: string): SalesRow => {
 		let r = rows.get(key);
 		if (!r) {
 			const n = names.get(key);
-			r = { key, name: n?.name ?? (key ? "(NOT ON FILE)" : "HOUSE ACCOUNTS"), invoices: 0, list: 0, discount: 0, net: 0, comm_pct10: n?.comm ?? 0, commission: 0 };
+			r = {
+				key, name: n?.name ?? (key ? "(NOT ON FILE)" : "HOUSE ACCOUNTS"), invoices: 0, list: 0, discount: 0, net: 0,
+				comm_pct10: n?.comm ?? 0, commission: 0, quota: n?.quota ?? 0,
+			};
 			rows.set(key, r);
 		}
 		return r;
 	};
-	for (const [key] of names) row(key);
+	for (const [key, n] of names) if (n.active) row(key);
 	for (const r of results) {
 		const x = row(r.key);
-		x.invoices = r.invoices;
-		x.net = r.net;
-		x.list = Math.max(r.list, r.net);
-		x.discount = x.list - r.net;
-		x.commission = Math.round((r.net * x.comm_pct10) / 1000);
+		x.invoices++;
+		x.net += r.net;
+		x.list += Math.max(r.list, r.net);
+		x.discount = x.list - x.net;
+		if (by === "S" && r.key) x.commission += commissionOn(r.net, x.comm_pct10);
 	}
 	return [...rows.values()].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : a.key.localeCompare(b.key)));
+}
+
+// ---- commission statements (CUSCOMM) ----
+
+// commissionMonth is the month CUSCOMM reports on a day: the month just
+// ended during the first five days of a month, else the month so far.
+export function commissionMonth(at = new Date()): string {
+	const d = at.getUTCDate() <= 5 ? new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 1, 1)) : at;
+	return d.toISOString().slice(0, 7);
+}
+
+const money = (n: number) => (n < 0 ? "-" : "") + "$" + Math.abs(n).toLocaleString("en-US");
+const lpad = (s: string | number, n: number) => String(s).slice(0, n).padStart(n);
+const rpad = (s: string | number, n: number) => String(s).slice(0, n).padEnd(n);
+
+// commissionStatement prints a salesperson's statement for a month: each
+// invoice billed and credited to them, its net sales and commission, and
+// the month against their quota.
+export async function commissionStatement(db: D1Database, sp: Salesperson, month: string): Promise<{ lines: string[]; net: number; commission: number }> {
+	const { results } = await db.prepare(
+		`SELECT i.id, i.customer_id, COALESCE(c.name, '(DELETED)') AS name, i.billed, i.subtotal
+		 FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+		 WHERE i.salesperson = ?1 AND i.status IN ('B', 'P') AND substr(i.billed, 1, 7) = ?2 ORDER BY i.billed, i.id`,
+	).bind(sp.id, month).all<{ id: string; customer_id: string; name: string; billed: string; subtotal: number }>();
+	let net = 0;
+	let commission = 0;
+	const lines = [
+		`COMMISSION STATEMENT   ${sp.id} ${sp.name}   MONTH ${month}`,
+		`COMMISSION RATE ${pct(sp.comm_pct10)} OF NET SALES (BEFORE TAX)`,
+		"",
+		`${rpad("INVOICE", 9)} ${rpad("CUSTOMER", 32)} ${rpad("BILLED", 10)} ${lpad("NET SALES", 12)} ${lpad("COMMISSION", 11)}`,
+		"-".repeat(78),
+	];
+	for (const r of results) {
+		const c = commissionOn(r.subtotal, sp.comm_pct10);
+		net += r.subtotal;
+		commission += c;
+		lines.push(`${rpad(r.id, 9)} ${rpad(`${r.customer_id} ${r.name}`, 32)} ${r.billed.slice(0, 10)} ${lpad(money(r.subtotal), 12)} ${lpad(money(c), 11)}`);
+	}
+	if (results.length === 0) lines.push("NO INVOICES BILLED FOR THIS SALESPERSON IN THE MONTH");
+	lines.push("-".repeat(78), `${rpad(`TOTAL, ${results.length} INVOICE${results.length === 1 ? "" : "S"}`, 53)} ${lpad(money(net), 12)} ${lpad(money(commission), 11)}`, "");
+	if (sp.quota > 0) {
+		const att = ((net * 100) / sp.quota).toFixed(1);
+		lines.push(`MONTHLY QUOTA ${money(sp.quota)}   ACTUAL ${money(net)}   ${att}% OF QUOTA${net >= sp.quota ? " - QUOTA MADE" : ""}`);
+	} else {
+		lines.push("NO QUOTA SET");
+	}
+	return { lines, net, commission };
 }

@@ -360,14 +360,15 @@ export const salespeople: Program<SalespeopleState> = {
 		scr.input(4, 63, 5, "comm", s.vals?.comm ?? "", { bright: s.errField === "comm" });
 		label(scr, 5, 51, "STATUS ===>");
 		scr.input(5, 63, 1, "status", s.vals?.status ?? "", { bright: s.errField === "status" });
-		scr.text(5, 2, "LEAVE ID BLANK TO ADD ONE", { color: "blue" });
-		scr.text(6, 2, "SELECT: U=CHANGE    STATUS A=ACTIVE I=INACTIVE", { color: "blue" });
-		scr.text(8, 2, "S ID  NAME                     COMM   STATUS    CUST  TERRITORIES", { color: "white", bright: true });
+		label(scr, 5, 15, "MONTHLY QUOTA ===>");
+		scr.input(5, 34, 9, "quota", s.vals?.quota ?? "", { numeric: true, bright: s.errField === "quota" });
+		scr.text(6, 2, "SELECT: U=CHANGE    STATUS A=ACTIVE I=INACTIVE    LEAVE ID BLANK TO ADD ONE", { color: "blue" });
+		scr.text(8, 2, "S ID  NAME                     COMM       QUOTA  STATUS    CUST  TERRITORIES", { color: "white", bright: true });
 		scr.text(9, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		list.slice(0, ctx.rows - 12).forEach((r, i) => {
 			scr.input(10 + i, 2, 1, `sel:${r.id}`, "", { bright: s.errSel === r.id });
 			const covers = terrs.filter((t) => t.salesperson === r.id).map((t) => t.code).join(" ") || "-";
-			scr.text(10 + i, 4, `${pad(r.id, 3)} ${pad(r.name, 24)} ${lpad(pct(r.comm_pct10), 5)}  ${pad(r.status === "A" ? "ACTIVE" : "INACTIVE", 8)} ${lpad(custs.get(r.id) ?? 0, 5)}  ${covers}`
+			scr.text(10 + i, 4, `${pad(r.id, 3)} ${pad(r.name, 24)} ${lpad(pct(r.comm_pct10), 5)} ${lpad(r.quota ? money(r.quota) : "-", 10)}  ${pad(r.status === "A" ? "ACTIVE" : "INACTIVE", 8)} ${lpad(custs.get(r.id) ?? 0, 5)}  ${covers}`
 				.slice(0, scr.cols - 5), { color: r.status === "A" ? "turquoise" : "pink" });
 		});
 		const house = custs.get("") ?? 0;
@@ -396,14 +397,14 @@ export const salespeople: Program<SalespeopleState> = {
 		}
 		const f = input.fields;
 		s.vals = { sid: (f.sid ?? "").trim().toUpperCase(), name: (f.name ?? "").trim().toUpperCase(),
-			comm: (f.comm ?? "").trim(), status: (f.status ?? "").trim().toUpperCase() };
+			comm: (f.comm ?? "").trim(), status: (f.status ?? "").trim().toUpperCase(), quota: (f.quota ?? "").trim() };
 		for (const [name, v] of Object.entries(f)) {
 			const code = v.trim().toUpperCase();
 			if (!name.startsWith("sel:") || code === "") continue;
 			const id = name.slice(4);
 			const r = (await listSalespeople(ctx.db)).find((x) => x.id === id);
 			if (r && code === "U") {
-				s.vals = { sid: r.id, name: r.name, comm: pct(r.comm_pct10).replace("%", ""), status: r.status };
+				s.vals = { sid: r.id, name: r.name, comm: pct(r.comm_pct10).replace("%", ""), status: r.status, quota: r.quota ? String(r.quota) : "" };
 				s.msg = `CUS0622I CHANGE ${r.id} ABOVE AND PRESS ENTER`;
 				return s;
 			}
@@ -411,9 +412,9 @@ export const salespeople: Program<SalespeopleState> = {
 			s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
 			return s;
 		}
-		if (!s.vals.sid && !s.vals.name && !s.vals.comm && !s.vals.status) return s;
+		if (Object.values(s.vals).every((v) => v === "")) return s;
 		try {
-			const r = await saveSalesperson(ctx.db, ctx.user, s.vals.sid, { name: s.vals.name, comm: s.vals.comm, status: s.vals.status });
+			const r = await saveSalesperson(ctx.db, ctx.user, s.vals.sid, { name: s.vals.name, comm: s.vals.comm, status: s.vals.status, quota: s.vals.quota });
 			s.msg = `CUS0620I SALESPERSON ${r.id} ${r.name} SAVED, COMMISSION ${pct(r.comm_pct10)}`;
 			s.vals = undefined;
 		} catch (e) {
@@ -433,18 +434,26 @@ function shiftMonth(month: string, by: number): string {
 	return new Date(Date.UTC(y, m - 1 + by, 1)).toISOString().slice(0, 7);
 }
 
-type ReportRow = Pick<SalesRow, "key" | "name" | "invoices" | "discount" | "net" | "list" | "comm_pct10" | "commission">;
+type ReportRow = Pick<SalesRow, "key" | "name" | "invoices" | "discount" | "net" | "list" | "comm_pct10" | "commission" | "quota">;
 
 // reportLine lays out a row of the report, or with total its total line.
+// By territory it shows the discounts given; by salesperson, net sales
+// against quota and the commission.
 function reportLine(by: "T" | "S", r: ReportRow, total = false): string {
-	const disc = r.list > 0 ? `${((r.discount * 100) / r.list).toFixed(1)}%` : "";
-	const base = `${pad(total ? "" : r.key || "-", 4)} ${pad(r.name, 18)} ${lpad(r.invoices, 5)} ${lpad(money(r.discount), 11)} ${lpad(money(r.net), 12)} ${lpad(disc, 6)}`;
-	return by === "S" ? `${base} ${lpad(r.key && !total ? pct(r.comm_pct10) : "", 5)} ${lpad(money(r.commission), 10)}` : base;
+	const head = `${pad(total ? "" : r.key || "-", 4)} ${pad(r.name, 18)} ${lpad(r.invoices, 5)}`;
+	if (by === "T") {
+		const disc = r.list > 0 ? `${((r.discount * 100) / r.list).toFixed(1)}%` : "";
+		return `${head} ${lpad(money(r.discount), 11)} ${lpad(money(r.net), 12)} ${lpad(disc, 6)}`;
+	}
+	const made = r.quota > 0 ? `${Math.round((r.net * 100) / r.quota)}%` : "";
+	return `${head} ${lpad(money(r.net), 12)} ${lpad(r.quota ? money(r.quota) : "", 10)} ${lpad(made, 5)} ${lpad(r.key && !total ? pct(r.comm_pct10) : "", 5)} ${lpad(money(r.commission), 10)}`;
 }
 
 function reportHead(by: "T" | "S"): string {
-	const base = `${pad(by === "T" ? "CODE" : "ID", 4)} ${pad("NAME", 18)} ${lpad("INVS", 5)} ${lpad("DISCOUNT", 11)} ${lpad("NET SALES", 12)} ${lpad("DISC%", 6)}`;
-	return by === "S" ? `${base} ${lpad("COMM", 5)} ${lpad("COMMISSION", 10)}` : base;
+	const head = `${pad(by === "T" ? "CODE" : "ID", 4)} ${pad("NAME", 18)} ${lpad("INVS", 5)}`;
+	return by === "T"
+		? `${head} ${lpad("DISCOUNT", 11)} ${lpad("NET SALES", 12)} ${lpad("DISC%", 6)}`
+		: `${head} ${lpad("NET SALES", 12)} ${lpad("QUOTA", 10)} ${lpad("MADE", 5)} ${lpad("COMM", 5)} ${lpad("COMMISSION", 10)}`;
 }
 
 export const salesrpt: Program<SalesRptState> = {
@@ -469,7 +478,8 @@ export const salesrpt: Program<SalesRptState> = {
 		const total = rows.reduce((t, r) => ({
 			...t, invoices: t.invoices + r.invoices, discount: t.discount + r.discount, net: t.net + r.net, list: t.list + r.list,
 			commission: t.commission + r.commission,
-		}), { key: "", name: "TOTAL", invoices: 0, discount: 0, net: 0, list: 0, comm_pct10: 0, commission: 0 });
+			quota: t.quota + r.quota,
+		}), { key: "", name: "TOTAL", invoices: 0, discount: 0, net: 0, list: 0, comm_pct10: 0, commission: 0, quota: 0 });
 		scr.text(8 + shown.length, 2, "-".repeat(head.length), { color: "blue" });
 		scr.text(9 + shown.length, 2, reportLine(s.by, total, true), { color: "white", bright: true });
 
