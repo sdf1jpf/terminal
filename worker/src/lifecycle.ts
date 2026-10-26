@@ -35,6 +35,7 @@ import { holdAccount } from "./ledger";
 import { mailable, mailDocument } from "./mail";
 import type { Shipment } from "./shipping";
 import { syslog } from "./syslog";
+import { alertPO, lookAtPO } from "./polifecycle";
 
 // The name the lifecycle acts under, on postings, letters and the log.
 export const LIFECYCLE = "CUSORDER";
@@ -85,6 +86,7 @@ export interface Look {
 	done?: string; // the lifecycle is over: PAID or CANCELLED
 	bill?: boolean; // shipped and not billed: bill it
 	dun?: number; // a dunning level is due: send it
+	alert?: string; // a purchase order is late: tell the operator (polifecycle.ts)
 	wait?: number; // otherwise wait this long, in ms, for a change
 }
 
@@ -119,10 +121,14 @@ export class OrderLifecycle extends WorkflowEntrypoint<Env, OrderParams> {
 		const { id } = event.payload;
 		const retries = { retries: { limit: 5, delay: "10 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
 		for (let turn = 1; turn <= MAX_TURNS; turn++) {
-			const look = await step.do(`look ${turn}`, retries, () => lookAtInvoice(this.env.DB, id));
+			const look = await step.do(`look ${turn}`, retries, () =>
+				event.payload.kind === "P" ? lookAtPO(this.env.DB, id) : lookAtInvoice(this.env.DB, id));
 			if (look.done) return look.done;
 			let wait = look.wait ?? IDLE;
-			if (look.bill) {
+			if (look.alert) {
+				await step.do(`alert ${look.alert}`, retries, () => alertPO(this.env.DB, id, look.alert!));
+				continue;
+			} else if (look.bill) {
 				const billed = await step.do(`bill ${turn}`, retries, () => billOnShipment(this.env, id));
 				if (billed) continue;
 				wait = RETRY_BILL;
@@ -140,6 +146,27 @@ export class OrderLifecycle extends WorkflowEntrypoint<Env, OrderParams> {
 	}
 }
 
+// recorder collects one look's writes: timeline events, recorded once each,
+// and the order's flow row saying what it waits for.
+export function recorder(db: D1Database, kind: OrderKind, ref: string, ts: string) {
+	const stmts: D1PreparedStatement[] = [];
+	const rec = (event: string, key: string, at: string, detail: string, amount: number | null = null, by = "") =>
+		stmts.push(db.prepare(
+			`INSERT INTO order_timeline (kind, ref, event, key, at, detail, amount, by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (kind, ref, event, key) DO NOTHING`,
+		).bind(kind, ref, event, key, at || ts, detail.slice(0, 60), amount, by));
+	const flow = (look: Look, next: string, nextAt: number | null) => {
+		const done = look.done !== undefined;
+		stmts.push(db.prepare(
+			`INSERT INTO order_flows (kind, ref, status, next, next_at, started, updated, ended, outcome)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8)
+			 ON CONFLICT (kind, ref) DO UPDATE SET status = ?3, next = ?4, next_at = ?5, updated = ?6, ended = ?7, outcome = ?8`,
+		).bind(kind, ref, done ? "C" : "W", next, nextAt === null ? "" : new Date(nextAt).toISOString(), ts, done ? ts : "", look.done ?? ""));
+		return look;
+	};
+	return { stmts, rec, flow };
+}
+
 // lookAtInvoice records on the timeline what has happened to an invoice,
 // decides what the lifecycle does next and notes it on the order's flow.
 export async function lookAtInvoice(db: D1Database, id: string, now = Date.now()): Promise<Look> {
@@ -148,21 +175,7 @@ export async function lookAtInvoice(db: D1Database, id: string, now = Date.now()
 		`SELECT i.*, c.name AS cust_name, c.status AS cust_status FROM invoices i
 		 LEFT JOIN customers c ON c.id = i.customer_id WHERE i.id = ?`,
 	).bind(id).first<Invoice & { cust_name: string | null; cust_status: string | null }>();
-	const stmts: D1PreparedStatement[] = [];
-	const rec = (event: string, key: string, at: string, detail: string, amount: number | null = null, by = "") =>
-		stmts.push(db.prepare(
-			`INSERT INTO order_timeline (kind, ref, event, key, at, detail, amount, by) VALUES ('I', ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT (kind, ref, event, key) DO NOTHING`,
-		).bind(id, event, key, at || ts, detail.slice(0, 60), amount, by));
-	const flow = (look: Look, next: string, nextAt: number | null) => {
-		const done = look.done !== undefined;
-		stmts.push(db.prepare(
-			`INSERT INTO order_flows (kind, ref, status, next, next_at, started, updated, ended, outcome)
-			 VALUES ('I', ?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)
-			 ON CONFLICT (kind, ref) DO UPDATE SET status = ?2, next = ?3, next_at = ?4, updated = ?5, ended = ?6, outcome = ?7`,
-		).bind(id, done ? "C" : "W", next, nextAt === null ? "" : new Date(nextAt).toISOString(), ts, done ? ts : "", look.done ?? ""));
-		return look;
-	};
+	const { stmts, rec, flow } = recorder(db, "I", id, ts);
 
 	if (!inv) {
 		rec("CANCELLED", "", ts, "INVOICE CANCELLED, STOCK RETURNED");
@@ -353,7 +366,7 @@ export async function deliverSignals(env: Env, limit = 200): Promise<number> {
 }
 
 function workflowFor(env: Env, kind: OrderKind): Workflow<OrderParams> | undefined {
-	return kind === "I" ? env.ORDER_FLOW : undefined;
+	return kind === "I" || kind === "P" ? env.ORDER_FLOW : undefined;
 }
 
 async function orderExists(db: D1Database, kind: OrderKind, ref: string): Promise<boolean> {

@@ -51,6 +51,7 @@
 //	DELETE /v1/purchase-orders/{id}/lines/{n}
 //	POST   /v1/purchase-orders/{id}/send          send it to the vendor as an 850
 //	POST   /v1/purchase-orders/{id}/receive       receive goods: {"lines": {"1": 5}}, or {} for all
+//	GET    /v1/purchase-orders/{id}/timeline      its lifecycle: -> {"flow", "workflow", "pending", "events"}
 //	GET    /v1/shipments?status=X   shipments, newest first (P picking, K packed, S shipped)
 //	POST   /v1/shipments            release an open invoice to the warehouse: {"invoice_id"}
 //	GET    /v1/shipments/{id}       -> {"shipment", "invoice", "lines"}
@@ -114,7 +115,7 @@ import {
 } from "./invoices";
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
-import { getFlow, pendingSignals, timeline, workflowStatus, type OrderParams } from "./lifecycle";
+import { getFlow, pendingSignals, timeline, workflowStatus, type OrderKind, type OrderParams } from "./lifecycle";
 import { correctException, dropException, listExceptions, rejectOrder } from "./ediexceptions";
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
@@ -143,7 +144,7 @@ export interface Env {
 	DEV_USER?: string; // wrangler dev only, when Access is not configured
 	JOBS: Queue<JobMessage>; // the batch job input queue
 	JOB_RUNNER: Workflow<JobMessage>;
-	ORDER_FLOW: Workflow<OrderParams>; // one OrderLifecycle per invoice (lifecycle.ts)
+	ORDER_FLOW: Workflow<OrderParams>; // one OrderLifecycle per invoice and purchase order (lifecycle.ts)
 	ARCHIVE: R2Bucket; // old output and documents, as files (archive.ts)
 	BROWSER?: BrowserRun; // Browser Rendering, for snapshots (snapshot.ts)
 	MAIL?: SendEmail; // Email Routing, sending only to MAIL_TO (mail.ts)
@@ -333,16 +334,20 @@ app.get("/v1/invoices/:id/pdf", signedOn, async (c) => {
 });
 app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
-app.get("/v1/invoices/:id/timeline", signedOn, async (c) => {
-	const id = c.req.param("id").toUpperCase();
+// orderTimeline is an order's lifecycle: its flow, workflow status,
+// undelivered changes and timeline.
+async function orderTimeline(env: Env, kind: OrderKind, id: string) {
 	const [flow, events, pending, workflow] = await Promise.all([
-		getFlow(c.env.DB, "I", id), timeline(c.env.DB, "I", id), pendingSignals(c.env.DB, "I", id), workflowStatus(c.env, "I", id),
+		getFlow(env.DB, kind, id), timeline(env.DB, kind, id), pendingSignals(env.DB, kind, id), workflowStatus(env, kind, id),
 	]);
-	if (!flow && events.length === 0 && !(await c.env.DB.prepare("SELECT 1 FROM invoices WHERE id = ?").bind(id).first())) {
-		throw new HttpError(404, "not_found", "invoice not found");
+	const table = kind === "I" ? "invoices" : "purchase_orders";
+	if (!flow && events.length === 0 && !(await env.DB.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).bind(id).first())) {
+		throw new HttpError(404, "not_found", kind === "I" ? "invoice not found" : "purchase order not found");
 	}
 	return json(200, { flow: flow ?? null, workflow, pending, events });
-});
+}
+app.get("/v1/invoices/:id/timeline", signedOn, (c) => orderTimeline(c.env, "I", c.req.param("id").toUpperCase()));
+app.get("/v1/purchase-orders/:id/timeline", signedOn, (c) => orderTimeline(c.env, "P", c.req.param("id").toUpperCase()));
 
 // address reads an optional address object from a request body.
 function address(body: Record<string, unknown>, key: string): Address | undefined {
@@ -602,6 +607,7 @@ for (const path of [
 	"/v1/purchase-orders/:id/lines/:line",
 	"/v1/purchase-orders/:id/send",
 	"/v1/purchase-orders/:id/receive",
+	"/v1/purchase-orders/:id/timeline",
 	"/v1/shipments",
 	"/v1/shipments/:id",
 	"/v1/shipments/:id/pack",

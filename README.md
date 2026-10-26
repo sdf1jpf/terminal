@@ -682,11 +682,23 @@ minute: an order's first signal starts its workflow, the rest wake it, and a
 workflow that failed is restarted. The migration signalled every invoice
 that was open or billed at the time, so those picked up from where they were.
 
-Menu option 2.4 `TIMELINE` (or `T` beside an invoice on the list) opens
+Purchase orders have lifecycles too (`src/polifecycle.ts`), in the same
+workflow: opened, sent as an 850, confirmed by the vendor's 855 with a ship
+date, in transit after its 856, received (perhaps in parts, each receipt
+going into stock) and received in full. Here the vendor is the one who has
+to act, so the lifecycle watches the clock: with no 855 two days after
+sending, no 856 by the day after the promised ship date, or no goods within
+the vendor's lead time (plus two days) of the 856, it raises an **expedite
+alert** (`CUS1620W` on SYSLOG and `EXPEDITE` on the timeline), once for each.
+Triggers on `purchase_orders` and `receipts` (migration 0029) signal it.
+
+Menu option 2.4 `TIMELINE` (or `T` beside an invoice on the list, or 3.5
+`POTIMELINE` for a purchase order, such as `3.5 12`) opens
 **ORDER TIMELINE** (CUSL01): where the lifecycle is, what it waits for and
 by when, and every event it has seen: opened, released, packed, shipped,
-each EDI document, billed, each letter, paid. PF4 opens the invoice. The
-same is at `GET /v1/invoices/{id}/timeline`.
+each EDI document, billed, each letter, paid; or for a PO, sent, confirmed,
+in transit, each receipt, received. PF4 opens the invoice or PO. The same
+is at `GET /v1/invoices/{id}/timeline` and `GET /v1/purchase-orders/{id}/timeline`.
 
 ## Reports and dashboard
 
