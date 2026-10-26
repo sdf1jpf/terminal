@@ -201,9 +201,13 @@ export function invoicePdf(inv: Invoice, lines: InvoiceLine[], cust: Customer): 
 		: [invoiceRow(l)]);
 	let end = f.table(INVOICE_HEAD, rows, form, 14);
 	const list = lines.reduce((t, l) => t + l.quantity * Math.max(l.list_price, l.unit_price), 0);
-	if (list > inv.total) {
+	if (list > inv.subtotal) {
 		f.put(0, ++end, pad("TOTAL AT LIST", 62, true) + " " + pad(money(list), 12, true));
-		f.put(0, ++end, pad("LESS YOUR DISCOUNTS", 62, true) + " " + pad(money(inv.total - list), 12, true));
+		f.put(0, ++end, pad("LESS YOUR DISCOUNTS", 62, true) + " " + pad(money(inv.subtotal - list), 12, true));
+	}
+	if (inv.tax_note) {
+		f.put(0, ++end, pad("SUBTOTAL", 62, true) + " " + pad(money(inv.subtotal), 12, true));
+		f.put(0, ++end, pad(`SALES TAX ${inv.tax_note}`, 62, true) + " " + pad(money(inv.tax), 12, true));
 	}
 	f.put(0, end + 1, pad("INVOICE TOTAL", 62, true) + " " + pad(money(inv.total), 12, true), true);
 	if (inv.billed) {

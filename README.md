@@ -539,6 +539,16 @@ and the rules in `worker/src/sales.ts`.
   `PROMO PR001`), then any quantity break. Running promotions show in green,
   coming ones in yellow and past ones in blue.
 
+- **Sales tax:** an invoice is taxed when it is billed, at the rate for its
+  ship-to state in the `TAXCODE` system table (option 5.6), unless the
+  customer has an exemption certificate on file (the TAX EXEMPT field on
+  6.1). Amounts are whole dollars, so the tax is rounded to the dollar. Until
+  billing, the invoice screen shows an estimate. The total charged to the
+  account is the lines plus the tax. The PDF shows SUBTOTAL and SALES TAX,
+  the 810 carries a `TXI*ST` segment, and the month-end close credits the tax
+  to 2200 SALES TAX PAYABLE instead of sales. Sales reports and commission
+  leave tax out.
+
 The API has the same under `/v1/customers/{id}/sales`,
 `/v1/customers/{id}/pricing/{item}`, `/v1/territories`, `/v1/salespeople`
 and `/v1/sales`.

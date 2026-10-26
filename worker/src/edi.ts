@@ -375,8 +375,10 @@ async function remittance(db: D1Database, partner: string, body: string[][]): Pr
 
 // bill bills an invoice and, if it came from an 850, sends the customer an
 // 810 for it.
-export async function bill(db: D1Database, user: string, id: string): Promise<{ invoice: Invoice; transaction: Transaction; edi?: Interchange }> {
-	const billed = await billInvoice(db, user, id);
+export async function bill(
+	db: D1Database, tables: KVNamespace, user: string, id: string,
+): Promise<{ invoice: Invoice; transaction: Transaction; edi?: Interchange }> {
+	const billed = await billInvoice(db, tables, user, id);
 	const edi = await sendInvoice(db, billed.invoice);
 	return edi ? { ...billed, edi } : billed;
 }
@@ -399,6 +401,9 @@ async function sendInvoice(db: D1Database, inv: Invoice): Promise<Interchange | 
 		...party("ST", addressOf(inv, "ship")),
 		...lines.flatMap(it1),
 		["TDS", inv.total * 100],
+		// Sales tax: TXI*ST*amount*percent, or TXI*ST*0 with the exemption.
+		...(inv.tax > 0 ? [["TXI", "ST", inv.tax, Number((inv.tax_note.match(/([\d.]+)%/)?.[1]) ?? 0)]]
+			: inv.tax_note.startsWith("EXEMPT") ? [["TXI", "ST", 0, "", "", "", "2", "", inv.tax_note.slice(7)]] : []),
 		["CTT", lines.length],
 	], inv.id);
 }

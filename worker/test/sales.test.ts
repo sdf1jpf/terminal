@@ -69,7 +69,7 @@ describe("pricing", () => {
 		expect(invoice.total).toBe(2 * 47 + 4 * 9);
 
 		await shipInvoice(db, id);
-		const billed = await bill(db, "IBMUSER", id);
+		const billed = await bill(db, env.TABLES, "IBMUSER", id);
 		const body = parse(billed.edi!.raw).body;
 		expect(body.filter((s) => s[0] === "IT1").map((s) => [s[7], s[4]])).toEqual([["SAF-GLV", "52"], ["BRG-6204", "9"]]);
 		const sac = body.filter((s) => s[0] === "SAC");
@@ -122,7 +122,7 @@ describe("sales report", () => {
 		const inv = await createInvoice(db, "IBMUSER", "000116");
 		await addLine(db, inv.id, "SAF-GLV", 10); // list 520, net 470
 		await shipInvoice(db, inv.id);
-		await bill(db, "IBMUSER", inv.id);
+		await bill(db, env.TABLES, "IBMUSER", inv.id);
 
 		const byTerr = await salesBy(db, "T", month());
 		const so = byTerr.find((r) => r.key === "SO")!;
