@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,8 +18,22 @@ import (
 type Client struct {
 	base   string
 	http   *http.Client
-	access Access      // nil when the API is not behind Cloudflare Access
-	hdr    http.Header // Access headers for the logged-on user; nil when logged off
+	access Access // nil when the API is not behind Cloudflare Access
+
+	mu  sync.Mutex
+	hdr http.Header // Access headers for the logged-on user; nil when logged off
+}
+
+func (c *Client) headers() http.Header {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hdr
+}
+
+func (c *Client) setHeaders(h http.Header) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hdr = h
 }
 
 // NewClient returns a client for the API at baseURL. access may be nil, for
@@ -55,10 +70,10 @@ func (c *Client) Logon(ctx context.Context) (string, error) {
 		}
 		hdr = h
 	}
-	c.hdr = hdr
+	c.setHeaders(hdr)
 	var resp LogonResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/session", nil, &resp); err != nil {
-		c.hdr = nil
+		c.setHeaders(nil)
 		if errors.Is(err, ErrUnauthorized) {
 			err = ErrBadLogon
 		}
@@ -69,7 +84,7 @@ func (c *Client) Logon(ctx context.Context) (string, error) {
 
 // Logoff forgets the user locally. Access sessions end on their own.
 func (c *Client) Logoff(context.Context) error {
-	c.hdr = nil
+	c.setHeaders(nil)
 	return nil
 }
 
@@ -100,10 +115,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.hdr == nil {
+	hdr := c.headers()
+	if hdr == nil {
 		return ErrUnauthorized
 	}
-	for k, v := range c.hdr {
+	for k, v := range hdr {
 		req.Header[k] = v
 	}
 	resp, err := c.http.Do(req)
@@ -118,7 +134,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		switch {
 		case eb.Error.Code == codeUnauthorized, eb.Error.Code == "" && (resp.StatusCode < 400 || resp.StatusCode == 401):
 			// From the Worker, or Access redirecting to its login page.
-			c.hdr = nil
+			c.setHeaders(nil)
 			return ErrUnauthorized
 		case eb.Error.Code == "" && resp.StatusCode == 403:
 			return ErrBadLogon // Access policy does not allow this user

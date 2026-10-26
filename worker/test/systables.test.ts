@@ -1,3 +1,4 @@
+import { tso } from "../src/sessions";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { record, stats } from "../src/monitor";
@@ -259,8 +260,8 @@ describe("transaction monitor", () => {
 		});
 
 		it("draws the monitor screen", async () => {
-			const ctx = { env: aeEnv, db: env.DB, tables: env.TABLES, jobs: env.JOBS, user: "IBMUSER", rows: 24, cols: 80,
-				system: "TEST", terminal: "TERM0001", host: "api.test", tzOffset: 0 } satisfies Ctx;
+			const ctx = { env: aeEnv, db: env.DB, tables: env.TABLES, jobs: env.JOBS, tso: tso(env), user: "IBMUSER", sid: "", rows: 24, cols: 80,
+				system: "TEST", terminal: "TERM0001", host: "api.test", tzOffset: 0, live: false } satisfies Ctx;
 			const s = { p: "monitor" as const, back: { p: "menu" as const } };
 			let scr = await monitor.render(ctx, s);
 			const text = (sc: typeof scr) => sc.fields.map((f) => f.text ?? "").join("\n");

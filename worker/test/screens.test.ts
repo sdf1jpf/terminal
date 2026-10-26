@@ -4,94 +4,11 @@ import { describe, expect, it } from "vitest";
 import { partnerPO, processInterchange, receive } from "../src/edi";
 import { addLine, billInvoice, createInvoice, payInvoice } from "../src/invoices";
 import { accessJWT } from "./access";
+import { post, Terminal, worker } from "./term";
 import { shipInvoice } from "./ship";
 import { journal } from "../src/ledger";
-
-const worker = (exports as unknown as { default: Fetcher }).default;
-
-interface Field {
-	row: number; col: number; text?: string; name?: string; length?: number; value?: string;
-	color?: string; bright?: boolean; numeric?: boolean; modified?: boolean;
-}
-interface Screen { map: string; rows: number; cols: number; fields: Field[]; cursor?: { field?: string; row?: number; col?: number } }
-
-async function post(body: unknown, token?: string) {
-	const headers: Record<string, string> = { "Content-Type": "application/json" };
-	if (token) headers["Cf-Access-Jwt-Assertion"] = token;
-	const res = await worker.fetch("https://api.test/v1/screen", { method: "POST", headers, body: JSON.stringify(body) });
-	return { status: res.status, body: await res.json<any>() };
-}
-
-// Terminal plays the part of the Go client: it keeps the commarea, lets the
-// test type into fields, and sends AID keys.
-class Terminal {
-	state = "";
-	scr!: Screen;
-	vals: Record<string, string> = {};
-	modified = new Set<string>();
-	cursorField = ""; // the field the cursor is in, sent with the next key
-	logoff = "";
-
-	constructor(readonly token: string, public rows = 24, public cols = 80) {}
-
-	static async logon(rows = 24, cols = 80) {
-		const t = new Terminal(await accessJWT(), rows, cols);
-		await t.send("START");
-		return t;
-	}
-
-	async send(aid: string) {
-		const res = await post({
-			v: 1, aid, state: aid === "START" ? undefined : this.state, fields: this.vals,
-			modified: [...this.modified], cursor: { row: 1, col: 1, field: this.cursorField },
-			rows: this.rows, cols: this.cols, terminal: "TERM0001", system: "TEST",
-		}, this.token);
-		expect(res.status, JSON.stringify(res.body)).toBe(200);
-		if (res.body.logoff) {
-			this.logoff = res.body.logoff.message;
-			return this;
-		}
-		this.state = res.body.state;
-		this.scr = res.body.screen;
-		this.vals = {};
-		this.modified.clear();
-		this.cursorField = "";
-		for (const f of this.scr.fields) {
-			if (f.name) this.vals[f.name] = f.value ?? "";
-			if (f.name && f.modified) this.modified.add(f.name);
-		}
-		return this;
-	}
-
-	fill(...kv: string[]) {
-		for (let i = 0; i < kv.length; i += 2) {
-			const f = this.scr.fields.find((f) => f.name === kv[i]);
-			expect(f, `field ${kv[i]}`).toBeDefined();
-			this.vals[kv[i]] = kv[i + 1].toUpperCase();
-			this.modified.add(kv[i]);
-		}
-		return this;
-	}
-
-	field(name: string) {
-		return this.scr.fields.find((f) => f.name === name);
-	}
-
-	// row renders one row of the screen as text.
-	row(n: number): string {
-		const line = Array(this.scr.cols).fill(" ");
-		for (const f of this.scr.fields) {
-			if (f.row !== n) continue;
-			const s = f.text ?? (f.value ?? "").padEnd(f.length ?? 0);
-			for (let i = 0; i < s.length && f.col - 1 + i < line.length; i++) line[f.col - 1 + i] = s[i];
-		}
-		return line.join("");
-	}
-
-	get message() {
-		return this.row(this.scr.rows - 1).trim();
-	}
-}
+import { getCustomer, updateCustomer } from "../src/data";
+import type { Editable } from "../src/customer";
 
 describe("screen protocol", () => {
 	it("requires Access", async () => {
@@ -213,12 +130,10 @@ describe("customer screens", () => {
 		await t.fill("option", "1.2 107").send("ENTER");
 		await t.send("PF4");
 
-		// Another user changes the record after this one started editing.
-		const other = await Terminal.logon();
-		await other.fill("option", "1.2 107").send("ENTER");
-		await other.send("PF4");
-		await other.fill("phone", "937-555-0199").send("ENTER");
-		expect(other.message).toMatch(/UPDATED$/);
+		// A batch job changes the record after this one started editing:
+		// batch work does not wait for terminal locks.
+		const cust = await getCustomer(env.DB, "000107");
+		await updateCustomer(env.DB, "000107", { ...cust, phone: "937-555-0199" } as Editable, cust.version, "CUSCRREV");
 
 		await t.fill("city", "kettering").send("ENTER");
 		expect(t.message).toMatch(/^CUS0213E 000107 WAS CHANGED BY ANOTHER USER/);

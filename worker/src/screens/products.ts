@@ -205,6 +205,9 @@ export const product: Program<ProductState> = {
 		return scr;
 	},
 
+	locks: (s) => s.mode === "update" && s.prod?.sku ? [`PRODUCT ${s.prod.sku}`] : [],
+	unlocked: (s) => ({ ...s, mode: "inquiry", vals: undefined }),
+
 	async handle(ctx, s, input) {
 		s.msg = s.errField = undefined;
 		if (s.mode === "inquiry") return inquiry(ctx, s, input.aid, input.fields);

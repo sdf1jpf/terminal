@@ -4,8 +4,8 @@
 import { Screen } from "./screen.js";
 
 // encodeRequest builds the POST /v1/screen body for an AID key.
-/** @param {{aid: string, scr: Screen, state?: string | null, terminal?: string, system?: string}} req */
-export function encodeRequest({ aid, scr, state, terminal, system }) {
+/** @param {{aid: string, scr: Screen, state?: string | null, terminal?: string, system?: string, live?: boolean}} req */
+export function encodeRequest({ aid, scr, state, terminal, system, live }) {
 	const fields = {};
 	scr.buf.forEach((c, i) => {
 		if (c.attr && !c.attr.protected && c.attr.name) fields[c.attr.name] = scr.fieldText(i);
@@ -25,12 +25,14 @@ export function encodeRequest({ aid, scr, state, terminal, system }) {
 		tz_offset: -new Date().getTimezoneOffset(),
 	};
 	if (aid !== "START" && state != null) body.state = state;
+	if (live) body.live = true; // listening on GET /v1/live
 	return body;
 }
 
-// decodeScreen turns a response into {state, scr, refresh} or {logoff}.
-// refresh is how often, in seconds, to redraw the screen while the
-// operator leaves it alone; 0 never.
+// decodeScreen turns a response into {state, scr, refresh, live} or
+// {logoff}. refresh is how often, in seconds, to redraw the screen while
+// the operator leaves it alone; 0 never. live names what GET /v1/live
+// announces changes to, such as "syslog", or is "".
 export function decodeScreen(res) {
 	if (res.v !== 1) throw new Error(`unsupported screen protocol version ${res.v}`);
 	if (res.logoff) return { logoff: res.logoff.message ?? "" };
@@ -62,5 +64,5 @@ export function decodeScreen(res) {
 	} else {
 		scr.cursorHome();
 	}
-	return { state: res.state, scr, refresh: m.refresh > 0 ? m.refresh : 0 };
+	return { state: res.state, scr, refresh: m.refresh > 0 ? m.refresh : 0, live: m.live ?? "" };
 }
