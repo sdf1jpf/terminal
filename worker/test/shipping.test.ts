@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { carrierRates } from "../src/systables";
 import { describe, expect, it } from "vitest";
 import { HttpError } from "../src/http";
 import { addLine, billInvoice, changeLine, createInvoice, setAddress } from "../src/invoices";
@@ -33,10 +34,10 @@ describe("shipping", () => {
 		await cancelShipment(db, s.id);
 		await changeLine(db, inv.id, 1, 2);
 		const again = await release(db, "IBMUSER", inv.id);
-		expect((await refused(() => pack(db, again.id, 0, 5))).field).toBe("cartons");
-		expect(await pack(db, again.id, 1, 160)).toMatchObject({ status: "K", cartons: 1, weight: 160, carrier: "FDX" });
+		expect((await refused(() => pack(db, env.TABLES, again.id, 0, 5))).field).toBe("cartons");
+		expect(await pack(db, env.TABLES, again.id, 1, 160)).toMatchObject({ status: "K", cartons: 1, weight: 160, carrier: "FDX" });
 		const { shipment, edi } = await ship(db, "SHIPPER", again.id);
-		expect(shipment).toMatchObject({ status: "S", carrier: "FDX", shipped_by: "SHIPPER", route: "160 LB IS 150 LB OR MORE" });
+		expect(shipment).toMatchObject({ status: "S", carrier: "FDX", shipped_by: "SHIPPER", route: "160 LB OVER UPS 149 LB; VT OUTSIDE TRK AREA" });
 		expect(shipment.tracking).toMatch(/^\d{12}$/);
 		expect(edi).toBeUndefined(); // not an EDI order
 		expect((await refused(() => cancelShipment(db, again.id))).message).toMatch(/is shipped - it cannot be cancelled/);
@@ -45,13 +46,15 @@ describe("shipping", () => {
 		expect((await listShipments(db, "S")).map((x) => x.id)).toContain(again.id);
 	});
 
-	it("chooses the carrier from the ship-to, weight and value", () => {
-		expect(routeFor({ state: "PA" }, 40, 4000, 90000)).toEqual({ carrier: "TRK", reason: "PA IS IN THE TRUCK AREA" });
-		expect(routeFor({ state: "TX" }, 3, 150, 100)).toEqual({ carrier: "FDX", reason: "150 LB IS 150 LB OR MORE" });
-		expect(routeFor({ state: "TX" }, 1, 71, 100)).toEqual({ carrier: "FDX", reason: "CARTONS OVER 70 LB" });
-		expect(routeFor({ state: "TX" }, 2, 140, 100).carrier).toBe("UPS");
-		expect(routeFor({ state: "TX" }, 1, 5, 5000)).toEqual({ carrier: "FDX", reason: "VALUE $5000 NEEDS FULL COVER" });
-		expect(routeFor({ state: "OR" }, 1, 5, 4999)).toEqual({ carrier: "UPS", reason: "5 LB TO OR, OUTSIDE THE TRUCK AREA" });
+	it("chooses the carrier from the CARRIER table and says why", async () => {
+		const table = await carrierRates(env.TABLES);
+		expect(routeFor(table, { state: "PA" }, 1, 20, 900)).toEqual({ carrier: "UPS", reason: "WITHIN UPS LIMITS" });
+		expect(routeFor(table, { state: "PA" }, 40, 4000, 900)).toEqual({ carrier: "TRK", reason: "4000 LB OVER UPS 149 LB; PA IS IN THE TRK AREA" });
+		expect(routeFor(table, { state: "TX" }, 3, 150, 100)).toEqual({ carrier: "FDX", reason: "150 LB OVER UPS 149 LB; TX OUTSIDE TRK AREA" });
+		expect(routeFor(table, { state: "TX" }, 1, 71, 100)).toEqual({ carrier: "FDX", reason: "71 LB CARTON OVER UPS 70 LB; TX OUTSIDE TRK AREA" });
+		expect(routeFor(table, { state: "TX" }, 2, 140, 100).carrier).toBe("UPS");
+		expect(routeFor(table, { state: "TX" }, 1, 5, 5000)).toEqual({ carrier: "FDX", reason: "$5000 OVER UPS $4999; TX OUTSIDE TRK AREA" });
+		expect(() => routeFor(table.filter((c) => c.code === "TRK"), { state: "TX" }, 1, 5, 5)).toThrow(/no carrier/);
 	});
 
 	it("routes by the invoice's ship-to, not the customer's address", async () => {
@@ -59,7 +62,7 @@ describe("shipping", () => {
 		await addLine(db, inv.id, "TAP-DUCT", 1);
 		await setAddress(db, inv.id, "ship", { name: "OHIO SITE", address: "", city: "AKRON", state: "OH", zip: "44308" });
 		const s = await release(db, "IBMUSER", inv.id);
-		expect(await pack(db, s.id, 1, 5)).toMatchObject({ carrier: "TRK", route: "OH IS IN THE TRUCK AREA" });
+		expect(await pack(db, env.TABLES, s.id, 1, 200)).toMatchObject({ carrier: "TRK", route: "200 LB OVER UPS 149 LB; OH IS IN THE TRK AREA" });
 		expect((await ship(db, "IBMUSER", s.id)).shipment.tracking).toMatch(/^PRO/);
 	});
 

@@ -322,7 +322,7 @@ app.delete("/v1/shipments/:id", signedOn, async (c) => {
 });
 app.post("/v1/shipments/:id/pack", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["cartons", "weight"]);
-	return json(200, await pack(c.env.DB, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
+	return json(200, await pack(c.env.DB, c.env.TABLES, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
 });
 app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
 	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase()));

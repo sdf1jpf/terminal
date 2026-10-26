@@ -346,10 +346,12 @@ const help: Record<string, FieldHelp> = {
 		lines: [
 			"The shipment's total weight in whole pounds, 1 to 99999.",
 			"",
-			"Packing it chooses the carrier: our own truck (TRK) to the states",
-			"around the warehouse, FedEx Freight (FDX) elsewhere for 150 lb or",
-			"more, a carton over 70 lb or an order of $5000 or more, and UPS",
-			"ground for the rest. PF10 then ships it.",
+			"Packing it chooses the carrier from the CARRIER system table (option",
+			"5.6): the first carrier, by priority, whose service area and weight,",
+			"carton and value limits take it. As shipped, that is UPS ground up to",
+			"149 lb, 70 lb a carton and $4999; freight beyond that on our own truck",
+			"(TRK) to the states around the warehouse, and FedEx Freight (FDX) for",
+			"the rest. PF10 then ships it.",
 		],
 	},
 	"ledger.period": {
