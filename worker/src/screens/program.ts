@@ -33,6 +33,13 @@ export interface DetailState {
 	msg?: string;
 }
 export interface ReportState { p: "report"; back?: MenuState; msg?: string }
+export interface ChartState {
+	p: "chart";
+	kind: "S" | "A" | "T" | "D"; // sales by month, receivables aging, inventory turns, the dashboard
+	back: State;
+	top?: number;
+	msg?: string;
+}
 export interface HelpState { p: "help"; back: State; field?: string } // field: help for that field
 export interface ActivityState {
 	p: "activity";
@@ -198,7 +205,7 @@ export interface SpoolState {
 export interface OutputState { p: "output"; back: State; id: string; top?: number; msg?: string }
 
 export type State =
-	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
+	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState;
