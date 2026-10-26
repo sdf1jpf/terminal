@@ -1,8 +1,6 @@
 import { bill } from "../edi";
 import { submitJob } from "../jobs";
-import type { Customer } from "../customer";
-import { getCustomer } from "../data";
-import type { Invoice, InvoiceLine } from "../invoices";
+import { addressOf, cityLine, type Invoice, type InvoiceLine } from "../invoices";
 import { binFor, cancelShipment, carriers, getShipment, listShipments, pack, ship, shipStatusNames, type Shipment } from "../shipping";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx } from "./screen";
 import { fail, isCode, pf, type Next, type Program, type ShipmentState, type ShipmentsState, type State } from "./program";
@@ -134,13 +132,11 @@ const lineRows = (ctx: Ctx) => ctx.rows - 15;
 const messageIDs: Record<string, string> = { cartons: "CUS0810E", weight: "CUS0811E", carrier: "CUS0812E", status: "CUS0813E" };
 const fieldMessage = (field: string, msg: string) => `${messageIDs[field] ?? "CUS0819E"} ${msg.toUpperCase()}`;
 
-type Loaded = { shipment: Shipment; invoice: Invoice; lines: InvoiceLine[]; cust?: Customer };
+type Loaded = { shipment: Shipment; invoice: Invoice; lines: InvoiceLine[] };
 
 async function load(ctx: Ctx, id: string): Promise<Loaded | string> {
 	try {
-		const got: Loaded = await getShipment(ctx.db, id);
-		got.cust = await getCustomer(ctx.db, got.shipment.customer_id).catch(() => undefined);
-		return got;
+		return await getShipment(ctx.db, id);
 	} catch (e) {
 		return isCode(e, "not_found") ? `CUS0803E SHIPMENT ${id} NOT FOUND` : fail(e);
 	}
@@ -156,18 +152,19 @@ export const shipment: Program<ShipmentState> = {
 		if (typeof got === "string") {
 			msg = got;
 		} else {
-			const { shipment: x, invoice: inv, lines, cust } = got;
+			const { shipment: x, invoice: inv, lines } = got;
 			const col = right(scr, 52);
 			label(scr, 4, 4, dots("SHIPMENT", 12));
 			scr.text(4, 18, x.id, { color: "white", bright: true });
 			scr.text(4, 28, shipStatusNames[x.status], { color: statusColor(x.status), bright: true });
 			label(scr, 4, col, "INVOICE");
 			scr.text(4, col + 8, `${inv.id} ${money(inv.total)}`, { color: "white" });
+			const to = addressOf(inv, "ship");
 			label(scr, 5, 4, dots("SHIP TO", 12));
-			value(scr, 5, 18, `${x.customer_id} ${cust?.name ?? "(NOT ON FILE)"}`);
+			value(scr, 5, 18, `${x.customer_id} ${to.name}`);
 			label(scr, 5, col, "PO");
 			scr.text(5, col + 8, inv.po_number || "(NONE)", { color: "white" });
-			if (cust) value(scr, 6, 18, `${cust.address}  ${cust.city}, ${cust.state} ${cust.zip}`.slice(0, scr.cols - 20));
+			value(scr, 6, 18, [to.address, cityLine(to)].filter(Boolean).join("  ").slice(0, scr.cols - 20));
 			const when = [`RELEASED ${stamp(ctx, x.created)}`];
 			if (x.packed) when.push(`PACKED ${stamp(ctx, x.packed).slice(11)}`);
 			if (x.shipped) when.push(`SHIPPED ${stamp(ctx, x.shipped).slice(11)}`);

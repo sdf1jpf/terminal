@@ -388,6 +388,14 @@ An invoice goes OPEN, then BILLED, then PAID:
   line. Typing part of a SKU or description with a `?` (such as `GLOVE?`) and
   pressing Enter searches too, and so does a SKU that is not on file but
   matches some products.
+- **Addresses:** every invoice has its own bill-to and ship-to, copied from
+  the customer when it is opened (an EDI order's `N1*ST` loop sets the
+  ship-to). PF5 shows them on **INVOICE ADDRESSES** (CUSI04): overtype one and
+  press Enter, PF5 copies the bill-to to the ship-to, and PF6 resets them
+  from the customer. The ship-to can be changed until the invoice is released
+  to the warehouse, the bill-to until it is billed. The ship-to goes on the
+  invoice screen, the pick ticket, the shipment and the 856; both go on the
+  810. Changing the customer's address later does not change its invoices.
 - **PF10 bills it:** the total is posted to the customer's account as an
   invoice (`I`) transaction, and the lines can no longer be changed.
 - **PF11 marks it paid:** a payment (`P`) for the total is posted.
