@@ -346,7 +346,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
 | 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
-| 6 | SELLING | 1 Customer pricing, 2 Territories, 3 Salespeople, 4 Sales by territory, 5 Sales and commission by salesperson |
+| 6 | SELLING | 1 Customer pricing, 2 Territories, 3 Salespeople, 4 Sales by territory, 5 Sales and commission by salesperson, 6 Quantity breaks, 7 Promotions |
 | 7 | FREIGHT | 1 Trucks, 2 Drivers, 3 Load planning, 4 Dispatch board |
 | T, X | | Tutorial, log off |
 
@@ -527,6 +527,17 @@ and the rules in `worker/src/sales.ts`.
   Shows invoices, discounts given, net sales and the discount rate, and by
   salesperson the commission (rate times net sales). PF6 switches views,
   PF10/PF11 move a month, and PF9 prints it to the spool.
+
+- **6.6 BREAKS** (CUSC02): a quantity break takes an extra percentage off a
+  line of that many or more, after the customer's price. Breaks are for a
+  SKU, a product line or `*`; the most specific item with breaks decides, and
+  the largest break the line reaches applies. Changing a line's quantity
+  prices it again.
+- **6.7 PROMOTIONS** (CUSC03): a discount off list, or a promotional price for
+  one SKU, open to every customer from one date to another. A line gets the
+  promotion or the customer's own price, whichever is lower (shown as
+  `PROMO PR001`), then any quantity break. Running promotions show in green,
+  coming ones in yellow and past ones in blue.
 
 The API has the same under `/v1/customers/{id}/sales`,
 `/v1/customers/{id}/pricing/{item}`, `/v1/territories`, `/v1/salespeople`

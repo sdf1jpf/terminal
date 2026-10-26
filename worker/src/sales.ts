@@ -277,17 +277,24 @@ export async function listPricing(db: D1Database, customerId: string): Promise<P
 	return results;
 }
 
-// setPricing adds or changes one of a customer's pricing agreements: a
-// discount off list (disc) or a contract price (price), one or the other.
-export async function setPricing(
-	db: D1Database, user: string, customerId: string, f: { item: string; disc: string; price: string },
-): Promise<Pricing> {
-	const item = f.item.trim().toUpperCase();
+// checkItem normalizes what an agreement, break or promotion is for: a SKU
+// or product line on file, or *.
+async function checkItem(db: D1Database, v: string): Promise<string> {
+	const item = v.trim().toUpperCase();
 	if (item === "") throw bad("item", "enter a SKU, a product line such as BRG, or * for everything");
 	const known = item === "*" || await db.prepare(
 		"SELECT 1 FROM products WHERE sku = ?1 OR substr(sku, 1, instr(sku || '-', '-') - 1) = ?1 LIMIT 1",
 	).bind(item).first();
 	if (!known) throw bad("item", `${item} is not a SKU or product line on file`);
+	return item;
+}
+
+// setPricing adds or changes one of a customer's pricing agreements: a
+// discount off list (disc) or a contract price (price), one or the other.
+export async function setPricing(
+	db: D1Database, user: string, customerId: string, f: { item: string; disc: string; price: string },
+): Promise<Pricing> {
+	const item = await checkItem(db, f.item);
 	const disc = f.disc.trim();
 	const price = f.price.trim().replace(/^\$/, "").replace(/,/g, "");
 	if ((disc === "") === (price === "")) throw bad("disc", "enter either a discount percentage or a contract price");
@@ -356,6 +363,167 @@ export async function pricingFor(db: D1Database, customerId: string, sku: string
 // agreement, rounded to the dollar.
 export const netPrice = (list: number, p: Pick<LinePricing, "disc_pct10" | "price">) =>
 	p.price > 0 ? p.price : Math.floor((list * (1000 - p.disc_pct10) + 500) / 1000);
+
+// ---- quantity breaks and promotions ----
+
+export interface QtyBreak {
+	item: string;
+	min_qty: number;
+	disc_pct10: number; // taken off after the customer's price
+	updated: string;
+	updated_by: string;
+}
+
+export interface Promotion {
+	id: string;
+	description: string;
+	item: string;
+	disc_pct10: number;
+	price: number; // a promotional price for a SKU, or 0
+	starts: string; // YYYY-MM-DD
+	ends: string;
+	updated: string;
+	updated_by: string;
+}
+
+// mostSpecific picks the row for a SKU, else its product line, else *.
+function mostSpecific<T extends { item: string }>(rows: T[], sku: string): T[] {
+	for (const key of [sku, productLine(sku), "*"]) {
+		const hit = rows.filter((r) => r.item === key);
+		if (hit.length) return hit;
+	}
+	return [];
+}
+
+export async function listBreaks(db: D1Database): Promise<QtyBreak[]> {
+	const { results } = await db.prepare(
+		"SELECT * FROM qty_breaks ORDER BY item <> '*', instr(item, '-') > 0, item, min_qty",
+	).all<QtyBreak>();
+	return results;
+}
+
+export async function setBreak(db: D1Database, user: string, f: { item: string; qty: string; disc: string }): Promise<QtyBreak> {
+	const item = await checkItem(db, f.item);
+	const qty = f.qty.trim();
+	if (!/^\d{1,5}$/.test(qty) || Number(qty) < 2) throw bad("qty", "the break quantity must be a whole number from 2 to 99999");
+	const d = parsePct("disc", f.disc || "0", 500);
+	if (d === 0) throw bad("disc", "the break discount must be more than 0%");
+	return (await db.prepare(
+		`INSERT INTO qty_breaks (item, min_qty, disc_pct10, updated, updated_by) VALUES (?1, ?2, ?3, ?4, ?5)
+		 ON CONFLICT (item, min_qty) DO UPDATE SET disc_pct10 = ?3, updated = ?4, updated_by = ?5 RETURNING *`,
+	).bind(item, Number(qty), d, now(), user).first<QtyBreak>())!;
+}
+
+export async function deleteBreak(db: D1Database, item: string, minQty: number): Promise<void> {
+	const { meta } = await db.prepare("DELETE FROM qty_breaks WHERE item = ? AND min_qty = ?").bind(item, minQty).run();
+	if (meta.changes === 0) throw new HttpError(404, "not_found", `no quantity break for ${item} at ${minQty}`);
+}
+
+// breakFor is the quantity break a line of qty of sku earns, if any.
+export async function breakFor(db: D1Database, sku: string, qty: number): Promise<QtyBreak | undefined> {
+	// The most specific item with breaks has the say, even when the line
+	// earns none of them.
+	const { results } = await db.prepare("SELECT * FROM qty_breaks WHERE item IN (?1, ?2, '*')")
+		.bind(sku, productLine(sku)).all<QtyBreak>();
+	return mostSpecific(results, sku).filter((b) => b.min_qty <= qty).sort((a, b) => b.min_qty - a.min_qty)[0];
+}
+
+export async function listPromotions(db: D1Database): Promise<Promotion[]> {
+	const { results } = await db.prepare("SELECT * FROM promotions ORDER BY starts DESC, id DESC").all<Promotion>();
+	return results;
+}
+
+const reDay = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+export const today = () => new Date().toISOString().slice(0, 10);
+
+// savePromotion adds a promotion, or changes one when id is given.
+export async function savePromotion(
+	db: D1Database, user: string, id: string,
+	f: { description: string; item: string; disc: string; price: string; starts: string; ends: string },
+): Promise<Promotion> {
+	const description = f.description.trim().toUpperCase();
+	if (description === "") throw bad("desc", "describe the promotion");
+	if (description.length > 30) throw bad("desc", "the description is limited to 30 characters");
+	const item = await checkItem(db, f.item);
+	const disc = f.disc.trim();
+	const price = f.price.trim().replace(/^\$/, "").replace(/,/g, "");
+	if ((disc === "") === (price === "")) throw bad("disc", "enter either a discount percentage or a promotional price");
+	let d = 0;
+	let p = 0;
+	if (disc) {
+		d = parsePct("disc", disc, 900);
+		if (d === 0) throw bad("disc", "the discount must be more than 0%");
+	} else {
+		if (!item.includes("-")) throw bad("price", "a promotional price is for one SKU - use a discount for a product line");
+		if (!/^\d{1,9}$/.test(price) || Number(price) === 0) throw bad("price", "the price must be a whole number of dollars above zero");
+		p = Number(price);
+	}
+	const starts = f.starts.trim() || today();
+	const ends = f.ends.trim();
+	if (!reDay.test(starts)) throw bad("starts", "dates are YYYY-MM-DD");
+	if (!reDay.test(ends)) throw bad("ends", "dates are YYYY-MM-DD");
+	if (ends < starts) throw bad("ends", "the promotion must end on or after the day it starts");
+	const ts = now();
+	if (!id) {
+		const [, row] = await db.batch<Promotion>([
+			db.prepare("UPDATE counters SET value = value + 1 WHERE name = 'promotion_id'"),
+			db.prepare(
+				`INSERT INTO promotions (id, description, item, disc_pct10, price, starts, ends, updated, updated_by)
+				 SELECT printf('PR%03d', value), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 FROM counters WHERE name = 'promotion_id'
+				 RETURNING *`,
+			).bind(description, item, d, p, starts, ends, ts, user),
+		]);
+		return row.results[0];
+	}
+	const row = await db.prepare(
+		`UPDATE promotions SET description = ?2, item = ?3, disc_pct10 = ?4, price = ?5, starts = ?6, ends = ?7, updated = ?8, updated_by = ?9
+		 WHERE id = ?1 RETURNING *`,
+	).bind(id, description, item, d, p, starts, ends, ts, user).first<Promotion>();
+	if (!row) throw new HttpError(404, "not_found", `promotion ${id} not found`);
+	return row;
+}
+
+export async function deletePromotion(db: D1Database, id: string): Promise<void> {
+	const { meta } = await db.prepare("DELETE FROM promotions WHERE id = ?").bind(id).run();
+	if (meta.changes === 0) throw new HttpError(404, "not_found", `promotion ${id} not found`);
+}
+
+// promotionFor is the promotion running on day for sku, if any; of two for
+// the same item, the one that gives the lower price.
+export async function promotionFor(db: D1Database, sku: string, list: number, day = today()): Promise<Promotion | undefined> {
+	const { results } = await db.prepare(
+		"SELECT * FROM promotions WHERE item IN (?1, ?2, '*') AND starts <= ?3 AND ends >= ?3",
+	).bind(sku, productLine(sku), day).all<Promotion>();
+	return mostSpecific(results, sku).sort((a, b) => netPrice(list, a) - netPrice(list, b))[0];
+}
+
+// The price of a line, as charged and recorded on it.
+export interface LinePrice {
+	unit_price: number;
+	disc_pct10: number; // the discount off list it comes to, in tenths
+	rule: string; // e.g. BRG 10% +QTY 5%; "" at list
+}
+
+// priceLine prices qty of sku at list for a customer on day: the lower of
+// the customer's own price (pricingFor) and any promotion, then less the
+// quantity break the line earns.
+export async function priceLine(db: D1Database, customerId: string, sku: string, qty: number, list: number, day = today()): Promise<LinePrice> {
+	const own = await pricingFor(db, customerId, sku);
+	let unit = netPrice(list, own);
+	let rule = own.rule;
+	const promo = await promotionFor(db, sku, list, day);
+	if (promo && netPrice(list, promo) < unit) {
+		unit = netPrice(list, promo);
+		rule = `PROMO ${promo.id}`;
+	}
+	const brk = await breakFor(db, sku, qty);
+	if (brk) {
+		unit = netPrice(unit, { disc_pct10: brk.disc_pct10, price: 0 });
+		rule = `${rule ? rule + " +" : ""}QTY ${pct(brk.disc_pct10)}`;
+	}
+	const disc = list > 0 ? Math.max(Math.round(((list - unit) * 1000) / list), 0) : 0;
+	return { unit_price: unit, disc_pct10: disc, rule: rule.slice(0, 24) };
+}
 
 // ---- sales by territory and salesperson ----
 

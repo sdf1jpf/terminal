@@ -44,7 +44,7 @@ const menus: Record<string, Menu> = {
 			{ key: "3", name: "INVENTORY", desc: "Products, purchasing, vendors", sub: "3" },
 			{ key: "4", name: "ACCOUNTING", desc: "Ledger, close, dunning, credit", sub: "4" },
 			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, output, monitor, tables", sub: "5" },
-			{ key: "6", name: "SELLING", desc: "Pricing, territories, salespeople", sub: "6" },
+			{ key: "6", name: "SELLING", desc: "Pricing, promotions, territories, reps", sub: "6" },
 			{ key: "7", name: "FREIGHT", desc: "Trucks, drivers, loads, dispatch", sub: "7" },
 			{
 				key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys; HELP and a question", aliases: ["T", "HELP", "ASK"],
@@ -140,6 +140,8 @@ const menus: Record<string, Menu> = {
 				key: "5", name: "COMMISSIONS", desc: "Sales and commission by rep", aliases: ["COMM", "BYREP"],
 				go: (_ctx, m, arg) => ({ p: "salesrpt", back: m, by: "S", month: arg || thisMonth() }),
 			},
+			{ key: "6", name: "BREAKS", desc: "Quantity break discounts", aliases: ["QTYBREAKS"], go: (_ctx, m) => ({ p: "breaks", back: m }) },
+			{ key: "7", name: "PROMOTIONS", desc: "Dated promotions", aliases: ["PROMO", "PROMOS"], go: (_ctx, m) => ({ p: "promos", back: m }) },
 		],
 	},
 	"5": {

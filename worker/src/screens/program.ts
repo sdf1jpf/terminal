@@ -370,6 +370,25 @@ export interface SalespeopleState {
 	errSel?: string;
 	msg?: string;
 }
+export interface BreaksState {
+	p: "breaks";
+	back: State;
+	vals?: Record<string, string>; // the entry line: item, qty, disc
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface PromosState {
+	p: "promos";
+	back: State;
+	vals?: Record<string, string>; // the entry line: pid, desc, item, disc, price, starts, ends
+	top?: number;
+	confirm?: string; // D was entered once on this promotion: enter it again to delete it
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
 export interface SalesRptState {
 	p: "salesrpt";
 	back: State;
@@ -411,7 +430,7 @@ export type State =
 	| TrucksState | DriversState | FleetItemState | LoadsState | LoadState | BoardState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState
-	| PricingState | TerritoriesState | SalespeopleState | SalesRptState;
+	| PricingState | TerritoriesState | SalespeopleState | SalesRptState | BreaksState | PromosState;
 
 export {
 	pf, takeDownload, takeFill, withDownload, withFill, type Download, type Fill, type Input, type Logoff,
