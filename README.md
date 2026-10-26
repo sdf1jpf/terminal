@@ -216,7 +216,8 @@ again when you resize it, keeping what you typed.
 Keys are the same as the Go client's (see [Keyboard](#keyboard)), with
 Shift+Enter for New Line. Browsers keep some function keys for themselves
 (F11 and F12 usually), so the key bar under the screen has Enter, Clear,
-Reset, PA1, PA2, PF1 to PF12 and RETRV (PF24) as buttons. The page lives in `worker/public/`
+Reset, PA1, PA2, PF1 to PF12, RETRV (PF24) and SNAP (a picture of the screen)
+as buttons. The page lives in `worker/public/`
 and is plain HTML, CSS and JavaScript with no build step.
 
 ## The API
@@ -254,6 +255,8 @@ GET    /v1/spool/{id}/print     paged for the printer, as text/plain
 POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 DELETE /v1/spool/{id}           purge it, and its job
 GET    /v1/spool/{id}/pdf       printed on green-bar paper, as a PDF
+GET    /v1/spool/{id}/png?page=N   one printed page as a picture
+POST   /v1/snapshot             a PNG or PDF of a screen as a terminal shows it
 GET    /v1/invoices/{id}/pdf    the invoice as a PDF (a pro forma while open)
 GET    /v1/customers/{id}/statement   a 30-day statement, as a PDF
 GET    /v1/archive?name=X&kind=K      archived output and documents
@@ -848,6 +851,22 @@ Ctrl+P saves the screen as a text file, like a 3270 local copy, and the status
 line shows `PRINTED`. Files go to `~/terminal-prints` (change it with
 `-print-dir`) and are named `PRINT-20261025-112306.txt`.
 
+Ctrl+S saves a **snapshot**: a picture of the screen, colors, typed input and
+cursor included, drawn by Cloudflare Browser Rendering. Ctrl+S makes a PNG and
+Esc then S a PDF; the status line shows `SNAP...` and then `SNAPPED`, and the
+file (`CUSM00-202610261112.png`) goes in the same folder. In the browser it is
+Ctrl+S (Ctrl+Shift+S for a PDF) or the SNAP button, and the file downloads.
+The terminal sends the screen as it shows it to `POST /v1/snapshot`
+([docs/screen-protocol.md](docs/screen-protocol.md#snapshots)).
+
+Printed output can be pictured too: `I` beside an output group on the spool
+(option 5.4) sends its first page as a PNG on green-bar paper, and PF11 while
+browsing a listing sends the page you are looking at. The API is
+`GET /v1/spool/{id}/png?page=N`.
+
+Browser Rendering needs nothing set up beyond the `browser` binding in
+`wrangler.jsonc`; it is billed by browser time, a second or two a snapshot.
+
 ## Keyboard
 
 | Key | 3270 function |
@@ -867,6 +886,7 @@ line shows `PRINTED`. Files go to `~/terminal-prints` (change it with
 | Ctrl+E / Ctrl+U | Erase EOF / Erase Input |
 | Esc or Ctrl+R | RESET |
 | Ctrl+P | PRINT (save the screen to a text file) |
+| Ctrl+S / Esc then S | Snapshot: a PNG / PDF of the screen |
 | Ctrl+C | Disconnect |
 
 ## Development

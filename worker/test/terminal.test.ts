@@ -1,7 +1,8 @@
 // The browser terminal's screen model and protocol (public/), which run in
 // the page; they have no DOM dependencies, so they are tested here.
 import { describe, expect, it } from "vitest";
-import { decodeScreen, encodeRequest } from "../public/protocol.js";
+import { decodeScreen, encodeRequest, encodeSnapshot } from "../public/protocol.js";
+import { screenHtml, snapScreen } from "../src/snapshot";
 import { Lock, Screen } from "../public/screen.js";
 
 const response = {
@@ -42,6 +43,21 @@ describe("browser terminal", () => {
 		expect((decodeScreen(res) as { download: unknown }).download).toBeNull();
 		res.download = { url: "//evil.example/v1/x", name: "x.pdf" };
 		expect((decodeScreen(res) as { download: unknown }).download).toBeNull();
+	});
+
+	it("sends the screen as it shows it for a snapshot", () => {
+		const { scr, map } = decodeScreen(response) as { scr: Screen; map: string };
+		expect(map).toBe("CUSM01");
+		scr.type("1", false);
+		const body = encodeSnapshot({ scr, format: "pdf", map, terminal: "WEBTERM1" });
+		expect(body).toMatchObject({ format: "pdf", map: "CUSM01", terminal: "WEBTERM1" });
+		expect(body.screen.fields).toContainEqual({ row: 1, col: 2, text: "CUSM01", color: "blue" });
+		expect(body.screen.fields).toContainEqual({ row: 4, col: 12, text: "AC   ", highlight: "underscore", input: true });
+		expect(body.screen.fields).toContainEqual({ row: 5, col: 12, text: "1   ", highlight: "underscore", input: true });
+		// The Worker takes it as sent.
+		const { html } = screenHtml(snapScreen(body.screen), "SNAPSHOT");
+		expect(html).toContain('<span class="c-turquoise">NAME ===&gt;</span>');
+		expect(html).toContain('<span class="c-green ul">1</span><span class="c-green ul cursor"> </span>');
 	});
 
 	it("lays out fields BMS style", () => {

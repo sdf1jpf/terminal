@@ -90,6 +90,12 @@ type Host interface {
 	Submit(aid AID, s *Screen) *Screen
 }
 
+// Snapshotter is a Host that can make a picture of the screen, typed input
+// and all, in format "png" or "pdf", and returns where it saved it.
+type Snapshotter interface {
+	Snapshot(s *Screen, format string) (string, error)
+}
+
 // Pusher is a Host that can say when the screen should be drawn again
 // without waiting for its refresh timer: a live screen's data changed, or
 // a message came. The terminal redraws on each value, unless the operator

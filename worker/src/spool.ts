@@ -129,6 +129,9 @@ export function printPages(o: Pick<Output, "id" | "name" | "title">, lines: stri
 	]);
 }
 
+// pageOf is the printed page that line i (from 0) falls on.
+export const pageOf = (i: number) => Math.floor(Math.max(i, 0) / (LINES_PER_PAGE - 3)) + 1;
+
 // printText is the printer's copy as text, with a form feed between pages.
 export function printText(o: Pick<Output, "id" | "name" | "title">, lines: string[]): string {
 	return printPages(o, lines).map((p) => p.join("\n")).join("\n\f") + "\n";

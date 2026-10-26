@@ -1171,6 +1171,9 @@ describe("held output", () => {
 		expect(t.scr.map).toBe("CUSQ02");
 		expect(t.row(3)).toContain(`CUSR01  ${id}  HELD  CREDIT EXPOSURE SUMMARY`);
 		expect(t.row(4)).toMatch(/^  CUSR01 +CREDIT EXPOSURE SUMMARY/);
+		await t.send("PF11");
+		expect(t.message).toBe(`CUS1530I ${id} PAGE 1 SENT TO YOUR TERMINAL AS A PICTURE`);
+		expect(t.download).toEqual({ url: `/v1/spool/${id}/png?page=1`, name: `${id}-P1.png` });
 		await t.send("PF4");
 		expect(t.message).toMatch(new RegExp(`^\\$HASP150 CUSR01 ${id} ON PRT1 - \\d+ LINES, COPY 1$`));
 		await t.send("PF3");
@@ -1184,6 +1187,8 @@ describe("held output", () => {
 		expect(t.download).toEqual({ url: `/v1/spool/${id}/pdf`, name: `${id}.pdf` });
 		await t.send("ENTER");
 		expect(t.download).toBeUndefined(); // once only
+		await t.fill("sel0", "i").send("ENTER");
+		expect(t.download).toEqual({ url: `/v1/spool/${id}/png?page=1`, name: `${id}-P1.png` });
 		await t.fill("sel0", "z").send("ENTER");
 		expect(t.message).toMatch(/^CUS0103E/);
 		await t.fill("sel0", "p").send("ENTER");

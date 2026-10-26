@@ -23,6 +23,9 @@
   // letters, all to one verified address (see src/mail.ts). Inbound mail to
   // the domain is routed to this Worker's email handler by a routing rule.
   "send_email": [{ "name": "MAIL", "destination_address": "justin.frank@me.com" }],
+  // Browser Rendering draws snapshots of screens and printed pages as PNG
+  // or PDF (see src/snapshot.ts).
+  "browser": { "binding": "BROWSER" },
   // Batch jobs: POST /v1/jobs puts a job on this queue, and the consumer
   // starts a JobRunner workflow for it (see src/jobs.ts).
   "queues": {

@@ -32,7 +32,7 @@ import { search } from "./search";
 import { skusearch } from "./skusearch";
 import { output, spool } from "./spool";
 import { tso } from "../sessions";
-import { breakIn, MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
+import { breakIn, MAX_COLS, MAX_ROWS, MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
 import { isSend, send } from "./send";
 import { takeDownload, takeFill, withFill, type Download, type Input, type Next, type Program, type State } from "./program";
 
@@ -59,9 +59,6 @@ const timeoutMessage = (ctx: Ctx) => `IKJ56470I ${ctx.user} LOGGED OFF AT ${time
 // The commarea's own version. Bump it when a state shape changes in a way
 // old states cannot be read; clients holding an old one go back to the menu.
 const STATE_VERSION = 1;
-
-const MAX_ROWS = 200;
-const MAX_COLS = 400;
 
 const aids = new Set([
 	"ENTER", "CLEAR", "PA1", "PA2", "PA3",

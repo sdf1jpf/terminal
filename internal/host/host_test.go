@@ -316,6 +316,56 @@ func TestSavesFilesTheHostSends(t *testing.T) {
 	}
 }
 
+// snapAPI is a backend that draws snapshots.
+type snapAPI struct {
+	fakeAPI
+	got api.SnapshotRequest
+}
+
+func (f *snapAPI) Snapshot(_ context.Context, req api.SnapshotRequest) ([]byte, string, error) {
+	f.got = req
+	return []byte("PNG"), req.Map + "-202610260112." + req.Format, nil
+}
+
+func TestSnapshotSendsTheScreenAsItShows(t *testing.T) {
+	dir := t.TempDir()
+	f := &snapAPI{}
+	s := NewSession(&Config{SystemName: "TEST", Backend: f, DownloadDir: dir}, "TERM0001")
+	if _, err := s.Snapshot(s.Start(), "png"); err == nil {
+		t.Fatal("snapshot before logon")
+	}
+	scr := s.Submit(t3.AIDEnter, s.Start())
+	fill(t, scr, "opt", "1.2", "pw", "1234")
+
+	path, err := s.Snapshot(scr, "pdf")
+	if err != nil || path != filepath.Join(dir, "TEST-202610260112.pdf") {
+		t.Fatalf("snapshot: %q, %v", path, err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "PNG" {
+		t.Fatalf("file: %q", b)
+	}
+	req := f.got
+	if req.Format != "pdf" || req.Map != "TEST" || req.Terminal != "TERM0001" || req.Screen.Rows != 24 || req.Screen.Cols != 80 {
+		t.Fatalf("request: %+v", req)
+	}
+	want := []api.SnapField{
+		{Row: 1, Col: 2, Text: "START ", Color: "blue"},
+		{Row: 4, Col: 14, Text: "1.2       ", Input: true, Highlight: "underscore"},
+		{Row: 5, Col: 14, Text: "1234    ", Input: true, Highlight: "underscore", Bright: true, Hidden: true},
+		{Row: 24, Col: 2, Text: "PF3=EXIT", Color: "turquoise"},
+	}
+	got := req.Screen.Fields
+	if len(got) != len(want) {
+		t.Fatalf("fields: %+v", got)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i].Text, want[i].Text) || got[i].Row != want[i].Row || got[i].Col != want[i].Col ||
+			got[i].Color != want[i].Color || got[i].Input != want[i].Input || got[i].Hidden != want[i].Hidden {
+			t.Errorf("field %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestPushes(t *testing.T) {
 	s, _, _ := newSession(t)
 	pushed := func() bool {

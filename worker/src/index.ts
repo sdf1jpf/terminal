@@ -125,6 +125,7 @@ import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
 import { buildStatements, invoicePdf, listingPdf, statementPdf } from "./documents";
 import { pdfResponse } from "./pdf";
 import { getMail, listMail, receiveMail } from "./mail";
+import { format, imageResponse, listingPageHtml, render, screenHtml, snapScreen } from "./snapshot";
 import { notLocked, tso, USER_HEADER, type Sessions } from "./sessions";
 
 export interface Env {
@@ -135,6 +136,7 @@ export interface Env {
 	JOBS: Queue<JobMessage>; // the batch job input queue
 	JOB_RUNNER: Workflow<JobMessage>;
 	ARCHIVE: R2Bucket; // old output and documents, as files (archive.ts)
+	BROWSER?: BrowserRun; // Browser Rendering, for snapshots (snapshot.ts)
 	MAIL?: SendEmail; // Email Routing, sending only to MAIL_TO (mail.ts)
 	MAIL_FROM?: string; // the company's address on its domain
 	MAIL_TO?: string; // the one verified address all mail goes to
@@ -451,9 +453,31 @@ app.get("/v1/spool/:id/pdf", signedOn, async (c) => {
 	const { output, lines } = await getOutput(c.env.DB, c.req.param("id").toUpperCase());
 	return pdfResponse(listingPdf(output, lines), `${output.id}.pdf`);
 });
+// A page of the output as a picture of green-bar paper.
+app.get("/v1/spool/:id/png", signedOn, async (c) => {
+	const { output, lines } = await getOutput(c.env.DB, c.req.param("id").toUpperCase());
+	const n = Number(c.req.query("page") ?? "1");
+	if (!Number.isInteger(n)) throw new HttpError(400, "invalid", '"page" must be a page number', "page");
+	const p = listingPageHtml(output, lines, n);
+	const res = imageResponse(await render(c.env.BROWSER, p, "png"), "png", `${output.id}-P${n}.png`);
+	res.headers.set("X-Pages", String(p.pages));
+	return res;
+});
 app.delete("/v1/spool/:id", signedOn, async (c) => {
 	await purgeOutput(c.env.DB, c.get("user"), c.req.param("id").toUpperCase());
 	return noContent();
+});
+
+// A picture of a screen as the terminal shows it (snapshot.ts).
+app.post("/v1/snapshot", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["format", "screen", "terminal", "map"]);
+	const f = format(body.format);
+	const scr = snapScreen(body.screen);
+	const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+	const map = str(body, "map").replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 8) || "SCREEN";
+	const caption = `SNAPSHOT ${map}  ${c.get("user")}  ${str(body, "terminal").slice(0, 8)}  ${now} UTC`.replace(/ {3,}/g, "  ");
+	const stamp = now.replace(/[-: ]/g, "").slice(0, 12);
+	return imageResponse(await render(c.env.BROWSER, screenHtml(scr, caption), f), f, `${map}-${stamp}.${f}`);
 });
 
 app.get("/v1/mail", signedOn, async (c) => json(200, await listMail(c.env.DB, c.req.query("ref") ?? "")));
@@ -550,6 +574,8 @@ for (const path of [
 	"/v1/spool/:id",
 	"/v1/spool/:id/print",
 	"/v1/spool/:id/pdf",
+	"/v1/spool/:id/png",
+	"/v1/snapshot",
 	"/v1/invoices/:id/pdf",
 	"/v1/customers/:id/statement",
 	"/v1/archive",
