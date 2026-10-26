@@ -8,6 +8,7 @@ export type ErrorCode =
 	| "invalid"
 	| "bad_request"
 	| "method_not_allowed"
+	| "unavailable"
 	| "internal";
 
 export class HttpError extends Error {
