@@ -19,6 +19,7 @@
 
 import { HttpError } from "./http";
 import type { Transaction } from "./activity";
+import { priceLine, salespersonOf, territoryOf } from "./sales";
 
 export interface Invoice {
 	id: string;
@@ -28,6 +29,8 @@ export interface Invoice {
 	total: number;
 	created: string;
 	created_by: string;
+	territory: string; // who sold it, as when it was opened (sales.ts)
+	salesperson: string;
 	billed: string;
 	paid: string;
 	bill_name: string;
@@ -69,7 +72,10 @@ export interface InvoiceLine {
 	sku: string;
 	description: string;
 	quantity: number;
-	unit_price: number;
+	unit_price: number; // the price charged
+	list_price: number; // the product's price when the line was added
+	disc_pct10: number; // the customer's discount, in tenths of a percent
+	price_rule: string; // the pricing agreement applied (sales.ts); "" at list
 }
 
 export const statusNames: Record<string, string> = { O: "OPEN", B: "BILLED", P: "PAID" };
@@ -80,7 +86,8 @@ const bad = (field: string, message: string) => new HttpError(422, "invalid", me
 const now = () => new Date().toISOString();
 
 // createInvoice opens a new, empty invoice for an active customer, billed
-// and shipped to the customer's address.
+// and shipped to the customer's address, and records the territory and
+// salesperson selling to it.
 export async function createInvoice(db: D1Database, user: string, customerId: string, po = ""): Promise<Invoice> {
 	po = po.trim().toUpperCase();
 	if (po.length > 22) throw bad("po", "PO number is limited to 22 characters");
@@ -92,9 +99,10 @@ export async function createInvoice(db: D1Database, user: string, customerId: st
 		db.prepare(
 			`INSERT INTO invoices (id, customer_id, status, po_number, created, created_by,
 			                      bill_name, bill_address, bill_city, bill_state, bill_zip,
-			                      ship_name, ship_address, ship_city, ship_state, ship_zip)
+			                      ship_name, ship_address, ship_city, ship_state, ship_zip, territory, salesperson)
 			 SELECT printf('INV%05d', n.value), c.id, 'O', ?2, ?3, ?4,
-			        c.name, c.address, c.city, c.state, c.zip, c.name, c.address, c.city, c.state, c.zip
+			        c.name, c.address, c.city, c.state, c.zip, c.name, c.address, c.city, c.state, c.zip,
+			        ${territoryOf}, ${salespersonOf}
 			 FROM counters n, customers c WHERE n.name = 'invoice_id' AND c.id = ?1
 			 RETURNING *`,
 		).bind(customerId, po, now(), user),
@@ -194,22 +202,28 @@ async function mustBeOpen(db: D1Database, id: string): Promise<void> {
 	if (shp) throw bad("sku", `invoice ${id} is released to the warehouse on ${shp.id} - cancel the shipment to change it`);
 }
 
-// addLine adds a product to an open invoice at its current price and takes
-// the quantity out of stock.
+// addLine adds a product to an open invoice at its current price, priced
+// for the customer by its agreements, any promotion and the quantity break
+// (sales.ts priceLine), and takes the quantity out of stock.
 export async function addLine(db: D1Database, id: string, sku: string, qty: number): Promise<InvoiceLine> {
 	sku = sku.trim().toUpperCase();
 	checkQty(qty);
-	const sellable = "sku = ?2 AND status = 'A' AND on_hand >= ?3";
+	const inv = await db.prepare("SELECT customer_id FROM invoices WHERE id = ?").bind(id).first<{ customer_id: string }>();
+	const prod = await db.prepare("SELECT unit_price FROM products WHERE sku = ?").bind(sku).first<{ unit_price: number }>();
+	const list = prod?.unit_price ?? 0;
+	const pr = await priceLine(db, inv?.customer_id ?? "", sku, qty, list);
+	// The list price must still be what the line was priced from.
+	const sellable = "sku = ?2 AND status = 'A' AND on_hand >= ?3 AND unit_price = ?7";
 	const [inserted] = await db.batch<InvoiceLine>([
 		db.prepare(
-			`INSERT INTO invoice_lines (invoice_id, line, sku, description, quantity, unit_price)
+			`INSERT INTO invoice_lines (invoice_id, line, sku, description, quantity, unit_price, list_price, disc_pct10, price_rule)
 			 SELECT ?1, (SELECT COALESCE(MAX(line), 0) + 1 FROM invoice_lines WHERE invoice_id = ?1),
-			        sku, description, ?3, unit_price
+			        sku, description, ?3, ?4, unit_price, ?5, ?6
 			 FROM products WHERE ${sellable} AND ${isOpen}
 			 RETURNING *`,
-		).bind(id, sku, qty),
+		).bind(id, sku, qty, pr.unit_price, pr.disc_pct10, pr.rule, list),
 		db.prepare(`UPDATE products SET on_hand = on_hand - ?3, version = version + 1 WHERE ${sellable} AND changes() = 1`)
-			.bind(id, sku, qty),
+			.bind(id, sku, qty, 0, 0, "", list),
 		retotal(db, id),
 	]);
 	const row = inserted.results[0];
@@ -219,23 +233,29 @@ export async function addLine(db: D1Database, id: string, sku: string, qty: numb
 	const p = await db.prepare("SELECT status, on_hand FROM products WHERE sku = ?").bind(sku).first<{ status: string; on_hand: number }>();
 	if (!p) throw bad("sku", `product ${sku} is not on file`);
 	if (p.status !== "A") throw bad("sku", `product ${sku} is discontinued`);
+	if (p.on_hand >= qty) throw new HttpError(409, "conflict", "record was changed by another user");
 	throw bad("qty", `only ${p.on_hand} of ${sku} on hand`);
 }
 
-// changeLine sets a line's quantity, moving the difference to or from stock.
+// changeLine sets a line's quantity, moving the difference to or from
+// stock, and prices it again for the new quantity.
 export async function changeLine(db: D1Database, id: string, line: number, qty: number): Promise<InvoiceLine> {
 	checkQty(qty);
 	const old = await db.prepare("SELECT * FROM invoice_lines WHERE invoice_id = ? AND line = ?").bind(id, line).first<InvoiceLine>();
 	if (!old) throw new HttpError(404, "not_found", "invoice line not found");
 	const delta = qty - old.quantity;
 	if (delta === 0) return old;
+	// A new quantity may earn a different quantity break: the line is
+	// priced again from the list price it was added at.
+	const inv = await db.prepare("SELECT customer_id FROM invoices WHERE id = ?").bind(id).first<{ customer_id: string }>();
+	const pr = await priceLine(db, inv?.customer_id ?? "", old.sku, qty, old.list_price);
 	const [updated] = await db.batch<InvoiceLine>([
 		db.prepare(
-			`UPDATE invoice_lines SET quantity = ?3
+			`UPDATE invoice_lines SET quantity = ?3, unit_price = ?7, disc_pct10 = ?8, price_rule = ?9
 			 WHERE invoice_id = ?1 AND line = ?2 AND quantity = ?4 AND ${isOpen}
 			   AND (?5 <= 0 OR (SELECT on_hand FROM products WHERE sku = ?6) >= ?5)
 			 RETURNING *`,
-		).bind(id, line, qty, old.quantity, delta, old.sku),
+		).bind(id, line, qty, old.quantity, delta, old.sku, pr.unit_price, pr.disc_pct10, pr.rule),
 		db.prepare("UPDATE products SET on_hand = on_hand - ?, version = version + 1 WHERE sku = ? AND changes() = 1")
 			.bind(delta, old.sku),
 		retotal(db, id),

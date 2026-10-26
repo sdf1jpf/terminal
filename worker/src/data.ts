@@ -86,14 +86,15 @@ export async function updateCustomer(
 	throw conflict();
 }
 
-// deleteCustomer removes a customer and its transactions, keeping its
+// deleteCustomer removes a customer, its transactions and its pricing, keeping its
 // change history with a DELETE row.
 export async function deleteCustomer(db: D1Database, id: string, user: string): Promise<void> {
-	const [, , deleted] = await db.batch([
+	const [, , , deleted] = await db.batch([
 		db.prepare(
 			"INSERT INTO audit (customer_id, action, at, by) SELECT id, 'DELETE', ?, ? FROM customers WHERE id = ?",
 		).bind(now(), user, id),
 		db.prepare("DELETE FROM transactions WHERE customer_id = ?").bind(id),
+		db.prepare("DELETE FROM customer_pricing WHERE customer_id = ?").bind(id),
 		db.prepare("DELETE FROM customers WHERE id = ?").bind(id),
 	]);
 	if (deleted.meta.changes === 0) throw notFound();

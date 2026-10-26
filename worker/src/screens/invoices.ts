@@ -22,6 +22,8 @@ import { fail, isCode, pf, withDownload, type InvAddrState, type InvoiceState, t
 // file (CUSI03, skusearch.ts) for the SKU to add. PF5 shows the invoice's
 // bill-to and ship-to addresses (CUSI04), which can be changed there.
 // Open invoices show in white, billed ones in yellow and paid ones in green.
+// A line priced below list by the customer's pricing (sales.ts) is marked
+// with a *, and the invoice shows the discount it adds up to.
 
 const statusColor = (status: string): Color => (status === "O" ? "white" : status === "B" ? "yellow" : "green");
 
@@ -226,6 +228,9 @@ export const invoice: Program<InvoiceState> = {
 		scr.text(4, 18, s.id, { color: "white", bright: true });
 		if (inv) {
 			scr.text(4, 28, statusNames[inv.status], { color: statusColor(inv.status), bright: true });
+			// Lines priced below list by the customer's pricing are marked *.
+			const off = lines.reduce((t, l) => t + Math.max(l.list_price - l.unit_price, 0) * l.quantity, 0);
+			if (off > 0) scr.text(4, 36, `*DISCOUNT ${money(off)}`.slice(0, 20), { color: "yellow" });
 			const col = right(scr, 58);
 			label(scr, 4, col, "TOTAL");
 			scr.text(4, col + 6, lpad(money(inv.total), 15), { color: "white", bright: true });
@@ -270,6 +275,7 @@ export const invoice: Program<InvoiceState> = {
 				if (open) scr.input(row, 51, 5, `qty:${l.line}`, String(l.quantity), { numeric: true, bright: s.errField === `qty:${l.line}` });
 				else scr.text(row, 51, lpad(String(l.quantity), 5), { color });
 				scr.text(row, 58, lpad(money(l.unit_price), 9), { color });
+				if (l.list_price > l.unit_price) scr.text(row, 67, "*", { color: "yellow" });
 				scr.text(row, 68, lpad(money(l.quantity * l.unit_price), 11), { color });
 			});
 			if (lines.length === 0) scr.text(12, 4, "NO LINES YET - ADD A PRODUCT ABOVE", { color: "yellow" });
@@ -469,7 +475,8 @@ async function apply(ctx: Ctx, s: InvoiceState, f: Record<string, string>, modif
 				return newSkuSearch(s, vals.sku, `CUS0515I ${vals.sku} IS NOT A SKU - ${line} PRODUCT${line === 1 ? "" : "S"} MATCH`);
 			}
 			s.vals = undefined;
-			s.msg = `CUS0513I LINE ${line.line} ADDED: ${line.quantity} ${line.sku} AT ${money(line.unit_price)}`;
+			s.msg = `CUS0513I LINE ${line.line} ADDED: ${line.quantity} ${line.sku} AT ${money(line.unit_price)}` +
+				(line.price_rule ? ` (${line.price_rule}, LIST ${money(line.list_price)})` : "");
 			return s;
 		}
 	} catch (e) {

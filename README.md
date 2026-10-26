@@ -346,6 +346,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
 | 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
+| 6 | SELLING | 1 Customer pricing, 2 Territories, 3 Salespeople, 4 Sales by territory, 5 Sales and commission by salesperson, 6 Quantity breaks, 7 Promotions |
 | 7 | FREIGHT | 1 Trucks, 2 Drivers, 3 Load planning, 4 Dispatch board, 5 Freight costs |
 | T, X | | Tutorial, log off |
 
@@ -462,7 +463,9 @@ active customer, and `S` shows one on the **INVOICE** screen (CUSI02).
 An invoice goes OPEN, then BILLED, then PAID:
 
 - **Open:** type a SKU and quantity on the add line and press Enter. The line
-  is priced from the product file and its quantity comes out of stock at once.
+  is priced from the product file, less the customer's discount (see
+  [Sales](#sales-pricing-territories-and-commission)), and its quantity comes
+  out of stock at once. A discounted line is marked `*`.
   Overtype a line's quantity to change it, or type `D` beside it to remove
   it; stock moves by the difference. PF9 twice cancels the invoice and
   returns all its stock.
@@ -489,6 +492,56 @@ The same steps are in the API under `/v1/invoices` (see the route list in
 
 Each step runs as one D1 transaction, so stock, the invoice and the
 customer's balance always move together.
+
+## Sales: pricing, territories and commission
+
+Option 6 opens the **SALES MENU** (CUSM60). The tables are in migration 0040
+and the rules in `worker/src/sales.ts`.
+
+- **6.1 PRICING** (CUSC01, `6.1 000105`) shows who sells to a customer and
+  its pricing agreements. An agreement is a discount off list (`12.5`) or a
+  contract price, for one SKU (`BRG-6204`), a product line (the part of the
+  SKU before the dash, `BRG`) or `*` for everything. When a line is added to
+  an invoice, by hand or from an 850, the most specific agreement prices it:
+  the SKU, then its product line, then `*`. The net price is rounded to the
+  dollar. The line keeps its list price and the agreement that priced it.
+  The invoice screen marks the line with `*` and shows the total discount, the
+  PDF prints the list price under the line and a TOTAL AT LIST / LESS YOUR
+  DISCOUNTS before the total, and the 810 sends the line at list with an
+  `SAC*A*C310` allowance, so the TDS is still what the customer owes.
+  Typing a territory or salesperson here assigns the customer to it; leave
+  them blank for the territory of its state and that territory's salesperson.
+  Changes go on the customer's event history.
+- **6.2 TERRITORIES** (CUSG01): each state belongs to one territory, and each
+  territory has a salesperson. Type a code, name, salesperson and states on
+  the top line to add or change one (`U` fills it from a row); the states
+  listed move to it. `D` twice deletes a territory with no states left.
+  Customers in a state with no territory, or a territory with no
+  salesperson, are house accounts.
+- **6.3 SALESPEOPLE** (CUSG02): name, commission rate (such as `3.5`) and
+  status. A salesperson still covering a territory or customer cannot be made
+  inactive.
+- **6.4 BYTERRITORY / 6.5 COMMISSIONS** (CUSG03): the invoices billed in a
+  month, totalled by the territory and salesperson recorded on each invoice
+  when it was opened, so reassigning a customer does not move past sales.
+  Shows invoices, discounts given, net sales and the discount rate, and by
+  salesperson the commission (rate times net sales). PF6 switches views,
+  PF10/PF11 move a month, and PF9 prints it to the spool.
+
+- **6.6 BREAKS** (CUSC02): a quantity break takes an extra percentage off a
+  line of that many or more, after the customer's price. Breaks are for a
+  SKU, a product line or `*`; the most specific item with breaks decides, and
+  the largest break the line reaches applies. Changing a line's quantity
+  prices it again.
+- **6.7 PROMOTIONS** (CUSC03): a discount off list, or a promotional price for
+  one SKU, open to every customer from one date to another. A line gets the
+  promotion or the customer's own price, whichever is lower (shown as
+  `PROMO PR001`), then any quantity break. Running promotions show in green,
+  coming ones in yellow and past ones in blue.
+
+The API has the same under `/v1/customers/{id}/sales`,
+`/v1/customers/{id}/pricing/{item}`, `/v1/territories`, `/v1/salespeople`
+and `/v1/sales`.
 
 ## Event history
 
