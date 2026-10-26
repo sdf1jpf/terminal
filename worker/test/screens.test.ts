@@ -645,6 +645,74 @@ describe("invoice screens", () => {
 		expect(t.message).toBe("CUS0510E PRODUCT ZZZ-1 IS NOT ON FILE");
 	});
 
+	it("changes an invoice's bill-to and ship-to on CUSI04", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2.1 122").send("ENTER");
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI02");
+		const id = t.row(4).match(/INV\d{5}/)![0];
+		const cust = await env.DB.prepare("SELECT * FROM customers WHERE id = '000122'").first<{ name: string; city: string }>();
+		expect(t.row(7)).toContain(`SHIP TO`);
+		expect(t.row(7)).toContain(cust!.name);
+		expect(t.row(t.scr.rows)).toContain("PF5=ADDRESS");
+
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI04");
+		expect(t.field("bname")?.value).toBe(cust!.name);
+		expect(t.field("scity")?.value).toBe(cust!.city);
+		expect(t.scr.cursor).toEqual({ field: "bname" });
+
+		await t.fill("sname", "north yard", "saddr", "4 rail spur", "scity", "toledo", "sstate", "o").send("ENTER");
+		expect(t.message).toBe("CUS0521E SHIP-TO STATE MUST BE A TWO LETTER CODE");
+		expect(t.scr.cursor).toEqual({ field: "sstate" });
+		expect(t.field("sname")?.value).toBe("NORTH YARD");
+		await t.fill("sstate", "oh", "szip", "43604").send("ENTER");
+		expect(t.message).toBe(`CUS0520I SHIP-TO ADDRESS SAVED FOR ${id}`);
+		expect(t.field("scity")?.value).toBe("TOLEDO");
+		expect(t.field("bcity")?.value).toBe(cust!.city);
+
+		// PF1 explains a field.
+		t.cursorField = "szip";
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH01");
+		expect(t.row(1)).toContain("HELP - SHIP-TO ZIP");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI04");
+
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.row(7)).toContain("NORTH YARD, 4 RAIL SPUR, TOLEDO, OH 43604");
+
+		// Released, the ship-to is frozen but the bill-to is not.
+		await t.fill("sku", "saf-glv", "qty", "1").send("ENTER");
+		await t.send("PF6");
+		expect(t.message).toMatch(/^CUS0515I .* RELEASED TO THE WAREHOUSE/);
+		await t.send("PF5");
+		expect(t.field("sname")).toBeUndefined();
+		expect(t.row(13)).toContain("NORTH YARD");
+		expect(t.row(12)).toMatch(/FROZEN - RELEASED TO THE WAREHOUSE ON SHP\d{5}/);
+		await t.fill("bname", "accounts payable").send("ENTER");
+		expect(t.message).toBe(`CUS0520I BILL-TO ADDRESS SAVED FOR ${id}`);
+		await t.send("PF5");
+		expect(t.message).toBe("CUS0000W PF5 IS NOT ACTIVE ON THIS SCREEN");
+		await t.send("PF6");
+		expect(t.message).toBe("CUS0524I BILL-TO RESET FROM CUSTOMER 000122");
+		expect(t.field("bname")?.value).toBe(cust!.name);
+	});
+
+	it("copies the bill-to to the ship-to with PF5", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2.1 119").send("ENTER");
+		await t.send("PF5");
+		await t.send("PF5");
+		await t.fill("bname", "west plant", "bzip", "11111").send("PF5");
+		expect(t.message).toMatch(/^CUS0523I SHIP-TO SET TO THE BILL-TO ADDRESS/);
+		expect(t.field("sname")?.value).toBe("WEST PLANT");
+		expect(t.field("szip")?.value).toBe("11111");
+		// PF5 saves only the ship-to.
+		expect(t.field("bname")?.value).not.toBe("WEST PLANT");
+	});
+
 	it("will not open an invoice for a customer on hold", async () => {
 		const t = await Terminal.logon();
 		await t.fill("option", "2.1").send("ENTER");

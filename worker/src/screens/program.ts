@@ -96,6 +96,14 @@ export interface InvoiceState {
 	errField?: string;
 	msg?: string;
 }
+export interface InvAddrState {
+	p: "invaddr";
+	back: InvoiceState;
+	id: string;
+	vals?: Record<string, string>; // the address fields, kept across a failed change
+	errField?: string;
+	msg?: string;
+}
 export interface SkuSearchState {
 	p: "skusearch";
 	back: InvoiceState;
@@ -199,7 +207,7 @@ export interface OutputState { p: "output"; back: State; id: string; top?: numbe
 
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | HelpState | ActivityState | EventState
-	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
+	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState;
 

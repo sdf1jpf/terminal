@@ -8,9 +8,9 @@
 // 856 ship notice. Only a shipped invoice can be billed (invoices.ts).
 // Cancelling a shipment that has not shipped puts the invoice back to work.
 
-import { fromEDIOrder, send, ymd, type Interchange } from "./edi";
+import { fromEDIOrder, party, send, ymd, type Interchange } from "./edi";
 import { HttpError } from "./http";
-import { getInvoice, type Invoice, type InvoiceLine } from "./invoices";
+import { addressOf, cityLine, getInvoice, type Invoice, type InvoiceLine } from "./invoices";
 import type { StepResult } from "./jobs";
 
 export interface Shipment {
@@ -144,6 +144,7 @@ async function sendShipNotice(db: D1Database, shp: Shipment): Promise<Interchang
 		["TD5", "", "2", shp.carrier, "", carriers[shp.carrier]],
 		["REF", "CN", shp.tracking],
 		["DTM", "011", ymd(at)],
+		...party("ST", addressOf(invoice, "ship")),
 		["HL", "2", "1", "O"],
 		["PRF", invoice.po_number, "", "", "", "", invoice.id],
 		...lines.flatMap((l, i) => [["HL", 3 + i, "2", "I"], ["LIN", l.line, "VP", l.sku], ["SN1", "", l.quantity, "EA"]]),
@@ -157,19 +158,20 @@ async function sendShipNotice(db: D1Database, shp: Shipment): Promise<Interchang
 // picking, its lines in bin order so the picker walks the aisles once.
 export async function pickTickets(db: D1Database): Promise<StepResult> {
 	const { results } = await db.prepare(
-		`SELECT s.id, s.invoice_id, s.customer_id, c.name, c.address, c.city, c.state, c.zip, i.po_number
-		 FROM shipments s JOIN invoices i ON i.id = s.invoice_id LEFT JOIN customers c ON c.id = s.customer_id
+		`SELECT s.id, s.invoice_id, s.customer_id, i.po_number, i.ship_name, i.ship_address, i.ship_city, i.ship_state, i.ship_zip
+		 FROM shipments s JOIN invoices i ON i.id = s.invoice_id
 		 WHERE s.status = 'P' ORDER BY s.id`,
-	).all<{ id: string; invoice_id: string; customer_id: string; name: string | null; address: string; city: string; state: string; zip: string; po_number: string }>();
+	).all<Pick<Shipment, "id" | "invoice_id" | "customer_id"> & Pick<Invoice, "po_number" | "ship_name" | "ship_address" | "ship_city" | "ship_state" | "ship_zip">>();
 	const lines: string[] = [];
 	for (const s of results) {
 		const { lines: items } = await getInvoice(db, s.invoice_id);
+		const to = addressOf(s, "ship");
 		lines.push(
 			"",
 			`PICK TICKET ${s.id}   INVOICE ${s.invoice_id}   PO ${s.po_number || "(NONE)"}`,
-			`  SHIP TO ${s.customer_id} ${s.name ?? "(NOT ON FILE)"}`,
-			`          ${s.address ?? ""}`,
-			`          ${s.city ?? ""}, ${s.state ?? ""} ${s.zip ?? ""}`,
+			`  SHIP TO ${s.customer_id} ${to.name}`,
+			...(to.address ? [`          ${to.address}`] : []),
+			`          ${cityLine(to)}`,
 			"",
 			"  BIN     SKU        DESCRIPTION                       QTY  PICKED",
 			"  ------- ---------- ------------------------------ ------  ------",

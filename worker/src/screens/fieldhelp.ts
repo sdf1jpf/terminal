@@ -395,6 +395,111 @@ const help: Record<string, FieldHelp> = {
 			"O again prints another copy. P purges it, and a job's entry with it.",
 		],
 	},
+	"invaddr.bname": {
+		title: "BILL-TO NAME",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"Required, up to 30 characters.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.baddr": {
+		title: "BILL-TO ADDRESS",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"The street address, up to 30 characters. Optional.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.bcity": {
+		title: "BILL-TO CITY",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"Required, up to 18 characters.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.bstate": {
+		title: "BILL-TO STATE",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"The two letter state code, such as OH.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.bzip": {
+		title: "BILL-TO ZIP",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"The five digit zip code.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.sname": {
+		title: "SHIP-TO NAME",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"Required, up to 30 characters.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.saddr": {
+		title: "SHIP-TO ADDRESS",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"The street address, up to 30 characters. Optional.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.scity": {
+		title: "SHIP-TO CITY",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"Required, up to 18 characters.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.sstate": {
+		title: "SHIP-TO STATE",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"The two letter state code, such as OH.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.szip": {
+		title: "SHIP-TO ZIP",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"The five digit zip code.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],

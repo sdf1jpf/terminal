@@ -20,7 +20,8 @@
 //	GET    /v1/invoices?customer=X  invoices, newest first
 //	POST   /v1/invoices             open one: {"customer_id", "po_number"}
 //	GET    /v1/invoices/{id}        -> {"invoice", "lines"}
-//	PUT    /v1/invoices/{id}        change the PO number: {"po_number"}
+//	PUT    /v1/invoices/{id}        change the PO number or addresses: {"po_number", "bill_to", "ship_to"},
+//	                                each address {"name", "address", "city", "state", "zip"}
 //	DELETE /v1/invoices/{id}        cancel an open invoice, returning its stock
 //	POST   /v1/invoices/{id}/lines  add a line: {"sku", "quantity"}
 //	PUT    /v1/invoices/{id}/lines/{n}   change its quantity: {"quantity"}
@@ -75,7 +76,8 @@ import { customerFields, parseEditable } from "./customer";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, int, json, noContent, readJSON, str } from "./http";
 import {
-	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
+	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setAddress, setPO,
+	type Address,
 } from "./invoices";
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
@@ -177,8 +179,14 @@ app.post("/v1/invoices", signedOn, async (c) => {
 });
 app.get("/v1/invoices/:id", signedOn, async (c) => json(200, await getInvoice(c.env.DB, c.req.param("id").toUpperCase())));
 app.put("/v1/invoices/:id", signedOn, async (c) => {
-	const body = await readJSON(c.req.raw, ["po_number"]);
-	return json(200, await setPO(c.env.DB, c.req.param("id").toUpperCase(), str(body, "po_number")));
+	const body = await readJSON(c.req.raw, ["po_number", "bill_to", "ship_to"]);
+	const id = c.req.param("id").toUpperCase();
+	const addrs = (["bill", "ship"] as const).map((kind) => [kind, address(body, `${kind}_to`)] as const);
+	let inv = "po_number" in body || addrs.every(([, a]) => !a)
+		? await setPO(c.env.DB, id, str(body, "po_number"))
+		: (await getInvoice(c.env.DB, id)).invoice;
+	for (const [kind, a] of addrs) if (a) inv = await setAddress(c.env.DB, id, kind, a);
+	return json(200, inv);
 });
 app.delete("/v1/invoices/:id", signedOn, async (c) => {
 	await cancelInvoice(c.env.DB, c.req.param("id").toUpperCase());
@@ -198,6 +206,22 @@ app.delete("/v1/invoices/:id/lines/:line", signedOn, async (c) => {
 });
 app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+
+// address reads an optional address object from a request body.
+function address(body: Record<string, unknown>, key: string): Address | undefined {
+	const v = body[key];
+	if (v === undefined) return undefined;
+	if (typeof v !== "object" || v === null || Array.isArray(v)) {
+		throw new HttpError(400, "bad_request", `invalid request body: "${key}" must be an object`);
+	}
+	const a = v as Record<string, unknown>;
+	for (const k of Object.keys(a)) {
+		if (!["name", "address", "city", "state", "zip"].includes(k)) {
+			throw new HttpError(400, "bad_request", `invalid request body: unknown field "${key}.${k}"`);
+		}
+	}
+	return { name: str(a, "name"), address: str(a, "address"), city: str(a, "city"), state: str(a, "state"), zip: str(a, "zip") };
+}
 
 function lineNumber(s: string): number {
 	if (!/^\d{1,5}$/.test(s)) throw new HttpError(404, "not_found", "invoice line not found");
