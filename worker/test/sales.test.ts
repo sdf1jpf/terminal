@@ -173,13 +173,13 @@ describe("sales screens", () => {
 
 		await t.fill("option", "6.3").send("ENTER");
 		expect(t.scr.map).toBe("CUSG02");
-		expect(t.row(10)).toMatch(/S01 MARGARET OKAFOR +4% +ACTIVE/);
+		expect(t.row(10)).toMatch(/S01 MARGARET OKAFOR +4% +\$40,000  ACTIVE/);
 
 		await t.send("PF3");
 		await t.fill("option", "6.5").send("ENTER");
 		expect(t.scr.map).toBe("CUSG03");
 		expect(t.row(1)).toContain("SALES BY SALESPERSON");
-		expect(t.row(6)).toMatch(/ID +NAME +INVS +DISCOUNT +NET SALES +DISC% +COMM +COMMISSION/);
+		expect(t.row(6)).toMatch(/ID +NAME +INVS +NET SALES +QUOTA +MADE +COMM +COMMISSION/);
 		await t.send("PF6");
 		expect(t.row(1)).toContain("SALES BY TERRITORY");
 		const [y, m] = month().split("-").map(Number);

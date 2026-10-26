@@ -20,6 +20,7 @@ import { closeStep, dunningLetters, journalStep, lastClosed, trialBalance, trial
 import { archiveSpool, putArchive, RETENTION_DAYS } from "./archive";
 import { mailStep } from "./mail";
 import { buildStatements, listingPdf, statementLines, statementPdf } from "./documents";
+import { commissionMonth, commissionStatement, listSalespeople } from "./sales";
 
 export interface Job {
 	id: string;
@@ -125,6 +126,14 @@ export const jobLibrary: Record<string, JobDef> = {
 		steps: [
 			{ name: "STEP010", run: (db, job, env) => dunningLetters(db, job, env.ARCHIVE) },
 			{ name: "STEP020", run: mailStep("D") },
+		],
+	},
+	CUSCOMM: {
+		title: "SALESPEOPLE'S COMMISSION STATEMENTS",
+		short: "COMMISSIONS",
+		steps: [
+			{ name: "STEP010", run: commissionStatements },
+			{ name: "STEP020", run: mailStep("M") },
 		],
 	},
 	CUSARCH: {
@@ -401,6 +410,35 @@ export async function statements(db: D1Database, job: Job, env: Env): Promise<St
 		}, mine, statementPdf(st));
 	}
 	lines.push("", `${list.length} STATEMENTS PRINTED, ${list.length} FILED IN THE ARCHIVE`);
+	return { rc: 0, lines };
+}
+
+// commissionStatements is CUSCOMM's first step: a commission statement for
+// each active salesperson for the month (sales.ts commissionMonth), filed
+// in the archive under commissions/<month>/<salesperson>, with -<day> for
+// a month-to-date run. The next step mails them.
+export async function commissionStatements(db: D1Database, job: Job, env: Env): Promise<StepResult> {
+	const now = new Date();
+	const month = commissionMonth(now);
+	// A run during the month prints the month so far; each is filed (and
+	// mailed) on its own, apart from the final one for the month.
+	const final = month !== now.toISOString().slice(0, 7);
+	const lines: string[] = [];
+	let total = 0;
+	let n = 0;
+	for (const sp of await listSalespeople(db)) {
+		if (sp.status !== "A") continue;
+		const st = await commissionStatement(db, sp, month);
+		lines.push(...st.lines, "", "");
+		total += st.commission;
+		n++;
+		const title = `COMMISSION STATEMENT ${month}${final ? "" : " TO DATE"} ${sp.name}`.slice(0, 60);
+		await putArchive(db, env.ARCHIVE, {
+			key: `commissions/${month}/${sp.id}${final ? "" : `-${now.toISOString().slice(8, 10)}`}`, kind: "M", ref: sp.id, name: job.name, title, owner: job.submitted_by,
+			created: new Date().toISOString(), archived_by: job.name,
+		}, st.lines, listingPdf({ id: sp.id, name: job.name, title }, st.lines));
+	}
+	lines.push(`${n} COMMISSION STATEMENTS FOR ${month}${final ? "" : " TO DATE"}, ${dollars(total)} IN COMMISSION, FILED IN THE ARCHIVE`);
 	return { rc: 0, lines };
 }
 

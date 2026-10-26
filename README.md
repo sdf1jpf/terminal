@@ -518,14 +518,16 @@ and the rules in `worker/src/sales.ts`.
   listed move to it. `D` twice deletes a territory with no states left.
   Customers in a state with no territory, or a territory with no
   salesperson, are house accounts.
-- **6.3 SALESPEOPLE** (CUSG02): name, commission rate (such as `3.5`) and
-  status. A salesperson still covering a territory or customer cannot be made
+- **6.3 SALESPEOPLE** (CUSG02): name, commission rate (such as `3.5`),
+  monthly quota of net sales, and status. A salesperson still covering a territory or customer cannot be made
   inactive.
 - **6.4 BYTERRITORY / 6.5 COMMISSIONS** (CUSG03): the invoices billed in a
   month, totalled by the territory and salesperson recorded on each invoice
   when it was opened, so reassigning a customer does not move past sales.
-  Shows invoices, discounts given, net sales and the discount rate, and by
-  salesperson the commission (rate times net sales). PF6 switches views,
+  By territory it shows invoices, discounts given, net sales and the
+  discount rate. By salesperson it shows net sales against the monthly
+  quota and the commission (the rate on each invoice's net sales, before
+  tax). PF6 switches views,
   PF10/PF11 move a month, and PF9 prints it to the spool.
 
 - **6.6 BREAKS** (CUSC02): a quantity break takes an extra percentage off a
@@ -558,6 +560,13 @@ and the rules in `worker/src/sales.ts`.
   instead of cash. An 820 for the total less the discount is accepted
   within the window. The PDF shows the discounted amount and its date, and
   the 810 carries an `ITD` segment.
+
+- **Commission statements:** the `CUSCOMM` job prints a statement for each
+  active salesperson, listing each invoice credited to them with its net
+  sales and commission, and the month against quota. It files each one in
+  the archive under `commissions/<month>/<id>` and mails it as a PDF. It is
+  scheduled for 06:00 UTC on the 1st, for the month just ended. Run by hand
+  later in a month, it prints the month so far, filed separately.
 
 The API has the same under `/v1/customers/{id}/sales`,
 `/v1/customers/{id}/pricing/{item}`, `/v1/territories`, `/v1/salespeople`
