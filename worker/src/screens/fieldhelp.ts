@@ -8,6 +8,7 @@
 // ISPF prompts do: S beside one puts it in the field.
 
 import { jobLibrary } from "../jobs";
+import { helpText } from "../systables";
 import { listVendors } from "../purchasing";
 import { carriers } from "../shipping";
 import { hitTypes } from "../search";
@@ -474,9 +475,22 @@ export async function fieldValues(ctx: Ctx, fh: FieldHelp, s: State): Promise<Va
 	return Array.isArray(fh.values) ? fh.values : fh.values(ctx, s);
 }
 
-// fieldHelp returns the help for the field the cursor was in, if any.
+// fieldHelp returns the built-in help for the field the cursor was in, if
+// any.
 export function fieldHelp(s: State, field: string): FieldHelp | undefined {
 	if (!field) return undefined;
-	const name = field.startsWith("sel") ? "sel" : field.split(":")[0];
+	const name = helpName(field);
 	return help[`${s.p}.${name}`] ?? help[name];
+}
+
+const helpName = (field: string) => (field.startsWith("sel") ? "sel" : field.split(":")[0]);
+
+// helpFor returns the help for a field with the HELP system table applied:
+// a row there replaces the built-in title and text, and keeps its list of
+// valid values.
+export async function helpFor(kv: KVNamespace, s: State, field: string): Promise<FieldHelp | undefined> {
+	const builtIn = fieldHelp(s, field);
+	if (!field) return undefined;
+	const custom = await helpText(kv, s.p, helpName(field));
+	return custom ? { ...builtIn, title: custom.title, lines: custom.lines } : builtIn;
 }

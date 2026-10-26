@@ -36,7 +36,7 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "ORDERS", desc: "Invoices, shipping, EDI", sub: "2" },
 			{ key: "3", name: "INVENTORY", desc: "Products, purchasing, vendors", sub: "3" },
 			{ key: "4", name: "ACCOUNTING", desc: "Ledger, close, dunning, credit", sub: "4" },
-			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, schedule, output", sub: "5" },
+			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, output, monitor, tables", sub: "5" },
 			{ key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys", aliases: ["T", "HELP"], go: (_ctx, m) => ({ p: "help", back: m }) },
 			{ key: "X", name: "EXIT", desc: "Log off", aliases: ["X", "LOGOFF"], go: (ctx) => logoff(ctx) },
 		],
@@ -107,6 +107,8 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "CONSOLE", desc: "Operator console, SYSLOG", aliases: ["O", "OPERATOR", "LOG", "SYSLOG"], go: (_ctx, m) => ({ p: "console", back: m }) },
 			{ key: "3", name: "SCHEDULE", desc: "Job schedule", go: (_ctx, m) => ({ p: "schedule", back: m }) },
 			{ key: "4", name: "HELD", desc: "Held output, reprint", aliases: ["H", "SPOOL", "OUTPUT"], go: (_ctx, m, arg) => ({ p: "spool", back: m, filter: arg }) },
+			{ key: "5", name: "MONITOR", desc: "Transaction rates, response times", aliases: ["STATS", "CEMT"], go: (_ctx, m) => ({ p: "monitor", back: m }) },
+			{ key: "6", name: "TABLES", desc: "Carrier rates, tax codes, help text", aliases: ["SYSTABLES"], go: (_ctx, m) => ({ p: "tables", back: m }) },
 		],
 	},
 };
