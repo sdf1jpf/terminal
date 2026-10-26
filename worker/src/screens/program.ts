@@ -6,6 +6,7 @@ import { HttpError } from "../http";
 import type { Customer } from "../customer";
 import type { Product } from "../products";
 import type { Filter } from "../search";
+import type { Input, Logoff } from "@greenscreen-dev/worker";
 import type { Ctx, Screen } from "./screen";
 
 export type Mode = "inquiry" | "update" | "add" | "delete";
@@ -313,15 +314,9 @@ export type State =
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState;
 
-// Input is what the operator sent with the AID key.
-export interface Input {
-	aid: string; // ENTER, CLEAR, PA1-PA3, PF1-PF24
-	fields: Record<string, string>;
-	modified: Set<string>;
-	cursorField: string;
-}
-
-export interface Logoff { logoff: string }
+export {
+	pf, takeDownload, takeFill, withDownload, withFill, type Download, type Fill, type Input, type Logoff,
+} from "@greenscreen-dev/worker";
 
 export type Next = State | Logoff;
 
@@ -338,52 +333,6 @@ export interface Program<S extends State> {
 	// unlocked returns the panel without its locks, after it lost them to
 	// another session: back to inquiry, nothing saved.
 	unlocked?(s: S): State;
-}
-
-// Fill puts values in a panel's input fields the next time it is drawn,
-// with their modified data tags set as if the operator had typed them:
-// what was typed before PF1, a value picked from a prompt list, or a
-// retrieved command. It travels on the state for one screen only.
-export interface Fill {
-	fields: Record<string, string>;
-	cursor?: string; // the field to put the cursor in
-}
-
-export function withFill<S extends State>(s: S, fill: Fill): S {
-	(s as S & { fill?: Fill }).fill = fill;
-	return s;
-}
-
-// takeFill removes the fill from a state and returns it.
-export function takeFill(s: State): Fill | undefined {
-	const st = s as State & { fill?: Fill };
-	const fill = st.fill;
-	delete st.fill;
-	return fill;
-}
-
-// Download hands the operator a file along with the next screen: the client
-// fetches url (an API path, signed on the same way) and saves or opens it
-// as name. Like a fill, it travels on the state for one screen only.
-export interface Download {
-	url: string;
-	name: string;
-}
-
-export function withDownload<S extends State>(s: S, d: Download): S {
-	(s as S & { download?: Download }).download = d;
-	return s;
-}
-
-export function takeDownload(s: State): Download | undefined {
-	const st = s as State & { download?: Download };
-	const d = st.download;
-	delete st.download;
-	return d;
-}
-
-export function pf(n: number): string {
-	return `PF${n}`;
 }
 
 // fail turns an unexpected API error into a message for the message line.

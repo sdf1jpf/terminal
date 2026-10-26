@@ -18,13 +18,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l cmd internal)
-          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: go build ./cmd/terminal
+      # The client is greenscreen's, pinned in go.mod as a tool.
+      - run: go mod verify
+      - run: go build -o terminal github.com/sdf1jpf/greenscreen/cmd/greenscreen
 
   worker:
     name: API (Cloudflare Worker)

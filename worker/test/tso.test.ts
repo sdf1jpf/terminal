@@ -1,7 +1,7 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { parseSend } from "../src/screens/send";
+import { parseSend } from "@greenscreen-dev/worker";
 import { tso, type Sessions } from "../src/sessions";
 import { syslog } from "../src/syslog";
 import { accessJWT } from "./access";
