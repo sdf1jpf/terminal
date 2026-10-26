@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-	assignLoad, board, cancelLoad, deliverStop, dispatchLoad, stopNotDelivered, dutyMinutes, freightDay, getLoad, getTruck, group, listLoads, planLoads, returnLoad, schedule,
+	assignLoad, board, cancelLoad, deliverStop, freightCosts, dispatchLoad, stopNotDelivered, dutyMinutes, freightDay, getLoad, getTruck, group, listLoads, planLoads, returnLoad, schedule,
 	sequence, serviceState, truckServiced, waitingShipments, type Driver, type Truck, type Waiting,
 } from "../src/fleet";
 import { bearing, DEPOT, locate, miles } from "../src/geo";
 import { HttpError } from "../src/http";
+import { journal } from "../src/ledger";
 import { addLine, createInvoice } from "../src/invoices";
 import { pack, release, ship, type Shipment } from "../src/shipping";
 import { lookAtInvoice, timeline } from "../src/lifecycle";
@@ -212,10 +213,10 @@ describe("fleet", () => {
 		expect((await getLoad(db, l.id)).stops[0]).toMatchObject({ pod_status: "D", pod_signed: "SMITH", pod_cartons: 2 });
 
 		// It comes back only when every stop is signed off.
-		expect((await err(returnLoad(db, "DISPATCH", l.id, 0))).message).toMatch(/1 stop\(s\) on load .* have no proof of delivery/);
+		expect((await err(returnLoad(db, env.TABLES, "DISPATCH", l.id, 0))).message).toMatch(/1 stop\(s\) on load .* have no proof of delivery/);
 		const before = (await getTruck(db, l.truck_id)).odometer;
 		await stopNotDelivered(db, "DRIVER", l.id, stops[1].shipment_id, "receiver closed");
-		const back = await returnLoad(db, "DISPATCH", l.id, 0);
+		const back = await returnLoad(db, env.TABLES, "DISPATCH", l.id, 0);
 		expect(back).toMatchObject({ status: "C", actual_miles: l.miles, delivered: 1, missed: 1 });
 		expect((await getTruck(db, l.truck_id)).odometer).toBe(before + l.miles);
 		const log = await db.prepare("SELECT text FROM syslog WHERE text LIKE ?").bind(`CUS1908W LOAD ${l.id}%`).first<{ text: string }>();
@@ -239,7 +240,7 @@ describe("fleet", () => {
 		const { results: signals } = await db.prepare("SELECT what FROM order_signals WHERE ref = ?").bind(a.invoice_id).all<{ what: string }>();
 		expect(signals.map((r) => r.what)).toContain("DELIVERY EXCEPTION");
 		// It rides back on the truck, and waits for the next load.
-		await returnLoad(db, "DISPATCH", l.id, 0);
+		await returnLoad(db, env.TABLES, "DISPATCH", l.id, 0);
 		const waiting = await waitingShipments(db);
 		expect(waiting.map((w) => [w.shipment_id, w.redeliver])).toEqual([[a.id, true]]);
 		// Asking tracking about it while it waits changes nothing.
@@ -275,6 +276,60 @@ describe("fleet", () => {
 		await cancelLoad(db, "DISPATCH", l.id);
 		expect(await listLoads(db, day)).toEqual([]);
 		expect((await waitingShipments(db)).map((w) => w.shipment_id)).toEqual([a.id]);
+	});
+});
+
+describe("freight costs", () => {
+	it("costs truck loads against the carriers and posts freight to the ledger", async () => {
+		const day = freightDay();
+		const ups = await packed("000101", 20);
+		expect(ups).toMatchObject({ carrier: "UPS", freight_cost: 30 }); // 12.50 + 0.85 x 20 lb
+		await ship(db, "SHIPPER", ups.id);
+		const a = await packed("000101", 900);
+		const b = await packed("000101", 300);
+		expect(a.freight_cost).toBe(0);
+		const [l] = (await planLoads(db, "DISPATCH", day)).loads;
+		await dispatchLoad(db, env.TABLES, "DISPATCH", l.id);
+		await deliverStop(db, "DRIVER", l.id, a.id, "SMITH");
+		await deliverStop(db, "DRIVER", l.id, b.id, "SMITH");
+		const back = await returnLoad(db, env.TABLES, "DISPATCH", l.id, 100);
+		const { truck, driver } = await getLoad(db, l.id);
+		expect(back.cost_miles).toBe(Math.round(100 * truck.cost_per_mile));
+		expect(back.cost_labor).toBeGreaterThanOrEqual(Math.round(0.5 * driver.hourly_rate)); // at least the pre-trip
+		// FedEx Freight would have taken both: $95 + 0.42 a lb each.
+		expect(back.cost_carrier).toBe(Math.round(95 + 0.42 * 900 + 95 + 0.42 * 300));
+		// The cost is shared over the shipments by weight.
+		const shares = (await db.prepare("SELECT id, freight_cost FROM shipments WHERE id IN (?, ?)").bind(a.id, b.id).all<{ id: string; freight_cost: number }>()).results;
+		expect(shares.reduce((t, r) => t + r.freight_cost, 0)).toBe(back.cost_miles + back.cost_labor);
+		expect(shares.find((r) => r.id === a.id)!.freight_cost).toBeGreaterThan(shares.find((r) => r.id === b.id)!.freight_cost);
+
+		const fc = await freightCosts(db, day.slice(0, 7));
+		const row = fc.loads.find((r) => r.load.id === l.id)!;
+		expect(row).toMatchObject({ cost: back.cost_miles + back.cost_labor, saved: back.cost_carrier - back.cost_miles - back.cost_labor });
+		expect(fc.carriers.find((c) => c.carrier === "UPS")!.cost).toBeGreaterThanOrEqual(30);
+		expect((await err(freightCosts(db, "2026-13"))).field).toBe("month");
+
+		await journal(db, "TESTGL");
+		const entries = (await db.prepare("SELECT source, account, debit, credit FROM gl_entries WHERE source IN (?, ?) ORDER BY source, account")
+			.bind("L:" + l.id, "F:" + ups.id).all()).results;
+		expect(entries).toEqual([
+			{ source: "F:" + ups.id, account: "2100", debit: 0, credit: 30 },
+			{ source: "F:" + ups.id, account: "5200", debit: 30, credit: 0 },
+			{ source: "L:" + l.id, account: "2110", debit: 0, credit: back.cost_miles + back.cost_labor },
+			{ source: "L:" + l.id, account: "5210", debit: back.cost_miles + back.cost_labor, credit: 0 },
+		]);
+
+		const t = await Terminal.logon();
+		await t.fill("option", "7.5").send("ENTER");
+		expect(t.scr.map).toBe("CUSF08");
+		expect(screenText(t)).toContain(l.id);
+		expect(screenText(t)).toMatch(/CARRIERS WOULD HAVE CHARGED \$[\d,]+ - THE TRUCK (SAVED|COST)/);
+		await t.fill("month", "2026-13").send("ENTER");
+		expect(t.message).toBe("CUS1944E THE MONTH MUST BE YYYY-MM");
+		await t.send("PF3");
+		await t.fill("option", "3").send("ENTER");
+		await t.fill(`sel:${l.id}`, "s").send("ENTER");
+		expect(screenText(t)).toMatch(/COST \$[\d,]+ \(MILES \$[\d,]+, DRIVER \$[\d,]+\)  CARRIERS \$[\d,]+/);
 	});
 });
 

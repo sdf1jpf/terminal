@@ -347,7 +347,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
 | 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
 | 6 | SELLING | 1 Customer pricing, 2 Territories, 3 Salespeople, 4 Sales by territory, 5 Sales and commission by salesperson, 6 Quantity breaks, 7 Promotions |
-| 7 | FREIGHT | 1 Trucks, 2 Drivers, 3 Load planning, 4 Dispatch board |
+| 7 | FREIGHT | 1 Trucks, 2 Drivers, 3 Load planning, 4 Dispatch board, 5 Freight costs |
 | T, X | | Tutorial, log off |
 
 A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
@@ -778,6 +778,20 @@ runs that fleet (`worker/src/fleet.ts`, migration 0031).
   last stop signed off (red when the truck is behind), and when
   it is due back; then the trucks that are free, in the shop or due for
   service.
+- **Freight costs.** Each truck has a cost per mile (fuel, tires,
+  maintenance) and each driver an hourly rate (with benefits), set on 7.1
+  and 7.2 (migration 0033). When the truck is back, the load costs its
+  miles at the truck's rate and the driver's hours on duty at theirs; the
+  cost is shared over its shipments by weight, and the load records what
+  UPS or FedEx would have charged for the same shipments from the `CARRIER`
+  table. CUSF06 shows both once the load is complete. A shipment packed for
+  UPS or FedEx carries the carrier's charge from the same table.
+- **7.5 COSTS** (CUSF08, or `FREIGHTCOST`) is freight cost by route for a
+  month: each completed load with its truck, miles, cost, cost per mile and
+  the carrier equivalent, the totals per truck, and what went by carrier.
+  The month-end journal posts the carriers' charges to 5200 against 2100
+  Accrued freight, and the trucks' costs to 5210 against 2110 Accrued fleet
+  costs.
 
 There is no map service: the cities the truck serves are in
 `worker/src/geo.ts`, and road miles are the great-circle distance times 1.2,
@@ -787,8 +801,8 @@ and services are logged on SYSLOG as `CUS19xx`.
 The API: `/v1/trucks`, `/v1/drivers`, `/v1/loads` (`POST /v1/loads/plan`,
 `POST /v1/loads/{id}/dispatch`, `POST /v1/loads/{id}/stops/{shipment}/delivered`
 with `{"signed_by", "cartons", "note"}`, `.../missed` with `{"reason"}`,
-`POST /v1/loads/{id}/return`) and
-`GET /v1/dispatch`.
+`POST /v1/loads/{id}/return` with `{"miles"}`), `GET /v1/dispatch` and
+`GET /v1/freight/costs?month=YYYY-MM`.
 
 ## Accounts receivable and the general ledger
 
@@ -808,6 +822,8 @@ The ledger is fed in batch from the subledgers:
 | Goods received on a purchase order | 1300 Inventory | 2000 Accounts payable |
 | Stock gained by hand (a new product's stock, or a higher on hand or unit cost on the product screen) | 1300 Inventory | 5100 Inventory adjustments |
 | Stock lost by hand (a lower on hand or unit cost) | 5100 Inventory adjustments | 1300 Inventory |
+| Shipment shipped by UPS or FedEx (the carrier's charge) | 5200 Freight - carriers | 2100 Accrued freight |
+| Company truck load back (miles and driver's hours) | 5210 Freight - company truck | 2110 Accrued fleet costs |
 
 Each hand edit that changes the stock's value at cost is recorded in
 `stock_adjustments`, and the product screen's message shows the amount.

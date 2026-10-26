@@ -1293,10 +1293,8 @@ describe("ledger screens", () => {
 		expect(t.message).toMatch(/^\$HASP100 CUSTRIAL ON INTRDR - JOB\d{5} SUBMITTED/);
 		await journal(env.DB, "TEST");
 		await t.send("ENTER");
-		// Under the accounts, however many there are.
-		const at = Array.from({ length: 24 }, (_, i) => i + 1).find((r) => t.row(r).includes("DEBITS EQUAL"))!;
-		expect(t.row(at)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
-		expect(t.row(at + 1)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
+		expect(t.row(20)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
+		expect(t.row(21)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
 
 		await t.send("PF5");
 		expect(t.message).toBe("CUS0903W PRESS PF5 AGAIN TO RUN THE MONTH-END CLOSE AND CLOSE THE PERIOD");

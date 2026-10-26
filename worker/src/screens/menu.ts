@@ -166,6 +166,7 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "DRIVERS", desc: "Drivers, licenses, hours", go: (_ctx, m) => ({ p: "drivers", back: m }) },
 			{ key: "3", name: "LOADS", desc: "Plan and dispatch loads", aliases: ["PLAN", "LOAD"], go: (_ctx, m, arg) => newLoads(m, arg) },
 			{ key: "4", name: "DISPATCH", desc: "Dispatch board", aliases: ["BOARD"], go: (_ctx, m, arg) => ({ p: "board", back: m, day: arg }) },
+			{ key: "5", name: "COSTS", desc: "Freight cost by route", aliases: ["FREIGHTCOST"], go: (_ctx, m, arg) => ({ p: "costs", back: m, month: arg }) },
 		],
 	},
 };
