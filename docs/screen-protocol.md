@@ -38,7 +38,7 @@ signed in through Cloudflare Access on its own, like the rest of the API.
 | Key | Meaning |
 | --- | --- |
 | `v` | Protocol version, 1. |
-| `aid` | The key: `ENTER`, `CLEAR`, `PA1`-`PA3`, `PF1`-`PF24`. Two more are not keys: `START` asks for the first screen after logon (send no `state`), and `REDRAW` asks for the current screen again at a new `rows`/`cols`, without acting on any input. |
+| `aid` | The key: `ENTER`, `CLEAR`, `PA1`-`PA3`, `PF1`-`PF24`. Three more are not keys: `START` asks for the first screen after logon (send no `state`), `REDRAW` asks for the current screen again at a new `rows`/`cols`, without acting on any input, and `TIMEOUT` says the operator has left the terminal idle too long: the reply is always a logoff. |
 | `state` | The `state` string from the previous response. Leave it out on `START`. |
 | `fields` | Every named input field on the screen, as the operator left it: nulls removed and trailing blanks trimmed. |
 | `modified` | Names of the input fields whose modified data tag is set (the operator typed in them). |
@@ -104,6 +104,7 @@ is an unprotected input field, prefilled with `value`.
 | `hidden` | all | `false`, `true`: non-display, e.g. a password. |
 | `numeric` | input | `false`, `true`: only digits may be typed. |
 | `mixed` | input | `false`, `true`: keep lower case. Otherwise the client folds typed letters to upper case. |
+| `modified` | input | `false`, `true`: start with the modified data tag set, so the field is sent back in `modified` as if typed. The Worker uses it to put back what the operator typed before PF1, a value picked from a help list, and a retrieved command. |
 
 Keys at their default are left out. With color `default` the 3270 base
 colors apply: protected is blue, protected and bright is white, input is
@@ -135,6 +136,24 @@ These keep the panels consistent; they are not enforced by the protocol.
 - Screens wider or taller than 24x80 keep right-hand fields at the right edge
   and give extra rows to lists.
 - PF1 is help on every screen. PF3 goes back, PF12 cancels, PF7/PF8 scroll.
+- PF1 with the cursor in a field explains that field. A field with a set of
+  valid values lists them under its help, ISPF prompt style: S beside one
+  goes back with it in the field. Whatever the operator had typed on the
+  screen is put back on return.
+- PF24 is RETRIEVE on a panel with a command line (the menus' OPTION and the
+  console's command): it puts the last command back, and again for the one
+  before. The history travels in the commarea.
+
+## Session
+
+The clients keep a few things to themselves:
+
+- The status line (OIA) shows the system name and the time of day next to
+  the terminal name.
+- A terminal left without a key pressed for 30 minutes sends `TIMEOUT`, and
+  the Worker logs the session off (SYSLOG records it as an S522, TSO's
+  time-out abend). The Go client's `-idle` flag changes the limit; 0 turns
+  it off.
 
 ## In the Worker
 

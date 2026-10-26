@@ -36,6 +36,10 @@ const (
 	AIDPF22
 	AIDPF23
 	AIDPF24
+
+	// AIDTimeout is not a key: the terminal sends it when the operator has
+	// left it idle too long, and the host logs the session off.
+	AIDTimeout
 )
 
 // PF returns the AID for program function key n (1-24).
@@ -64,6 +68,8 @@ func (a AID) String() string {
 		return fmt.Sprintf("PA%d", int(a-AIDPA1)+1)
 	case a >= AIDPF1 && a <= AIDPF24:
 		return fmt.Sprintf("PF%d", a.PFNumber(false))
+	case a == AIDTimeout:
+		return "TIMEOUT"
 	}
 	return "NONE"
 }

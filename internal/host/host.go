@@ -62,6 +62,9 @@ func (s *Session) Redraw(rows, cols int) *t3.Screen {
 }
 
 func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
+	if s.logon != nil && aid == t3.AIDTimeout {
+		return scr.Clone() // not logged on: nothing to time out
+	}
 	if s.logon != nil {
 		return s.submitLogon(aid, scr)
 	}
@@ -158,6 +161,9 @@ func build(in *api.Screen) *t3.Screen {
 		}
 		if f.Mixed {
 			opts = append(opts, t3.MixedCase)
+		}
+		if f.Modified {
+			opts = append(opts, t3.Modified)
 		}
 		switch f.Highlight {
 		case "none":

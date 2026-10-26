@@ -5,8 +5,9 @@ import { newInvoices } from "./invoices";
 import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
 import { newLedger } from "./ledger";
+import { newSearch } from "./search";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
-import { pf, type MenuState, type Next, type Program } from "./program";
+import { pf, type MenuState, type Next, type Program, type State } from "./program";
 
 // The ISPF-style primary option menu and its submenus, one per module.
 // An option is picked by its key on the menu shown, by a fast path from
@@ -20,7 +21,7 @@ interface Option {
 	desc: string;
 	aliases?: string[];
 	sub?: string; // opens this submenu
-	go?: (ctx: Ctx, m: MenuState, arg: string) => Next | Promise<Next>;
+	go?: (ctx: Ctx, m: MenuState, arg: string, rest: string) => Next | Promise<Next>; // rest: every word after the option
 }
 
 interface Menu { map: string; title: string; options: Option[] }
@@ -49,6 +50,10 @@ const menus: Record<string, Menu> = {
 			{
 				key: "4", name: "EVENTS", desc: "Customer event history", aliases: ["ACTIVITY", "HISTORY"],
 				go: (ctx, m, arg) => newActivity(ctx, m, arg),
+			},
+			{
+				key: "5", name: "SEARCH", desc: "Find anything by name or number", aliases: ["FIND"],
+				go: (_ctx, m, _arg, rest) => newSearch(m, rest),
 			},
 		],
 	},
@@ -101,6 +106,13 @@ export function logoff(ctx: Ctx): Next {
 
 function current(m: MenuState): Menu {
 	return menus[m.sub ?? ""] ?? menus[""];
+}
+
+// menuValues lists the options on the menu s shows, for the option
+// field's prompt list.
+export function menuValues(s: State): { code: string; desc: string }[] {
+	const mn = s.p === "menu" ? current(s) : menus[""];
+	return mn.options.map((o) => ({ code: o.key, desc: `${o.name} - ${o.desc}`.toUpperCase() }));
 }
 
 // byName finds an option by name or alias on any menu.
@@ -205,7 +217,7 @@ export const menu: Program<MenuState> = {
 			// name may have skipped past.
 			const home = menuOf(opt);
 			const back: MenuState = home === (m.sub ?? "") ? m : home ? { p: "menu", sub: home } : { p: "menu" };
-			return opt.go(ctx, back, arg);
+			return opt.go(ctx, back, arg, words.slice(1).join(" "));
 		}
 		m.option = words.join(" ");
 		m.msg = "ISPD117E INVALID OPTION " + words[0];

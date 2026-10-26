@@ -67,6 +67,7 @@ func Reverse(a *Attr)     { a.Highlight = HlReverse }
 func Blink(a *Attr)       { a.Highlight = HlBlink }
 func NoUnderline(a *Attr) { a.Highlight = HlNone }
 func MixedCase(a *Attr)   { a.Mixed = true }
+func Modified(a *Attr)    { a.modified = true } // set the MDT, as if typed
 func WithColor(c Color) Opt {
 	return func(a *Attr) { a.Color = c }
 }

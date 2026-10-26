@@ -309,3 +309,44 @@ func TestRefresh(t *testing.T) {
 		t.Fatalf("redrew while typing: %d", n)
 	}
 }
+
+func TestStatusLineShowsSystemAndClock(t *testing.T) {
+	at := time.Date(2026, 10, 26, 14, 5, 30, 0, time.Local)
+	term := New(echoHost{}, Options{SystemName: "SYS1", LUName: "TERM0001", Now: func() time.Time { return at }})
+	lines := strings.Split(term.View(), "\n")
+	oia := lines[len(lines)-1]
+	if !strings.Contains(oia, "SYS1") || !strings.Contains(oia, "14:05") || !strings.Contains(oia, "TERM0001") {
+		t.Fatalf("OIA missing the system, clock or LU: %q", oia)
+	}
+}
+
+func TestIdleTimeoutLogsOff(t *testing.T) {
+	now := time.Date(2026, 10, 26, 14, 0, 0, 0, time.Local)
+	term := New(echoHost{}, Options{IdleTimeout: 30 * time.Minute, Now: func() time.Time { return now }})
+
+	// A key resets the timer.
+	now = now.Add(20 * time.Minute)
+	term.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	now = now.Add(20 * time.Minute)
+	if _, cmd := term.Update(idleTick{}); term.lock != LockNone || cmd == nil {
+		t.Fatal("timed out although a key was pressed 20 minutes ago")
+	}
+
+	now = now.Add(11 * time.Minute)
+	_, cmd := term.Update(idleTick{})
+	if term.lock != LockWait {
+		t.Fatal("no TIMEOUT sent after 31 idle minutes")
+	}
+	send := cmd().(tea.BatchMsg)[0] // the send; the other waits for the next timeout
+	term.Update(send())
+	if !strings.Contains(term.View(), "TIMEOUT") {
+		t.Fatalf("host did not get TIMEOUT:\n%s", term.View())
+	}
+
+	// Esc then Up is PF24, RETRIEVE.
+	update(term, tea.KeyMsg{Type: tea.KeyEsc})
+	update(term, tea.KeyMsg{Type: tea.KeyUp})
+	if !strings.Contains(term.View(), "PF24") {
+		t.Fatalf("Esc Up did not send PF24:\n%s", term.View())
+	}
+}

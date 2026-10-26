@@ -56,7 +56,7 @@ export class Screen {
 	// input places a named, unprotected field of the given length.
 	input(row, col, length, name, value = "", attr = {}) {
 		const start = this.addr(row, col);
-		this.setAttr(start - 1, { highlight: "underscore", ...attr, protected: false, name, modified: false });
+		this.setAttr(start - 1, { highlight: "underscore", modified: false, ...attr, protected: false, name });
 		const v = [...value];
 		for (let i = 0; i < length; i++) this.buf[this.wrap(start + i)] = { ch: v[i] ?? "" };
 		this.stopper(start + length);

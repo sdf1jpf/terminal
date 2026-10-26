@@ -14,14 +14,21 @@ import (
 
 // Options configures a Terminal.
 type Options struct {
-	// LUName is shown in the operator information area.
-	LUName string
+	// LUName and SystemName are shown in the operator information area,
+	// with the time of day.
+	LUName     string
+	SystemName string
 	// Latency is an artificial host response delay, so the keyboard visibly
 	// locks with "X ()" after each AID. Zero disables it.
 	Latency time.Duration
 	// PrintDir is where the PRINT key (Ctrl+P) saves a copy of the screen.
 	// Empty means the current directory.
 	PrintDir string
+	// IdleTimeout logs the session off when no key has been pressed for
+	// this long, as TSO does. Zero never does.
+	IdleTimeout time.Duration
+	// Now is the clock, for tests. Nil is time.Now.
+	Now func() time.Time
 }
 
 // Terminal is a Bubble Tea model emulating a 3278 display station.
@@ -37,7 +44,8 @@ type Terminal struct {
 	height int
 	styles map[styleKey]lipgloss.Style
 	r      *lipgloss.Renderer
-	gen    int // counts screens, so a refresh tick for an old one is dropped
+	gen    int       // counts screens, so a refresh tick for an old one is dropped
+	active time.Time // when the operator last pressed a key or clicked
 }
 
 type hostReply struct{ scr *Screen }
@@ -48,10 +56,19 @@ type redrawReply struct{ scr *Screen }
 // be drawn again.
 type refreshTick struct{ gen int }
 
+// clockTick comes on the minute, to move the clock in the status line.
+type clockTick struct{}
+
+// idleTick comes when the idle timeout may have run out.
+type idleTick struct{}
+
 // New returns a terminal connected to host.
 func New(host Host, opts Options) *Terminal {
 	if opts.LUName == "" {
 		opts.LUName = "TERM0001"
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
 	return &Terminal{
 		host:   host,
@@ -59,10 +76,11 @@ func New(host Host, opts Options) *Terminal {
 		scr:    host.Start(),
 		styles: map[styleKey]lipgloss.Style{},
 		r:      lipgloss.DefaultRenderer(),
+		active: opts.Now(),
 	}
 }
 
-func (t *Terminal) Init() tea.Cmd { return nil }
+func (t *Terminal) Init() tea.Cmd { return batch(t.clock(), t.idle()) }
 
 func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -86,7 +104,14 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return t, batch(t.fit(), t.schedule())
 	case refreshTick:
 		return t, t.refresh(msg)
+	case clockTick:
+		return t, t.clock()
+	case idleTick:
+		return t, t.timeout()
 	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress {
+			t.active = t.opts.Now()
+		}
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && t.lock == LockNone {
 			x0, y0 := t.origin()
 			row, col := msg.Y-y0, msg.X-x0
@@ -121,6 +146,8 @@ var escPF = map[string]int{
 	"7": 7, "8": 8, "9": 9, "0": 10, "-": 11, "=": 12,
 	"alt+4": 4, "alt+5": 5, "alt+6": 6, "alt+7": 7, "alt+8": 8,
 	"alt+9": 9, "alt+0": 10, "alt+-": 11, "alt+=": 12,
+	// Esc then Up is PF24, RETRIEVE: the last command back on the command line.
+	"up": 24, "alt+up": 24,
 }
 
 func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -128,6 +155,7 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if s == "ctrl+c" {
 		return t, tea.Quit
 	}
+	t.active = t.opts.Now()
 	if t.lock == LockWait {
 		return t, nil
 	}
@@ -309,6 +337,32 @@ func (t *Terminal) refresh(msg refreshTick) tea.Cmd {
 	return func() tea.Msg { return redrawReply{scr: host.Redraw(rows, cols)} }
 }
 
+// clock waits for the next minute, when the status line's clock changes.
+func (t *Terminal) clock() tea.Cmd {
+	now := t.opts.Now()
+	return tea.Tick(now.Truncate(time.Minute).Add(time.Minute).Sub(now), func(time.Time) tea.Msg { return clockTick{} })
+}
+
+// idle waits until the idle timeout would run out.
+func (t *Terminal) idle() tea.Cmd {
+	if t.opts.IdleTimeout <= 0 {
+		return nil
+	}
+	wait := t.active.Add(t.opts.IdleTimeout).Sub(t.opts.Now())
+	return tea.Tick(max(wait, time.Second), func(time.Time) tea.Msg { return idleTick{} })
+}
+
+// timeout logs the session off once no key has been pressed for the idle
+// timeout, and otherwise waits for when it might next run out. While the
+// host is busy it tries again a second later.
+func (t *Terminal) timeout() tea.Cmd {
+	if t.opts.Now().Sub(t.active) < t.opts.IdleTimeout || t.lock == LockWait {
+		return t.idle()
+	}
+	t.active = t.opts.Now()
+	return batch(t.send(AIDTimeout), t.idle())
+}
+
 func batch(cmds ...tea.Cmd) tea.Cmd {
 	var out []tea.Cmd
 	for _, c := range cmds {
@@ -364,6 +418,10 @@ func (t *Terminal) oia() string {
 		put(cols-28, "^")
 	}
 	put(22, t.print)
+	if sys := t.opts.SystemName; sys != "" {
+		put(32, fmt.Sprintf("%-8.8s", sys))
+	}
+	put(42, t.opts.Now().Format("15:04"))
 	put(cols-23, t.opts.LUName)
 	row, col := t.scr.RowCol(t.scr.Cursor())
 	put(cols-6, fmt.Sprintf("%03d/%03d", row, col))

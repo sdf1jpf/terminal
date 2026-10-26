@@ -27,6 +27,7 @@ export interface Field extends Opts {
 	name?: string; // input field
 	length?: number;
 	value?: string;
+	modified?: boolean; // input only: the modified data tag starts set
 }
 
 export type Cursor = { field: string } | { row: number; col: number };
@@ -73,6 +74,19 @@ export class Screen {
 
 	setCursor(row: number, col: number): void {
 		this.cursor = { row, col };
+	}
+
+	// fill puts values in the named input fields, marked modified as if they
+	// had been typed, and the cursor in the cursor field if there is one.
+	fill(values: Record<string, string>, cursor?: string): void {
+		for (const f of this.fields) {
+			if (f.name === undefined || !Object.hasOwn(values, f.name)) continue;
+			const v = values[f.name].slice(0, f.length);
+			if (v === "") delete f.value;
+			else f.value = v;
+			f.modified = true;
+		}
+		if (cursor && this.fields.some((f) => f.name === cursor)) this.cursorTo(cursor);
 	}
 
 	toJSON() {
