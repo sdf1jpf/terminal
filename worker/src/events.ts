@@ -11,7 +11,7 @@ export interface CustomerEvent {
 	key: string; // the audit or transaction seq, or the invoice ID
 	at: string; // RFC 3339, UTC
 	by: string;
-	event: string; // ADDED, CHANGED, DELETED, OPENED, BILLED, INVOICE, PAYMENT, EDI IN, EDI OUT, RELEASED, SHIPPED, DUNNING
+	event: string; // ADDED, CHANGED, DELETED, OPENED, BILLED, INVOICE, PAYMENT, EDI IN, EDI OUT, RELEASED, SHIPPED, DELIVERED, DUNNING
 	text: string;
 	amount?: number; // + charges the account, - credits it
 	balance?: number; // after a posting
@@ -65,6 +65,12 @@ export async function customerEvents(db: D1Database, id: string): Promise<Custom
 			events.push({
 				kind: "S", key: String(r.id), at: String(r.shipped), by: String(r.shipped_by), event: "SHIPPED",
 				text: `${r.id} ${r.carrier} ${r.tracking}`,
+			});
+		}
+		if (r.delivery === "D") {
+			events.push({
+				kind: "S", key: String(r.id), at: String(r.delivered), by: String(r.carrier), event: "DELIVERED",
+				text: `${r.id} SIGNED BY ${r.signed_by}`,
 			});
 		}
 	}

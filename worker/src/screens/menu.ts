@@ -6,6 +6,7 @@ import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
 import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
+import { newTracking } from "./tracking";
 import { newLedger } from "./ledger";
 import { find } from "./search";
 import { newVendHist } from "./vendhist";
@@ -74,6 +75,7 @@ const menus: Record<string, Menu> = {
 			{ key: "3", name: "EDI", desc: "EDI mailbox", aliases: ["E"], go: (_ctx, m, arg) => newEdi(m, arg) },
 			{ key: "4", name: "TIMELINE", desc: "Order lifecycle timeline", aliases: ["TL", "LIFECYCLE"], go: (_ctx, m, arg) => newTimeline(m, arg) },
 			{ key: "5", name: "EXCEPTIONS", desc: "EDI lines held to correct", aliases: ["EX", "EDIEX"], go: (_ctx, m) => newEdiEx(m) },
+			{ key: "6", name: "TRACKING", desc: "Where a shipment is", aliases: ["TRACK"], go: (_ctx, m, arg) => newTracking(m, arg) },
 		],
 	},
 	"3": {

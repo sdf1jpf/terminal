@@ -4,6 +4,7 @@
 //	opened (on a screen, by REST, or by a customer's 850)
 //	  -> waits for an operator to correct any 850 lines held as EDI exceptions
 //	  -> released to the warehouse -> picked and packed -> shipped (856 for EDI orders)
+//	  -> tracked with the carrier: out for delivery, delivered (tracking.ts)
 //	  -> billed when it ships (810 for EDI orders)
 //	  -> waits for payment (by hand, or a customer's 820)
 //	  -> a reminder when payment is due (net 30), a second notice 30 days
@@ -199,6 +200,15 @@ export async function lookAtInvoice(db: D1Database, id: string, now = Date.now()
 		rec("RELEASED", shp.id, shp.created, `TO THE WAREHOUSE ON ${shp.id}, PICK TICKET PRINTED`, null, shp.created_by);
 		if (shp.packed) rec("PACKED", shp.id, shp.packed, `${shp.cartons} CTN ${shp.weight} LB, ROUTED ${shp.carrier}: ${shp.route}`);
 		if (shp.shipped) rec("SHIPPED", shp.id, shp.shipped, `VIA ${shp.carrier} ${shp.tracking}`, null, shp.shipped_by);
+		// The carrier's milestones, from its tracking (tracking.ts).
+		const { results: scans } = await db.prepare(
+			"SELECT at, code, location, detail FROM tracking_events WHERE shipment_id = ? AND code IN ('OUTDLVY', 'EXCEPTION', 'DELIVERED') ORDER BY at",
+		).bind(shp.id).all<{ at: string; code: string; location: string; detail: string }>();
+		for (const t of scans) {
+			if (t.code === "OUTDLVY") rec("OUT FOR DLVY", shp.id, t.at, `${shp.carrier} ${t.location}`.trim(), null, shp.carrier);
+			else if (t.code === "EXCEPTION") rec("EXCEPTION", t.at, t.at, t.detail, null, shp.carrier);
+			else rec("DELIVERED", shp.id, t.at, shp.signed_by ? `SIGNED BY ${shp.signed_by}` : t.detail, null, shp.carrier);
+		}
 	}
 
 	// The EDI interchanges about the order: the 850 it came from, the 856

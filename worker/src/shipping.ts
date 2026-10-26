@@ -5,7 +5,8 @@
 // (P) and freezes the invoice's lines: its pick ticket lists them by bin.
 // Packing it (K) records the cartons and weight, and the system chooses the
 // carrier from the ship-to, weight and value by the CARRIER table (routeFor). Shipping it (S)
-// records the tracking number. A customer that ordered by EDI is sent an
+// records the tracking number, and from then on the carrier is asked where
+// it is (tracking.ts). A customer that ordered by EDI is sent an
 // 856 ship notice. Only a shipped invoice can be billed (invoices.ts).
 // Cancelling a shipment that has not shipped puts the invoice back to work.
 
@@ -30,6 +31,11 @@ export interface Shipment {
 	shipped: string;
 	shipped_by: string;
 	route: string; // why the carrier was chosen
+	delivery: "" | "T" | "O" | "D" | "X"; // once shipped: in transit, out for delivery, delivered, exception (tracking.ts)
+	eta: string; // promised delivery date, YYYY-MM-DD
+	delivered: string;
+	signed_by: string;
+	tracked: string; // when the carrier was last asked
 }
 
 export const shipStatusNames: Record<string, string> = { P: "PICKING", K: "PACKED", S: "SHIPPED" };
@@ -155,7 +161,7 @@ function trackingNumber(carrier: string, id: string): string {
 export async function ship(db: D1Database, user: string, id: string): Promise<{ shipment: Shipment; edi?: Interchange }> {
 	const { shipment: packed } = await getShipment(db, id);
 	const row = await db.prepare(
-		`UPDATE shipments SET status = 'S', tracking = ?3, shipped = ?4, shipped_by = ?5
+		`UPDATE shipments SET status = 'S', tracking = ?3, shipped = ?4, shipped_by = ?5, delivery = 'T'
 		 WHERE id = ?1 AND status = 'K' AND carrier = ?2 RETURNING *`,
 	).bind(packed.id, packed.carrier, trackingNumber(packed.carrier, packed.id), now(), user).first<Shipment>();
 	const shipment = row ?? (await why(db, id, "K", "shipped"));

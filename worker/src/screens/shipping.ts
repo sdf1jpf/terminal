@@ -2,6 +2,7 @@ import { bill } from "../edi";
 import { submitJob } from "../jobs";
 import { addressOf, cityLine, type Invoice, type InvoiceLine } from "../invoices";
 import { binFor, cancelShipment, carriers, getShipment, listShipments, pack, ship, shipStatusNames, type Shipment } from "../shipping";
+import { deliveryNames, deliveryShort } from "../tracking";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx } from "./screen";
 import { fail, isCode, pf, type Next, type Program, type ShipmentState, type ShipmentsState, type State } from "./program";
 
@@ -9,8 +10,12 @@ import { fail, isCode, pf, type Next, type Program, type ShipmentState, type Shi
 // (the CUSPICK job). CUSS02 SHIPMENT is the warehouse's view of one: its
 // pick ticket in bin order, then packing (cartons and weight, which routes
 // it to a carrier) and shipping, and billing the invoice once it has gone.
+// Once it has gone, T on the list or PF5 tracks it (CUSS03, tracking.ts).
 
 const statusColor = (status: string): Color => (status === "P" ? "white" : status === "K" ? "yellow" : "green");
+
+// listColor colors a shipped one by where it is: delivered green, held up red.
+const listColor = (x: Shipment): Color => (x.status !== "S" ? statusColor(x.status) : x.delivery === "X" ? "red" : x.delivery === "D" ? "green" : "turquoise");
 
 const listRows = (ctx: Ctx) => ctx.rows - 11;
 
@@ -54,14 +59,14 @@ export const shipments: Program<ShipmentsState> = {
 		if (list.length > 0) {
 			scr.text(5, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(5, 2, "SELECT: S=SHOW", { color: "blue" });
+		scr.text(5, 2, "SELECT: S=SHOW  T=TRACK", { color: "blue" });
 		scr.text(7, 2, "S " + listLine("SHIPMENT", "INVOICE", "CUST NO", "STATUS", "CTN", "VIA", "TRACKING", "RELEASED"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		const shown = list.slice(top, top + rows);
 		shown.forEach((x, i) => {
 			scr.input(9 + i, 2, 1, "sel:" + x.id, "", { bright: s.errSel === x.id });
-			scr.text(9 + i, 4, listLine(x.id, x.invoice_id, x.customer_id, shipStatusNames[x.status], x.cartons ? String(x.cartons) : "",
-				x.carrier, x.tracking, stamp(ctx, x.created).slice(0, 10)), { color: statusColor(x.status) });
+			scr.text(9 + i, 4, listLine(x.id, x.invoice_id, x.customer_id, x.status === "S" ? deliveryShort[x.delivery] : shipStatusNames[x.status],
+				x.cartons ? String(x.cartons) : "", x.carrier, x.tracking, stamp(ctx, x.created).slice(0, 10)), { color: listColor(x) });
 		});
 		if (list.length === 0) scr.text(9, 4, "NO SHIPMENTS - PF6 ON AN OPEN INVOICE RELEASES IT TO THE WAREHOUSE", { color: "yellow" });
 
@@ -93,6 +98,7 @@ export const shipments: Program<ShipmentsState> = {
 					const code = v.trim().toUpperCase();
 					if (!name.startsWith("sel:") || code === "") continue;
 					const id = name.slice(4);
+					if (code === "T") return { p: "tracking", back: s, id };
 					if (code !== "S") {
 						s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
 						s.errSel = id;
@@ -185,9 +191,12 @@ export const shipment: Program<ShipmentState> = {
 			} else {
 				value(scr, 8, 4, `${x.cartons} CARTONS, ${x.weight} LB${x.route ? ` - ROUTED: ${x.route}` : ""}`.slice(0, scr.cols - 5));
 				scr.text(9, 4, `SHIPPED VIA ${carriers[x.carrier] ?? x.carrier}  TRACKING ${x.tracking}`, { color: "green", bright: true });
+				const where = x.delivery === "D" ? `DELIVERED ${stamp(ctx, x.delivered).slice(0, 16)}, SIGNED BY ${x.signed_by}`
+					: `${deliveryNames[x.delivery]}${x.eta ? `, PROMISED ${x.eta}` : ""}`;
+				scr.text(10, 4, where.slice(0, scr.cols - 5), { color: x.delivery === "X" ? "red" : "turquoise" });
 				legend = inv.status === "O"
-					? "PF1=HELP  PF3=EXIT  PF4=INVOICE  PF7/8=SCROLL  PF11=BILL INVOICE  PF12=CANCEL"
-					: "PF1=HELP  PF3=EXIT  PF4=INVOICE  PF7=UP  PF8=DOWN  PF12=CANCEL";
+					? "PF1=HELP PF3=EXIT PF4=INVOICE PF5=TRACKING PF7/8=SCROLL PF11=BILL INVOICE"
+					: "PF1=HELP  PF3=EXIT  PF4=INVOICE  PF5=TRACKING  PF7=UP  PF8=DOWN  PF12=CANCEL";
 			}
 
 			const rows = lineRows(ctx);
@@ -228,6 +237,10 @@ export const shipment: Program<ShipmentState> = {
 				if (s.back.p === "invoice" && s.back.id === got.invoice.id) return s.back;
 				return { p: "invoice", back: s, id: got.invoice.id };
 				break;
+			case pf(5):
+				if (status !== "S") break;
+				if (s.back.p === "tracking" && s.back.id === s.id) return s.back;
+				return { p: "tracking", back: s, id: s.id };
 			case pf(7):
 			case pf(8):
 				scroll(s, input.aid, lineRows(ctx), typeof got === "string" ? 0 : got.lines.length);

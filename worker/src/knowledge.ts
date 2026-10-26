@@ -62,6 +62,15 @@ const concepts: Topic[] = [
 		go: "=2.2",
 	},
 	{
+		id: "concept:tracking",
+		title: "WHERE IS MY SHIPMENT",
+		text: "Once a shipment has shipped, its carrier is asked where it is every half hour: in transit, out for delivery, " +
+			"delivered (with who signed) or an exception such as a weather delay. Option 2.6 finds a shipment by its number, " +
+			"invoice or tracking number and lists every carrier scan; PF5 asks the carrier again. A company truck delivery is " +
+			"signed off by hand with PF10. Deliveries also show on the order timeline, option 2.4.",
+		go: "=2.6",
+	},
+	{
 		id: "concept:edi",
 		title: "EDI WITH CUSTOMERS AND VENDORS",
 		text: "Trading partners exchange simulated X12 documents: an 850 purchase order from a customer opens an invoice, a 997 " +

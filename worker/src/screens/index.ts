@@ -25,6 +25,7 @@ import { vendhist } from "./vendhist";
 import { timelinePanel } from "./timeline";
 import { ediex } from "./ediex";
 import { shipment, shipments } from "./shipping";
+import { tracking } from "./tracking";
 import { glaccount, ledger } from "./ledger";
 import { menu } from "./menu";
 import { monitor } from "./monitor";
@@ -42,7 +43,7 @@ export { requestKeys, type ScreenResponse } from "@greenscreen-dev/worker";
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
-	pos, po, vendors, vendhist, timeline: timelinePanel, ediex, shipments, shipment, ledger, glaccount,
+	pos, po, vendors, vendhist, timeline: timelinePanel, ediex, shipments, shipment, tracking, ledger, glaccount,
 	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc, mail, mailmsg,
 };
 

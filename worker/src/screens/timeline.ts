@@ -15,7 +15,7 @@ function eventLine(n: string, date: string, time: string, event: string, detail:
 }
 
 const colors: Record<string, Color> = {
-	OPENED: "white", RELEASED: "turquoise", UNRELEASED: "yellow", PACKED: "turquoise", SHIPPED: "green", BILLED: "white",
+	OPENED: "white", RELEASED: "turquoise", UNRELEASED: "yellow", PACKED: "turquoise", SHIPPED: "green", "OUT FOR DLVY": "turquoise", DELIVERED: "green", EXCEPTION: "red", BILLED: "white",
 	PAID: "green", CANCELLED: "pink", SENT: "turquoise", CONFIRMED: "turquoise", "IN TRANSIT": "turquoise",
 	RECEIPT: "green", RECEIVED: "green", EXPEDITE: "red", "EDI HELD": "yellow", CORRECTED: "green", DROPPED: "yellow", REMINDER: "yellow", "SECOND NOTICE": "yellow", "FINAL NOTICE": "red", "ON HOLD": "red",
 };
