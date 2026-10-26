@@ -135,6 +135,36 @@ way as `/v1/screen`, and saves or opens it as `name`. A client ignores a
 name. The screen's message line says what was sent; the Go terminal
 replaces it with where it saved the file (its `-print-dir`), and the
 browser hands the file to its downloads. It comes with one screen only.
+### Snapshots
+
+A client can ask for a picture of the screen it is showing, typed input
+included, with `POST /v1/snapshot`. It sends the presentation space as
+fields, one per attribute byte, in the response's field format, with input
+fields as plain text marked `input`:
+
+```json
+{
+  "format": "png",
+  "map": "CUSM00",
+  "terminal": "TERM0001",
+  "screen": {
+    "rows": 24, "cols": 80,
+    "fields": [
+      { "row": 1, "col": 2, "text": "CUSM00", "color": "blue" },
+      { "row": 4, "col": 14, "text": "1.2     ", "input": true, "highlight": "underscore" }
+    ],
+    "cursor": { "row": 4, "col": 17 }
+  }
+}
+```
+
+`format` is `png` (the default) or `pdf`. A field without a color takes the
+3270 base color: blue or white (bright) for protected text, green or red for
+input. Hidden fields are drawn blank. The reply is the file, with a
+`Content-Disposition` naming it after `map` and the time, such as
+`CUSM00-202610261112.png`. Browser Rendering draws it; without the binding
+the reply is 503 `unavailable`.
+
 ### Live screens
 
 A screen whose data changes on its own also carries `"live"`, naming what

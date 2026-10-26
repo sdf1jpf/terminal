@@ -56,6 +56,9 @@ type redrawReply struct{ scr *Screen }
 // be drawn again.
 type refreshTick struct{ gen int }
 
+// snapReply comes when a snapshot is saved, or failed.
+type snapReply struct{ err error }
+
 // pushed comes when a Pusher host asks for a redraw.
 type pushed struct{}
 
@@ -105,6 +108,11 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msg.scr.Carry(t.scr)
 		t.scr = msg.scr
 		return t, batch(t.fit(), t.schedule())
+	case snapReply:
+		t.print = "SNAPPED"
+		if msg.err != nil {
+			t.print = "SNAP ERR"
+		}
 	case refreshTick:
 		return t, t.refresh(msg)
 	case pushed:
@@ -176,6 +184,11 @@ func (t *Terminal) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			t.print = "PRINTED"
 		}
 		return t, nil
+	}
+	if s == "ctrl+s" || esc && (s == "s" || s == "S") {
+		// A picture of the screen, made by the host: Ctrl+S for a PNG,
+		// Esc then S for a PDF.
+		return t, t.snapshot(map[bool]string{false: "png", true: "pdf"}[esc])
 	}
 	if s == "esc" || s == "ctrl+r" {
 		t.lock = LockNone
@@ -279,6 +292,22 @@ func (t *Terminal) Print() (string, error) {
 		return "", err
 	}
 	return name, f.Close()
+}
+
+// snapshot asks the host for a picture of the screen as it is now. The
+// keyboard stays free; the status line says when it is saved.
+func (t *Terminal) snapshot(format string) tea.Cmd {
+	sn, ok := t.host.(Snapshotter)
+	if !ok {
+		t.print = "SNAP ERR"
+		return nil
+	}
+	t.print = "SNAP..."
+	scr := t.scr.Clone()
+	return func() tea.Msg {
+		_, err := sn.Snapshot(scr, format)
+		return snapReply{err: err}
+	}
 }
 
 // send locks the keyboard and transmits the screen to the host.

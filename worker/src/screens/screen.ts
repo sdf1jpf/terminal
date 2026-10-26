@@ -9,6 +9,8 @@ import type { Sessions } from "../sessions";
 
 export const MIN_ROWS = 24;
 export const MIN_COLS = 80;
+export const MAX_ROWS = 200;
+export const MAX_COLS = 400;
 
 export type Color = "default" | "blue" | "red" | "pink" | "green" | "turquoise" | "yellow" | "white";
 export type Highlight = "none" | "underscore" | "reverse" | "blink";

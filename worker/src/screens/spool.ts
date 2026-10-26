@@ -1,4 +1,4 @@
-import { getOutput, listOutput, printOutput, purgeOutput, PRINTER, type Output } from "../spool";
+import { getOutput, listOutput, pageOf, printOutput, purgeOutput, PRINTER, type Output } from "../spool";
 import { header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, type Ctx } from "./screen";
 import { fail, isCode, pf, withDownload, type OutputState, type Program, type SpoolState } from "./program";
 
@@ -45,7 +45,7 @@ export const spool: Program<SpoolState> = {
 		if (list.length > 0) {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(6, 2, `SELECT: S=BROWSE  O=PRINT ON ${PRINTER}  D=PDF  P=PURGE`, { color: "blue" });
+		scr.text(6, 2, `SELECT: S=BROWSE  O=PRINT ON ${PRINTER}  D=PDF  I=IMAGE  P=PURGE`, { color: "blue" });
 		scr.text(7, 2, "S " + spoolLine("JOBNAME", "JOBID", "OWNER", "STATUS", "LINES", "CPY", "CREATED", "TITLE").slice(0, scr.cols - 5),
 			{ color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
@@ -111,6 +111,9 @@ export const spool: Program<SpoolState> = {
 					case "D":
 						s.msg = `CUS1501I ${id}.PDF SENT TO YOUR TERMINAL`;
 						return withDownload(s, { url: `/v1/spool/${id}/pdf`, name: `${id}.pdf` });
+					case "I":
+						s.msg = `CUS1530I ${id} PAGE 1 SENT TO YOUR TERMINAL AS A PICTURE`;
+						return withDownload(s, { url: `/v1/spool/${id}/png?page=1`, name: `${id}-P1.png` });
 					case "P":
 						await purgeOutput(ctx.db, ctx.user, id);
 						s.msg = `$HASP250 ${id} PURGED`;
@@ -151,7 +154,7 @@ export const output: Program<OutputState> = {
 			msg = isCode(e, "not_found") ? `CUS0401E ${s.id} IS NO LONGER ON THE SPOOL` : fail(e);
 		}
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF4=PRINT  PF7=UP  PF8=DOWN  PF10=PDF  PF12=CANCEL");
+		keys(scr, "PF1=HELP PF3=EXIT PF4=PRINT PF7=UP PF8=DOWN PF10=PDF PF11=IMAGE PF12=CANCEL");
 		scr.setCursor(scr.rows, 2);
 		return scr;
 	},
@@ -176,6 +179,12 @@ export const output: Program<OutputState> = {
 			case pf(10):
 				s.msg = `CUS1501I ${s.id}.PDF SENT TO YOUR TERMINAL`;
 				return withDownload(s, { url: `/v1/spool/${s.id}/pdf`, name: `${s.id}.pdf` });
+			case pf(11): {
+				// The printed page the top line on the screen is on.
+				const n = pageOf(s.top ?? 0);
+				s.msg = `CUS1530I ${s.id} PAGE ${n} SENT TO YOUR TERMINAL AS A PICTURE`;
+				return withDownload(s, { url: `/v1/spool/${s.id}/png?page=${n}`, name: `${s.id}-P${n}.png` });
+			}
 			case pf(7):
 			case pf(8): {
 				const total = await getOutput(ctx.db, s.id).then((g) => g.lines.length, () => 0);

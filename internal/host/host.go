@@ -49,6 +49,12 @@ const (
 	reconnectMax = time.Minute
 )
 
+// SnapshotTaker is a Backend that can draw a screen as a picture.
+// *api.Client implements it.
+type SnapshotTaker interface {
+	Snapshot(ctx context.Context, req api.SnapshotRequest) ([]byte, string, error)
+}
+
 type Config struct {
 	SystemName  string // e.g. "SYS1"
 	Backend     Backend
@@ -69,6 +75,7 @@ type Session struct {
 	push   chan struct{} // tells the terminal to redraw; see Pushes
 	mu     sync.Mutex    // guards the fields below, shared with the listener
 	live   string        // what the current screen shows that pushes announce
+	mapID  string        // the current screen's map, CUSM00, for naming snapshots
 	listen bool          // connected to GET /v1/live
 	stop   context.CancelFunc
 }
@@ -146,6 +153,48 @@ func (s *Session) save(d *api.Download) string {
 	}
 	return "CUS1507I SAVED " + path
 }
+
+// Snapshot implements tn3270.Snapshotter: the application draws the screen
+// as it shows, typed input included, and the file goes in the download
+// directory.
+func (s *Session) Snapshot(scr *t3.Screen, format string) (string, error) {
+	st, ok := s.api().(SnapshotTaker)
+	if !ok || s.cfg.DownloadDir == "" {
+		return "", errors.New("this terminal cannot take snapshots")
+	}
+	if s.logon != nil {
+		return "", errors.New("not logged on")
+	}
+	s.mu.Lock()
+	m := s.mapID
+	s.mu.Unlock()
+	row, col := scr.RowCol(scr.Cursor())
+	req := api.SnapshotRequest{
+		Format: format, Map: m, Terminal: s.lu,
+		Screen: api.SnapshotScreen{Rows: scr.Rows(), Cols: scr.Cols(), Fields: []api.SnapField{}, Cursor: &api.Cursor{Row: row, Col: col}},
+	}
+	for _, a := range scr.Areas() {
+		req.Screen.Fields = append(req.Screen.Fields, api.SnapField{
+			Row: a.Row, Col: a.Col, Text: a.Text, Color: colorNames[a.Attr.Color], Bright: a.Attr.Intense,
+			Highlight: highlightNames[a.Attr.Highlight], Hidden: a.Attr.Hidden, Input: !a.Attr.Protected,
+		})
+	}
+	b, name, err := st.Snapshot(s.ctx(), req)
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		name = "SNAPSHOT." + format
+	}
+	return writeNew(s.cfg.DownloadDir, name, b)
+}
+
+var colorNames = map[t3.Color]string{
+	t3.Blue: "blue", t3.Red: "red", t3.Pink: "pink", t3.Green: "green",
+	t3.Turquoise: "turquoise", t3.Yellow: "yellow", t3.White: "white",
+}
+
+var highlightNames = map[t3.Highlight]string{t3.HlUnderscore: "underscore", t3.HlReverse: "reverse", t3.HlBlink: "blink"}
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
@@ -232,6 +281,7 @@ func (s *Session) show(in *api.Screen) *t3.Screen {
 	scr := build(in)
 	s.mu.Lock()
 	s.live = in.Live
+	s.mapID = in.Map
 	listening := s.listen
 	s.mu.Unlock()
 	if in.Live != "" && listening && in.Refresh > 0 {

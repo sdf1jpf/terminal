@@ -29,7 +29,7 @@ export function encodeRequest({ aid, scr, state, terminal, system, live }) {
 	return body;
 }
 
-// decodeScreen turns a response into {state, scr, refresh, live, download}
+// decodeScreen turns a response into {state, scr, map, refresh, live, download}
 // or {logoff}. refresh is how often, in seconds, to redraw the screen while
 // the operator leaves it alone; 0 never. live names what GET /v1/live
 // announces changes to, such as "syslog", or is "". download, if the host
@@ -69,5 +69,29 @@ export function decodeScreen(res) {
 	const d = res.download;
 	const download = d && typeof d.url === "string" && /^\/v1\/[^/]/.test(d.url) && typeof d.name === "string"
 		? { url: d.url, name: d.name.replace(/[^\w.-]/g, "_") } : null;
-	return { state: res.state, scr, refresh: m.refresh > 0 ? m.refresh : 0, live: m.live ?? "", download };
+	return { state: res.state, scr, map: m.map ?? "", refresh: m.refresh > 0 ? m.refresh : 0, live: m.live ?? "", download };
+}
+
+// encodeSnapshot builds the POST /v1/snapshot body: the screen as the
+// operator sees it, typed input included, one field per attribute byte.
+/** @param {{scr: Screen, format?: string, map?: string, terminal?: string}} req */
+export function encodeSnapshot({ scr, format = "png", map = "", terminal = "" }) {
+	const fields = [];
+	scr.buf.forEach((c, fa) => {
+		if (!c.attr) return;
+		const a = c.attr;
+		const [start, n] = scr.fieldBounds(fa);
+		const text = Array.from({ length: n }, (_, i) => scr.buf[scr.wrap(start + i)].ch || " ").join("");
+		if (!a.protected ? n === 0 : !text.trim()) return;
+		const [row, col] = scr.rowCol(start);
+		const f = { row, col, text };
+		if (a.color) f.color = a.color;
+		if (a.intense) f.bright = true;
+		if (a.highlight && a.highlight !== "none") f.highlight = a.highlight;
+		if (a.hidden) f.hidden = true;
+		if (!a.protected) f.input = true;
+		fields.push(f);
+	});
+	const [row, col] = scr.rowCol(scr.cursor);
+	return { format, map, terminal, screen: { rows: scr.rows, cols: scr.cols, fields, cursor: { row, col } } };
 }

@@ -3,7 +3,7 @@
 // modified fields back, the way a 3270 talks to CICS.
 
 import { Lock, MIN_COLS, MIN_ROWS, Screen } from "./screen.js";
-import { decodeScreen, encodeRequest } from "./protocol.js";
+import { decodeScreen, encodeRequest, encodeSnapshot } from "./protocol.js";
 
 const LU_NAME = "WEBTERM1";
 const SYSTEM = "SYS1";
@@ -26,6 +26,7 @@ const state = {
 	lock: Lock.NONE,
 	insert: false,
 	commarea: null, // the host's opaque state, handed back with every AID
+	map: "", // the screen's map name, CUSM00, for naming snapshots
 	lastAid: null, // for HOST NOT RESPONDING retries
 	pendingResize: false,
 	timer: null, // the refresh timer, for screens that show live data
@@ -65,6 +66,7 @@ async function send(aid) {
 		}
 		state.commarea = next.state;
 		state.scr = next.scr;
+		state.map = next.map;
 		if (aid === "REDRAW") state.scr.carry(before);
 		state.lock = Lock.NONE;
 		state.live = next.live;
@@ -82,18 +84,50 @@ async function send(aid) {
 	if (state.pendingResize) fit();
 }
 
+// snapshot has the host draw the screen as it is now, typed input and all,
+// as a PNG or PDF (Browser Rendering), and saves it: a local copy, like
+// Ctrl+P in the Go terminal, but a picture.
+async function snapshot(format) {
+	if (state.lock === Lock.WAIT || !state.commarea) return;
+	const body = encodeSnapshot({ scr: state.scr, format, map: state.map, terminal: LU_NAME });
+	state.message = "SNAPSHOT IN PROGRESS";
+	render();
+	try {
+		const res = await fetch("/v1/snapshot", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			credentials: "same-origin",
+			redirect: "manual",
+			body: JSON.stringify(body),
+		});
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `SNAPSHOT.${format}`;
+		download(await res.blob(), name);
+		state.message = "";
+		render();
+	} catch (e) {
+		console.error(e);
+		state.message = "SNAPSHOT FAILED";
+		render();
+	}
+}
+
+function download(blob, name) {
+	const href = URL.createObjectURL(blob);
+	const a = Object.assign(document.createElement("a"), { href, download: name });
+	document.body.append(a);
+	a.click();
+	a.remove();
+	setTimeout(() => URL.revokeObjectURL(href), 60_000);
+}
+
 // save fetches a file the host sent along with a screen (a PDF of an
 // invoice, say) and hands it to the browser to save.
 async function save({ url, name }) {
 	try {
 		const res = await fetch(url, { credentials: "same-origin", redirect: "manual" });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const href = URL.createObjectURL(await res.blob());
-		const a = Object.assign(document.createElement("a"), { href, download: name });
-		document.body.append(a);
-		a.click();
-		a.remove();
-		setTimeout(() => URL.revokeObjectURL(href), 60_000);
+		download(await res.blob(), name);
 	} catch (e) {
 		console.error(e);
 		hostMessage(`${name} NOT RECEIVED - PRESS ENTER TO RETRY`.toUpperCase(), () => save({ url, name }));
@@ -401,6 +435,12 @@ function reset() {
 function onKey(e) {
 	const k = keyName(e);
 	if (!state.started) return;
+	// Ctrl+S saves a picture of the screen, Ctrl+Shift+S a PDF.
+	if (k === "Ctrl+s") {
+		e.preventDefault();
+		snapshot(e.shiftKey ? "pdf" : "png");
+		return;
+	}
 	if (k === "Escape" || k === "Ctrl+r") {
 		e.preventDefault();
 		reset();
@@ -482,6 +522,7 @@ function onKeyBar(e) {
 	const b = e.target.closest("button");
 	if (!b) return;
 	if (b.dataset.aid === "RESET") reset();
+	else if (b.dataset.snap) snapshot(b.dataset.snap);
 	else aidKey(b.dataset.aid);
 }
 

@@ -463,6 +463,7 @@ const help: Record<string, FieldHelp> = {
 			["S", "BROWSE THE OUTPUT"],
 			["O", "PRINT IT ON PRT1; IT STAYS ON THE SPOOL FOR ANOTHER COPY"],
 			["D", "SEND IT TO YOUR TERMINAL AS A PDF, ON GREEN-BAR PAPER"],
+			["I", "SEND ITS FIRST PAGE AS A PICTURE (PNG)"],
 			["P", "PURGE IT, AND THE JOB'S ENTRY WITH IT"],
 		),
 	},

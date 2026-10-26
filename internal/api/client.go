@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,7 +19,8 @@ import (
 type Client struct {
 	base   string
 	http   *http.Client
-	access Access // nil when the API is not behind Cloudflare Access
+	slow   *http.Client // for snapshots, which start a browser
+	access Access       // nil when the API is not behind Cloudflare Access
 
 	mu  sync.Mutex
 	hdr http.Header // Access headers for the logged-on user; nil when logged off
@@ -39,15 +41,14 @@ func (c *Client) setHeaders(h http.Header) {
 // NewClient returns a client for the API at baseURL. access may be nil, for
 // a local `wrangler dev`.
 func NewClient(baseURL string, access Access) *Client {
+	// Access answers a missing or expired token with a redirect to its
+	// login page; report that rather than following it.
+	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{
 		base:   strings.TrimRight(baseURL, "/"),
 		access: access,
-		http: &http.Client{
-			Timeout: 10 * time.Second,
-			// Access answers a missing or expired token with a redirect to
-			// its login page; report that rather than following it.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		http:   &http.Client{Timeout: 10 * time.Second, CheckRedirect: noRedirect},
+		slow:   &http.Client{Timeout: 60 * time.Second, CheckRedirect: noRedirect},
 	}
 }
 
@@ -117,6 +118,25 @@ func (c *Client) Download(ctx context.Context, path string) ([]byte, error) {
 	return b, nil
 }
 
+// Snapshot has the API draw a screen as a PNG or PDF and returns the file
+// and the name the API gave it.
+func (c *Client) Snapshot(ctx context.Context, req SnapshotRequest) ([]byte, string, error) {
+	resp, err := c.sendVia(ctx, c.slow, http.MethodPost, "/v1/snapshot", req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, MaxDownload+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if len(b) > MaxDownload {
+		return nil, "", errors.New("api: file too large")
+	}
+	_, params, _ := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
+	return b, params["filename"], nil
+}
+
 // do sends a request and decodes the response into out. API errors are
 // mapped to the package's sentinel errors.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
@@ -137,6 +157,10 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 // send makes a request and returns a successful response, whose body the
 // caller closes. API errors are mapped to the package's sentinel errors.
 func (c *Client) send(ctx context.Context, method, path string, in any) (*http.Response, error) {
+	return c.sendVia(ctx, c.http, method, path, in)
+}
+
+func (c *Client) sendVia(ctx context.Context, hc *http.Client, method, path string, in any) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -159,7 +183,7 @@ func (c *Client) send(ctx context.Context, method, path string, in any) (*http.R
 	for k, v := range hdr {
 		req.Header[k] = v
 	}
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}

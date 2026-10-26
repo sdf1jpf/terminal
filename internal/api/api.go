@@ -103,6 +103,34 @@ type Field struct {
 	Modified bool `json:"modified"`
 }
 
+// SnapshotRequest is the body of POST /v1/snapshot: the screen as the
+// terminal shows it, to be drawn as a PNG or PDF.
+type SnapshotRequest struct {
+	Format   string         `json:"format"` // "png" or "pdf"
+	Map      string         `json:"map,omitempty"`
+	Terminal string         `json:"terminal,omitempty"`
+	Screen   SnapshotScreen `json:"screen"`
+}
+
+type SnapshotScreen struct {
+	Rows   int         `json:"rows"`
+	Cols   int         `json:"cols"`
+	Fields []SnapField `json:"fields"`
+	Cursor *Cursor     `json:"cursor,omitempty"`
+}
+
+// SnapField is one field as it shows, input fields with what is in them.
+type SnapField struct {
+	Row       int    `json:"row"`
+	Col       int    `json:"col"`
+	Text      string `json:"text"`
+	Color     string `json:"color,omitempty"`
+	Bright    bool   `json:"bright,omitempty"`
+	Highlight string `json:"highlight,omitempty"`
+	Hidden    bool   `json:"hidden,omitempty"`
+	Input     bool   `json:"input,omitempty"`
+}
+
 // Cursor is a position, 1-based, and the input field it is in, if any.
 type Cursor struct {
 	Row   int    `json:"row,omitempty"`
