@@ -69,6 +69,8 @@ describe("browser terminal", () => {
 			terminal: "WEBTERM1",
 		});
 		expect(encodeRequest({ aid: "START", scr, state: "abc" }).state).toBeUndefined();
+		expect(encodeRequest({ aid: "ENTER", scr, state: "abc" }).live).toBeUndefined();
+		expect(encodeRequest({ aid: "ENTER", scr, state: "abc", live: true }).live).toBe(true);
 	});
 
 	it("keeps typed input across a redraw at a new size", () => {
@@ -83,6 +85,8 @@ describe("browser terminal", () => {
 	it("reads the refresh interval of a live screen", () => {
 		expect(decodeScreen(response).refresh).toBe(0);
 		expect(decodeScreen({ ...response, screen: { ...response.screen, refresh: 5 } }).refresh).toBe(5);
+		expect(decodeScreen(response).live).toBe("");
+		expect(decodeScreen({ ...response, screen: { ...response.screen, live: "syslog" } }).live).toBe("syslog");
 	});
 
 	it("passes a logoff through", () => {

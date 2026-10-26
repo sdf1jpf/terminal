@@ -7,8 +7,9 @@ import { fail, isCode, pf, type ConsoleState, type Program, type ScheduleState }
 
 // CUSO01 OPERATOR CONSOLE shows SYSLOG and takes operator commands, which
 // are logged with their responses for every console to see. While it
-// follows the end of the log it asks the terminal to redraw it every few
-// seconds, so new lines appear as they are written. PF6 opens CUSO02 JOB
+// follows the end of the log it is a live screen: a terminal listening on
+// GET /v1/live is told when the log moves, and one that is not redraws it
+// every few seconds, so new lines appear as they are written. PF6 opens CUSO02 JOB
 // SCHEDULE, the jobs the scheduler submits on their cron.
 
 const REFRESH = 5; // seconds
@@ -52,14 +53,18 @@ export const opconsole: Program<ConsoleState> = {
 		s.last = lines.at(-1)?.seq;
 
 		const following = s.top === undefined;
-		scr.text(4, 2, following ? `SYSLOG - FOLLOWING, UPDATES EVERY ${REFRESH} SECONDS` : "SYSLOG - HELD, PF5 TO FOLLOW",
+		const how = ctx.live ? "LIVE" : `UPDATES EVERY ${REFRESH} SECONDS`;
+		scr.text(4, 2, following ? `SYSLOG - FOLLOWING, ${how}` : "SYSLOG - HELD, PF5 TO FOLLOW",
 			{ color: following ? "white" : "yellow", bright: true });
 		scr.text(4, right(scr, 62), `LINES ${lpad(total, 6)}`, { color: "white" });
 		lines.forEach((l, i) => {
 			scr.text(5 + i, 2, `${clock(ctx, l.at)} ${pad(l.source, 8)} ${l.text}`.slice(0, scr.cols - 2), { color: lineColor(l) });
 		});
 		if (lines.length === 0 && !msg) scr.text(5, 2, "THE LOG IS EMPTY", { color: "yellow" });
-		if (following) scr.refresh = REFRESH;
+		if (following) {
+			scr.refresh = REFRESH;
+			scr.live = "syslog";
+		}
 
 		message(scr, msg);
 		keys(scr, "ENTER=COMMAND  PF1=HELP  PF3=EXIT  PF5=FOLLOW  PF6=SCHEDULE  PF7=UP  PF8=DOWN");
@@ -188,8 +193,34 @@ async function display(ctx: Ctx, what: string): Promise<string[]> {
 					(sc.next_run ? `  NEXT ${sc.next_run.slice(0, 16).replace("T", " ")}` : "")),
 			];
 		}
+		case "TS":
+		case "U":
+		case "USERS": {
+			const users = await ctx.tso.users();
+			return [
+				`IEE114I ${mvsTime(now).slice(5, 13)} ${users.length} TSO USERS, * IS THIS ONE`,
+				...users.slice(0, 15).map((u) => `  ${pad(u.user, 8)} ${u.sid} ${pad(u.terminal, 8)} ${pad(u.map, 8)}` +
+					` IDLE ${idle(now, u.seen)}${u.sid === ctx.sid ? " *" : ""}`),
+			];
+		}
+		case "GRS":
+		case "LOCKS": {
+			const locks = await ctx.tso.locks();
+			if (locks.length === 0) return ["ISG343I GRS STATUS - NO RECORDS ARE LOCKED"];
+			return [
+				`ISG343I GRS STATUS - ${locks.length} RECORD${locks.length === 1 ? "" : "S"} LOCKED FOR UPDATE`,
+				...locks.slice(0, 15).map((l) => `  ${pad(l.resource, 18)} ${pad(l.user, 8)} ${pad(l.terminal, 8)} ${clock(ctx, l.since).slice(6)}`),
+			];
+		}
 	}
-	return [`IEE305I D ${what || "(BLANK)"} COMMAND INVALID - USE D T, D J OR D SCHED`];
+	return [`IEE305I D ${what || "(BLANK)"} COMMAND INVALID - USE D T, D J, D SCHED, D TS OR D GRS`];
+}
+
+// idle says how long ago seen was, as MM:SS, or HH:MM:SS past an hour.
+function idle(now: Date, seen: string): string {
+	const s = Math.max(Math.floor((now.getTime() - Date.parse(seen)) / 1000), 0);
+	const mmss = `${pad2(Math.floor(s / 60) % 60)}:${pad2(s % 60)}`;
+	return s >= 3600 ? `${pad2(Math.floor(s / 3600))}:${mmss}` : mmss;
 }
 
 // --- CUSO02 JOB SCHEDULE ---------------------------------------------------

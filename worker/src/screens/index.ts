@@ -28,11 +28,13 @@ import { report } from "./report";
 import { search } from "./search";
 import { skusearch } from "./skusearch";
 import { output, spool } from "./spool";
-import { MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
+import { tso } from "../sessions";
+import { breakIn, MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
+import { isSend, send } from "./send";
 import { takeFill, withFill, type Input, type Next, type Program, type State } from "./program";
 
 export const requestKeys = [
-	"v", "aid", "state", "fields", "modified", "cursor", "rows", "cols", "terminal", "system", "tz_offset",
+	"v", "aid", "state", "fields", "modified", "cursor", "rows", "cols", "terminal", "system", "tz_offset", "live",
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
@@ -75,34 +77,50 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 		db: env.DB,
 		tables: env.TABLES,
 		jobs: env.JOBS,
+		tso: tso(env),
 		user,
+		sid: "",
 		rows: clamp(int(body, "rows"), MIN_ROWS, MAX_ROWS),
 		cols: clamp(int(body, "cols"), MIN_COLS, MAX_COLS),
 		system: str(body, "system") || "SYS1",
 		terminal: str(body, "terminal") || "TERM0001",
 		host: url.host,
 		tzOffset: clamp(int(body, "tz_offset"), -14 * 60, 14 * 60),
+		live: body.live === true,
 	};
 
 	let next: Next;
 	let session: Session = { history: [] };
+	let before: State | undefined; // the screen as it was, to go back to if a lock is refused
+	const got = aid === "START" ? undefined : decode(str(body, "state"));
+	if (got) session = got.session;
+	ctx.sid = session.sid ?? "";
 	if (aid === "START") {
+		ctx.sid = await ctx.tso.logon(user, ctx.terminal);
 		next = { p: "menu", msg: `IKJ56455I ${user} LOGON IN PROGRESS AT ${time(ctx)}` };
 		await syslog(env.DB, user, `IKJ56455I ${user} LOGON IN PROGRESS ON ${ctx.terminal}`);
 	} else if (aid === "TIMEOUT") {
 		await syslog(env.DB, user, `IEF450I ${user} TSO - ABEND=S522 - IDLE TIME LIMIT EXCEEDED ON ${ctx.terminal}`);
 		next = { logoff: timeoutMessage(ctx) };
 	} else {
-		const got = decode(str(body, "state"));
 		const current = got?.s;
-		if (got) session = got.session;
 		const cmdField = current ? commandLines[current.p] : undefined;
+		before = current && structuredClone(current);
+		const held = current ? locksOf(current) : [];
+		const lost = held.length > 0 && aid !== "REDRAW" ? await ctx.tso.hold(ctx.sid, user, ctx.terminal, held) : undefined;
+		if (lost) ctx.sid = lost.sid;
 		if (!current) {
 			next = { p: "menu", msg: "CUS0001W SCREEN STATE LOST OR FROM AN OLDER RELEASE - BACK AT MENU" };
 		} else if (aid === "REDRAW") {
 			next = current;
 		} else if (!aids.has(aid)) {
 			throw bad(`unknown aid "${aid}"`);
+		} else if (lost?.lost) {
+			// The session ended with a record locked and someone else has
+			// it now: what was typed cannot be saved.
+			next = unlock(current);
+			before = undefined;
+			setAnyMsg(next, `CUS1202E LOCK LOST TO ${lost.lost.user} ON ${lost.lost.terminal} - ${lost.lost.resource} NOT CHANGED`);
 		} else if (aid === "PF1" && current.p !== "help") {
 			// PF1 is help on every screen: for the field the cursor is in if
 			// it has any, otherwise the tutorial. What the operator typed is
@@ -120,23 +138,66 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 			if (aid === "ENTER" && cmdField && cmd) {
 				session.history = [cmd, ...session.history.filter((c) => c !== cmd)].slice(0, HISTORY);
 			}
-			next = await (programs[current.p] as Program<State>).handle(ctx, current, inp);
+			if (aid === "ENTER" && cmdField && isSend(cmd)) {
+				// SEND works from any command line, as a TSO command does.
+				next = current;
+				setAnyMsg(next, await send(ctx, cmd));
+			} else {
+				next = await (programs[current.p] as Program<State>).handle(ctx, current, inp);
+			}
 		}
 	}
 
 	if ("logoff" in next) {
+		if (ctx.sid) await ctx.tso.logoff(ctx.sid, user);
 		await syslog(env.DB, user, `IKJ56470I ${user} LOGGED OFF ${ctx.terminal}`);
 		return { v: 1, logoff: { message: next.logoff } };
 	}
 	const fill = takeFill(next);
-	const scr = await (programs[next.p] as Program<State>).render(ctx, next);
+	let scr = await (programs[next.p] as Program<State>).render(ctx, next);
 	if (fill) scr.fill(fill.fields, fill.cursor);
+
+	// Take the locks the new screen needs and release the rest. If another
+	// session has one, stay on the screen as it was before the key.
+	const sync = await ctx.tso.sync(ctx.sid, user, ctx.terminal, scr.map, locksOf(next));
+	session.sid = sync.sid;
+	if (sync.conflict) {
+		const h = sync.conflict;
+		next = before ?? { p: "menu" };
+		setAnyMsg(next, `CUS1201E RECORD IN USE BY ${h.user} ON ${h.terminal} - ${h.resource}`);
+		scr = await (programs[next.p] as Program<State>).render(ctx, next);
+	}
+	if (sync.message) breakIn(scr, sync.message.from, sync.message.text);
 	return { v: 1, state: encode(next, session), screen: scr.toJSON() };
+}
+
+// locksOf lists the records held for update by s and the panels under it,
+// such as a customer being changed under the help panel opened from it.
+function locksOf(s: State): string[] {
+	const out: string[] = [];
+	for (let st: State | undefined = s; st; st = (st as { back?: State }).back) {
+		out.push(...((programs[st.p] as Program<State>).locks?.(st) ?? []));
+	}
+	return out;
+}
+
+// unlock returns the screen that held the lost locks, without them.
+function unlock(s: State): State {
+	for (let st: State | undefined = s; st; st = (st as { back?: State }).back) {
+		const p = programs[st.p] as Program<State>;
+		if (p.locks?.(st).length && p.unlocked) return p.unlocked(st);
+	}
+	return s;
+}
+
+function setAnyMsg(s: State, msg: string): void {
+	(s as { msg?: string }).msg = msg;
 }
 
 // Session is what the commarea carries for the whole conversation rather
 // than for one panel.
 interface Session {
+	sid?: string; // the TSO session (sessions.ts)
 	history: string[]; // commands entered, newest first
 	retrieved?: number; // the history entry PF24 last put back
 }
@@ -173,6 +234,7 @@ function input(body: Record<string, unknown>, aid: string): Input {
 
 function encode(s: State, session: Session): string {
 	const out: Record<string, unknown> = { sv: STATE_VERSION, s };
+	if (session.sid) out.t = session.sid;
 	if (session.history.length > 0) out.h = session.history;
 	if (session.retrieved !== undefined) out.r = session.retrieved;
 	return JSON.stringify(out);
@@ -182,11 +244,11 @@ function encode(s: State, session: Session): string {
 // or from an incompatible release.
 function decode(raw: string): { s: State; session: Session } | undefined {
 	try {
-		const { sv, s, h, r } = JSON.parse(raw);
+		const { sv, s, h, r, t } = JSON.parse(raw);
 		if (sv !== STATE_VERSION || !valid(s)) return undefined;
 		const history = Array.isArray(h) ? h.filter((c): c is string => typeof c === "string").slice(0, HISTORY) : [];
 		const retrieved = Number.isInteger(r) && r >= 0 && r < history.length ? (r as number) : undefined;
-		return { s, session: { history, retrieved } };
+		return { s, session: { history, retrieved, sid: typeof t === "string" ? t : undefined } };
 	} catch {
 		return undefined;
 	}

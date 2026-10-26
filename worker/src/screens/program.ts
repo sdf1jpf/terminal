@@ -293,6 +293,14 @@ export type Next = State | Logoff;
 export interface Program<S extends State> {
 	render(ctx: Ctx, s: S): Promise<Screen>;
 	handle(ctx: Ctx, s: S, input: Input): Promise<Next>;
+	// locks names the records the panel holds for update while it shows s,
+	// such as "CUSTOMER 000101". The session keeps exactly these (and those
+	// of the panels under it) locked, so another terminal is told the
+	// record is in use (screens/index.ts, sessions.ts).
+	locks?(s: S): string[];
+	// unlocked returns the panel without its locks, after it lost them to
+	// another session: back to inquiry, nothing saved.
+	unlocked?(s: S): State;
 }
 
 // Fill puts values in a panel's input fields the next time it is drawn,
