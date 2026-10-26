@@ -518,6 +518,11 @@ The ledger is fed in batch from the subledgers:
 | Payment posted | 1000 Cash | 1200 Accounts receivable |
 | Cost of a billed invoice (at product unit cost) | 5000 Cost of goods sold | 1300 Inventory |
 | Goods received on a purchase order | 1300 Inventory | 2000 Accounts payable |
+| Stock gained by hand (a new product's stock, or a higher on hand or unit cost on the product screen) | 1300 Inventory | 5100 Inventory adjustments |
+| Stock lost by hand (a lower on hand or unit cost) | 5100 Inventory adjustments | 1300 Inventory |
+
+Each hand edit that changes the stock's value at cost is recorded in
+`stock_adjustments`, and the product screen's message shows the amount.
 
 The first run also posts opening balances against 3000 Retained earnings
 for the customer balances and the stock that were on file before the
