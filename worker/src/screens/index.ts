@@ -7,6 +7,7 @@ import type { Env } from "../index";
 import { HttpError, int, str } from "../http";
 import { syslog } from "../syslog";
 import { activity, event } from "./activity";
+import { archdoc, archive } from "./archive";
 import { ask } from "./ask";
 import { browse } from "./browse";
 import { chart } from "./charts";
@@ -32,7 +33,7 @@ import { output, spool } from "./spool";
 import { tso } from "../sessions";
 import { breakIn, MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
 import { isSend, send } from "./send";
-import { takeFill, withFill, type Input, type Next, type Program, type State } from "./program";
+import { takeDownload, takeFill, withFill, type Download, type Input, type Next, type Program, type State } from "./program";
 
 export const requestKeys = [
 	"v", "aid", "state", "fields", "modified", "cursor", "rows", "cols", "terminal", "system", "tz_offset", "live",
@@ -41,7 +42,7 @@ export const requestKeys = [
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
 	pos, po, vendors, vendhist, shipments, shipment, ledger, glaccount,
-	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask,
+	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc,
 };
 
 // Panels with a command line, by the name of its field. What is entered
@@ -67,7 +68,7 @@ const aids = new Set([
 ]);
 
 export type ScreenResponse =
-	| { v: 1; state: string; screen: ReturnType<Screen["toJSON"]> }
+	| { v: 1; state: string; screen: ReturnType<Screen["toJSON"]>; download?: Download }
 	| { v: 1; logoff: { message: string } };
 
 export async function screen(env: Env, user: string, url: URL, body: Record<string, unknown>): Promise<ScreenResponse> {
@@ -155,6 +156,7 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 		return { v: 1, logoff: { message: next.logoff } };
 	}
 	const fill = takeFill(next);
+	let download = takeDownload(next);
 	let scr = await (programs[next.p] as Program<State>).render(ctx, next);
 	if (fill) scr.fill(fill.fields, fill.cursor);
 
@@ -167,9 +169,10 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 		next = before ?? { p: "menu" };
 		setAnyMsg(next, `CUS1201E RECORD IN USE BY ${h.user} ON ${h.terminal} - ${h.resource}`);
 		scr = await (programs[next.p] as Program<State>).render(ctx, next);
+		download = undefined;
 	}
 	if (sync.message) breakIn(scr, sync.message.from, sync.message.text);
-	return { v: 1, state: encode(next, session), screen: scr.toJSON() };
+	return { v: 1, state: encode(next, session), screen: scr.toJSON(), ...(download ? { download } : {}) };
 }
 
 // locksOf lists the records held for update by s and the panels under it,

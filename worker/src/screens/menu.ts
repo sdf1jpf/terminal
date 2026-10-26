@@ -118,6 +118,7 @@ const menus: Record<string, Menu> = {
 			{ key: "4", name: "HELD", desc: "Held output, reprint", aliases: ["H", "SPOOL", "OUTPUT"], go: (_ctx, m, arg) => ({ p: "spool", back: m, filter: arg }) },
 			{ key: "5", name: "MONITOR", desc: "Transaction rates, response times", aliases: ["STATS", "CEMT"], go: (_ctx, m) => ({ p: "monitor", back: m }) },
 			{ key: "6", name: "TABLES", desc: "Carrier rates, tax codes, help text", aliases: ["SYSTABLES"], go: (_ctx, m) => ({ p: "tables", back: m }) },
+			{ key: "7", name: "ARCHIVE", desc: "Archived output (R2)", aliases: ["R2"], go: (_ctx, m, arg) => ({ p: "archive", back: m, filter: arg.toUpperCase() }) },
 		],
 	},
 };

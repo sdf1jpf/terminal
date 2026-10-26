@@ -21,6 +21,8 @@
 // after 30 days past due, then a final notice after 60, which also puts
 // the account on hold.
 
+import { putArchive } from "./archive";
+import { dunningLevels, letterLines, letterPdf, type Letter } from "./documents";
 import { HttpError } from "./http";
 import type { StepResult } from "./jobs";
 
@@ -247,7 +249,12 @@ export async function journalStep(db: D1Database, job: { name: string }): Promis
 // if the receivables control account does not agree with what customers
 // owe.
 export async function trialBalanceStep(db: D1Database): Promise<StepResult> {
-	const tb = await trialBalance(db);
+	return trialBalanceReport(await trialBalance(db));
+}
+
+// trialBalanceReport prints a trial balance, with a condition code of 8 if
+// it is out of balance and 4 if receivables disagree with the customers.
+export function trialBalanceReport(tb: TrialBalance): StepResult {
 	const lines = [
 		"",
 		`TRIAL BALANCE AS OF PERIOD ${tb.period.period}`,
@@ -273,18 +280,24 @@ export async function trialBalanceStep(db: D1Database): Promise<StepResult> {
 	return { rc: tb.debits !== tb.credits ? 8 : agrees ? 0 : 4, lines };
 }
 
+// lastClosed returns the most recently closed period, if any.
+export async function lastClosed(db: D1Database): Promise<Period | undefined> {
+	return (await db.prepare("SELECT * FROM gl_periods WHERE status = 'C' ORDER BY period DESC LIMIT 1").first<Period>()) ?? undefined;
+}
+
 // closeStep is CUSCLOSE's last step.
 export async function closeStep(db: D1Database, job: { name: string }): Promise<StepResult> {
 	const { closed, opened } = await closePeriod(db, job.name);
 	return { rc: 0, lines: ["", `PERIOD ${closed} CLOSED - PERIOD ${opened} IS NOW OPEN`] };
 }
 
-export const dunningLevels: Record<number, string> = { 1: "REMINDER", 2: "SECOND NOTICE", 3: "FINAL NOTICE" };
+export { dunningLevels } from "./documents";
 
 // dunningLetters is CUSDUNN's step: a letter to each customer with an
-// invoice that has reached a new dunning level. A final notice also puts an
-// active account on hold, recorded in the change history.
-export async function dunningLetters(db: D1Database, job: { name: string }): Promise<StepResult> {
+// invoice that has reached a new dunning level, printed and filed in the
+// archive as a PDF. A final notice also puts an active account on hold,
+// recorded in the change history.
+export async function dunningLetters(db: D1Database, job: { name: string; submitted_by?: string }, archive?: R2Bucket): Promise<StepResult> {
 	const at = Date.now();
 	const { results } = await db.prepare(
 		`SELECT i.id, i.customer_id, i.total, i.billed, i.po_number, c.name, c.address, c.city, c.state, c.zip, c.status
@@ -295,8 +308,7 @@ export async function dunningLetters(db: D1Database, job: { name: string }): Pro
 		name: string; address: string; city: string; state: string; zip: string; status: string;
 	}>();
 
-	type Due = (typeof results)[number] & { days: number; level: number };
-	const letters = new Map<string, Due[]>();
+	const letters = new Map<string, { letter: Letter; status: string }>();
 	const ts = new Date(at).toISOString();
 	for (const inv of results) {
 		const days = Math.floor((at - Date.parse(inv.billed)) / DAY) - 30;
@@ -306,40 +318,31 @@ export async function dunningLetters(db: D1Database, job: { name: string }): Pro
 			 VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (invoice_id, level) DO NOTHING`,
 		).bind(inv.customer_id, inv.id, level, days, inv.total, ts, job.name).run();
 		if (res.meta.changes === 0) continue; // this level was already sent
-		letters.set(inv.customer_id, [...(letters.get(inv.customer_id) ?? []), { ...inv, days, level }]);
+		const got = letters.get(inv.customer_id) ?? {
+			status: inv.status,
+			letter: {
+				level, sent: ts, invoices: [],
+				customer: { id: inv.customer_id, name: inv.name, address: inv.address, city: inv.city, state: inv.state, zip: inv.zip },
+			},
+		};
+		got.letter.level = Math.max(got.letter.level, level);
+		got.letter.invoices.push({ id: inv.id, po_number: inv.po_number, billed: inv.billed, days, total: inv.total });
+		letters.set(inv.customer_id, got);
 	}
 
 	const lines: string[] = [];
 	let held = 0;
-	for (const [cust, due] of letters) {
-		const c = due[0];
-		const level = Math.max(...due.map((d) => d.level));
-		lines.push(
-			"",
-			`${"-".repeat(20)} ${dunningLevels[level]} ${"-".repeat(56 - dunningLevels[level].length)}`,
-			"",
-			`  ${c.name}`,
-			`  ${c.address}`,
-			`  ${c.city}, ${c.state} ${c.zip}                       ACCOUNT ${cust}`,
-			"",
-			level === 1
-				? "  OUR RECORDS SHOW THE INVOICES BELOW ARE PAST DUE. IF YOUR PAYMENT HAS"
-				: level === 2
-					? "  WE HAVE WRITTEN BEFORE ABOUT THE INVOICES BELOW, WHICH ARE NOW MORE"
-					: "  THE INVOICES BELOW ARE MORE THAN 60 DAYS PAST DUE. YOUR ACCOUNT HAS",
-			level === 1
-				? "  CROSSED THIS LETTER, PLEASE ACCEPT OUR THANKS."
-				: level === 2
-					? "  THAN 30 DAYS PAST DUE. PLEASE REMIT PAYMENT AT ONCE."
-					: "  BEEN PLACED ON HOLD UNTIL THEY ARE PAID IN FULL.",
-			"",
-			"  INVOICE   PO NUMBER              BILLED      DAYS PAST DUE      AMOUNT",
-		);
-		for (const d of due) {
-			lines.push(`  ${pad(d.id, 9)} ${pad(d.po_number, 22)} ${d.billed.slice(0, 10)}  ${pad(d.days, 13, true)} ${pad(amt(d.total), 11, true)}`);
+	for (const [cust, { letter, status }] of letters) {
+		const text = letterLines(letter);
+		lines.push(...text);
+		if (archive) {
+			await putArchive(db, archive, {
+				key: `letters/${ts.slice(0, 10)}/${cust}-L${letter.level}`, kind: "D", ref: cust, name: job.name,
+				title: `${dunningLevels[letter.level]} ${letter.customer.name}`.slice(0, 60), owner: job.submitted_by ?? job.name,
+				created: ts, archived_by: job.name,
+			}, text, letterPdf(letter));
 		}
-		lines.push(`  ${pad("TOTAL PAST DUE", 59)} ${pad(amt(due.reduce((t, d) => t + d.total, 0)), 11, true)}`);
-		if (level === 3 && c.status === "A") {
+		if (letter.level === 3 && status === "A") {
 			const active = "id = ? AND status = 'A'";
 			const [, hold] = await db.batch([
 				db.prepare(

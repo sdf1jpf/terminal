@@ -117,18 +117,21 @@ export async function spoolReport(db: D1Database, user: string, name: string, ti
 // LINES_PER_PAGE is 60, for 11-inch paper at 6 lines per inch.
 const LINES_PER_PAGE = 60;
 
-// printText lays an output group out for the printer: a heading on each
-// page and a form feed between pages.
-export function printText(o: Output, lines: string[]): string {
-	const pages = Math.max(Math.ceil(lines.length / (LINES_PER_PAGE - 3)), 1);
-	const out: string[] = [];
-	for (let p = 0; p < pages; p++) {
-		const head = `${o.name.padEnd(8)} ${o.id}  ${o.title}`.slice(0, 110);
-		out.push(`${head.padEnd(120)}PAGE ${String(p + 1).padStart(4)}`, "", "");
-		out.push(...lines.slice(p * (LINES_PER_PAGE - 3), (p + 1) * (LINES_PER_PAGE - 3)));
-		if (p < pages - 1) out.push("\f");
-	}
-	return out.join("\n").replace(/\n\f\n/g, "\n\f") + "\n";
+// printPages lays an output group out for the printer, a page at a time,
+// with a heading on each page.
+export function printPages(o: Pick<Output, "id" | "name" | "title">, lines: string[]): string[][] {
+	const per = LINES_PER_PAGE - 3;
+	const pages = Math.max(Math.ceil(lines.length / per), 1);
+	const head = `${o.name.padEnd(8)} ${o.id}  ${o.title}`.slice(0, 110);
+	return Array.from({ length: pages }, (_, p) => [
+		`${head.padEnd(120)}PAGE ${String(p + 1).padStart(4)}`, "", "",
+		...lines.slice(p * per, (p + 1) * per),
+	]);
+}
+
+// printText is the printer's copy as text, with a form feed between pages.
+export function printText(o: Pick<Output, "id" | "name" | "title">, lines: string[]): string {
+	return printPages(o, lines).map((p) => p.join("\n")).join("\n\f") + "\n";
 }
 
 function notOnSpool(id: string): HttpError {

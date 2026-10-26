@@ -120,6 +120,21 @@ interval instead while the keyboard is locked or any input field has been
 typed in, so a refresh never takes what the operator is typing. Absent or 0
 means never.
 
+### Download
+
+A reply can also send the operator a file, such as an invoice or a spool
+listing as a PDF, next to `screen`:
+
+```json
+{ "v": 1, "state": "…", "screen": { … }, "download": { "url": "/v1/invoices/INV00012/pdf", "name": "INV00012.pdf" } }
+```
+
+The client fetches `url`, an API path on the same host signed on the same
+way as `/v1/screen`, and saves or opens it as `name`. A client ignores a
+`url` that is not a path starting `/v1/`, and keeps `name` to a plain file
+name. The screen's message line says what was sent; the Go terminal
+replaces it with where it saved the file (its `-print-dir`), and the
+browser hands the file to its downloads. It comes with one screen only.
 ### Live screens
 
 A screen whose data changes on its own also carries `"live"`, naming what

@@ -229,6 +229,18 @@ export interface SpoolState {
 	msg?: string;
 }
 export interface OutputState { p: "output"; back: State; id: string; top?: number; msg?: string }
+export interface ArchiveState {
+	p: "archive";
+	back: State;
+	filter?: string; // name or reference starts with
+	kind?: "L" | "M" | "S" | "D" | ""; // only this kind of entry; "" for all
+	keys?: string[]; // the entries on the rows shown, for the selection codes
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface ArchDocState { p: "archdoc"; back: State; key: string; top?: number; msg?: string }
 
 export interface MonitorState {
 	p: "monitor";
@@ -289,7 +301,7 @@ export type State =
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
-	| MonitorState | TablesState | TableRowsState | TableRowState | AskState;
+	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -338,6 +350,26 @@ export function takeFill(s: State): Fill | undefined {
 	const fill = st.fill;
 	delete st.fill;
 	return fill;
+}
+
+// Download hands the operator a file along with the next screen: the client
+// fetches url (an API path, signed on the same way) and saves or opens it
+// as name. Like a fill, it travels on the state for one screen only.
+export interface Download {
+	url: string;
+	name: string;
+}
+
+export function withDownload<S extends State>(s: S, d: Download): S {
+	(s as S & { download?: Download }).download = d;
+	return s;
+}
+
+export function takeDownload(s: State): Download | undefined {
+	const st = s as State & { download?: Download };
+	const d = st.download;
+	delete st.download;
+	return d;
 }
 
 export function pf(n: number): string {

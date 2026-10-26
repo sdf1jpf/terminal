@@ -16,6 +16,9 @@
       "migrations_dir": "migrations"
     }
   ],
+  // The archive: old spool output, statements, dunning letters and month-end
+  // reports, as text and PDF files (see src/archive.ts).
+  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "customer-archive" }],
   // Batch jobs: POST /v1/jobs puts a job on this queue, and the consumer
   // starts a JobRunner workflow for it (see src/jobs.ts).
   "queues": {

@@ -15,7 +15,9 @@ import { outputLines, spoolStmts } from "./spool";
 import { logStmt } from "./syslog";
 import { agedAccounts } from "./reports";
 import { pickTickets } from "./shipping";
-import { closeStep, dunningLetters, journalStep, trialBalanceStep } from "./ledger";
+import { closeStep, dunningLetters, journalStep, lastClosed, trialBalance, trialBalanceReport, trialBalanceStep } from "./ledger";
+import { archiveSpool, putArchive, RETENTION_DAYS } from "./archive";
+import { buildStatements, listingPdf, statementLines, statementPdf } from "./documents";
 
 export interface Job {
 	id: string;
@@ -45,7 +47,7 @@ export interface StepResult {
 interface JobDef {
 	title: string;
 	short: string; // for the submit panel's job list
-	steps: { name: string; run: (db: D1Database, job: Job) => Promise<StepResult> }[];
+	steps: { name: string; run: (db: D1Database, job: Job, archive: R2Bucket) => Promise<StepResult> }[];
 }
 
 // The job library. Names are eight characters, as on the real thing.
@@ -93,6 +95,7 @@ export const jobLibrary: Record<string, JobDef> = {
 			{ name: "STEP010", run: journalStep },
 			{ name: "STEP020", run: trialBalanceStep },
 			{ name: "STEP030", run: closeStep },
+			{ name: "STEP040", run: monthEndArchive },
 		],
 	},
 	CUSTRIAL: {
@@ -107,6 +110,11 @@ export const jobLibrary: Record<string, JobDef> = {
 		title: "DUNNING LETTERS FOR OVERDUE INVOICES",
 		short: "DUNNING",
 		steps: [{ name: "STEP010", run: dunningLetters }],
+	},
+	CUSARCH: {
+		title: "ARCHIVE OLD SPOOL OUTPUT TO R2",
+		short: "ARCHIVE",
+		steps: [{ name: "STEP010", run: archiveOutput }],
 	},
 	VENDSIM: {
 		title: "EDI VENDOR SIMULATOR",
@@ -214,7 +222,7 @@ export class JobRunner extends WorkflowEntrypoint<Env, JobMessage> {
 				const result = await step.do(
 					s.name,
 					{ retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" },
-					() => s.run(db, job),
+					() => s.run(db, job, this.env.ARCHIVE),
 				);
 				results.push({ name: s.name, result });
 			} catch (e) {
@@ -363,35 +371,52 @@ export async function holdOverLimit(db: D1Database, job: Job): Promise<StepResul
 }
 
 // statements prints a statement for each open account with a balance,
-// with its activity from the last 30 days.
-export async function statements(db: D1Database): Promise<StepResult> {
-	const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
-	const { results: custs } = await db.prepare(
-		"SELECT * FROM customers WHERE status <> 'C' AND balance <> 0 ORDER BY id",
-	).all<Customer>();
-	const { results: txns } = await db.prepare(
-		"SELECT customer_id, type, amount, reference, balance, posted FROM transactions WHERE posted >= ? ORDER BY seq",
-	).bind(since).all<{ customer_id: string; type: string; amount: number; reference: string; balance: number; posted: string }>();
-
+// with its activity from the last 30 days, and files a PDF of each in the
+// archive.
+export async function statements(db: D1Database, job: Job, archive: R2Bucket): Promise<StepResult> {
+	const list = await buildStatements(db);
 	const lines: string[] = [];
-	for (const c of custs) {
-		lines.push(
-			"",
-			`STATEMENT  ${c.id}  ${c.name}`,
-			`           ${c.address}`,
-			`           ${c.city}, ${c.state} ${c.zip}`,
-			"",
-		);
-		const mine = txns.filter((t) => t.customer_id === c.id);
-		for (const t of mine) {
-			const amt = t.type === "I" ? dollars(t.amount) : dollars(-t.amount);
-			lines.push(
-				`  ${t.posted.slice(0, 10)}  ${t.type === "I" ? "INVOICE" : "PAYMENT"}  ${pad(t.reference, 12)} ${pad(amt, 12, true)}  ${pad(dollars(t.balance), 12, true)}`,
-			);
-		}
-		if (mine.length === 0) lines.push("  NO ACTIVITY IN THE LAST 30 DAYS");
-		lines.push(`  ${pad("BALANCE DUE", 42)}${pad(dollars(c.balance), 12, true)}`);
+	for (const st of list) {
+		const mine = statementLines(st);
+		lines.push(...mine);
+		await putArchive(db, archive, {
+			key: `statements/${st.asOf.slice(0, 7)}/${st.customer.id}`, kind: "S", ref: st.customer.id, name: job.name,
+			title: `STATEMENT ${st.customer.name}`.slice(0, 60), owner: job.submitted_by, created: st.asOf, archived_by: job.name,
+		}, mine, statementPdf(st));
 	}
-	lines.push("", `${custs.length} STATEMENTS PRINTED`);
+	lines.push("", `${list.length} STATEMENTS PRINTED, ${list.length} FILED IN THE ARCHIVE`);
+	return { rc: 0, lines };
+}
+
+// archiveOutput is CUSARCH's step: output more than a week old moves off
+// the spool into the archive.
+export async function archiveOutput(db: D1Database, job: Job, archive: R2Bucket): Promise<StepResult> {
+	const done = await archiveSpool(db, archive, job.name);
+	const lines = ["", `OUTPUT ON THE SPOOL MORE THAN ${RETENTION_DAYS} DAYS, MOVED TO THE ARCHIVE:`, ""];
+	for (const e of done) lines.push(`  ${pad(e.name, 8)} ${pad(e.ref, 8)} ${pad(e.lines, 6, true)} LINES  ${e.created.slice(0, 10)}  ${e.key}`);
+	if (done.length === 0) lines.push("  NONE");
+	lines.push("", `${done.length} OUTPUT GROUPS ARCHIVED`);
+	return { rc: 0, lines };
+}
+
+// monthEndArchive is CUSCLOSE's last step: the closed period's trial
+// balance and the aged balances as of the close go to the archive.
+export async function monthEndArchive(db: D1Database, job: Job, archive: R2Bucket): Promise<StepResult> {
+	const closed = await lastClosed(db);
+	if (!closed) return { rc: 4, lines: ["", "NO CLOSED PERIOD TO ARCHIVE"] };
+	const p = closed.period;
+	const reports = [
+		{ id: "TRIALBAL", title: `TRIAL BALANCE ${p}`, lines: trialBalanceReport(await trialBalance(db, p)).lines },
+		{ id: "AGING", title: `AGED BALANCES AT CLOSE OF ${p}`, lines: (await agedBalances(db)).lines },
+	];
+	const lines = ["", `MONTH-END REPORTS FOR ${p} FILED IN THE ARCHIVE:`, ""];
+	for (const r of reports) {
+		const o = { id: r.id, name: job.name, title: r.title };
+		const e = await putArchive(db, archive, {
+			key: `month-end/${p}/${r.id}`, kind: "M", ref: p, name: job.name, title: r.title, owner: job.submitted_by,
+			created: new Date().toISOString(), archived_by: job.name,
+		}, r.lines, listingPdf(o, r.lines));
+		lines.push(`  ${pad(r.title, 40)} ${pad(e.lines, 5, true)} LINES  ${e.key}`);
+	}
 	return { rc: 0, lines };
 }

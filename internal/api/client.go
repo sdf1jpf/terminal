@@ -97,54 +97,34 @@ func (c *Client) Screen(ctx context.Context, req ScreenRequest) (ScreenResponse,
 	return out, err
 }
 
+// MaxDownload is the largest file Download will take.
+const MaxDownload = 32 << 20
+
+// Download fetches a file from the API, such as a PDF a screen sent along.
+func (c *Client) Download(ctx context.Context, path string) ([]byte, error) {
+	resp, err := c.send(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, MaxDownload+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if len(b) > MaxDownload {
+		return nil, errors.New("api: file too large")
+	}
+	return b, nil
+}
+
 // do sends a request and decodes the response into out. API errors are
 // mapped to the package's sentinel errors.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	resp, err := c.send(ctx, method, path, in)
 	if err != nil {
 		return err
 	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	hdr := c.headers()
-	if hdr == nil {
-		return ErrUnauthorized
-	}
-	for k, v := range hdr {
-		req.Header[k] = v
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		var eb errorBody
-		json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&eb)
-		switch {
-		case eb.Error.Code == codeUnauthorized, eb.Error.Code == "" && (resp.StatusCode < 400 || resp.StatusCode == 401):
-			// From the Worker, or Access redirecting to its login page.
-			c.setHeaders(nil)
-			return ErrUnauthorized
-		case eb.Error.Code == "" && resp.StatusCode == 403:
-			return ErrBadLogon // Access policy does not allow this user
-		}
-		msg := eb.Error.Message
-		if msg == "" {
-			msg = resp.Status
-		}
-		return fmt.Errorf("api: %s", msg)
-	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
@@ -152,4 +132,54 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return fmt.Errorf("api: bad response: %w", err)
 	}
 	return nil
+}
+
+// send makes a request and returns a successful response, whose body the
+// caller closes. API errors are mapped to the package's sentinel errors.
+func (c *Client) send(ctx context.Context, method, path string, in any) (*http.Response, error) {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	hdr := c.headers()
+	if hdr == nil {
+		return nil, ErrUnauthorized
+	}
+	for k, v := range hdr {
+		req.Header[k] = v
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if resp.StatusCode < 300 {
+		return resp, nil
+	}
+	defer resp.Body.Close()
+	var eb errorBody
+	json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&eb)
+	switch {
+	case eb.Error.Code == codeUnauthorized, eb.Error.Code == "" && (resp.StatusCode < 400 || resp.StatusCode == 401):
+		// From the Worker, or Access redirecting to its login page.
+		c.setHeaders(nil)
+		return nil, ErrUnauthorized
+	case eb.Error.Code == "" && resp.StatusCode == 403:
+		return nil, ErrBadLogon // Access policy does not allow this user
+	}
+	msg := eb.Error.Message
+	if msg == "" {
+		msg = resp.Status
+	}
+	return nil, fmt.Errorf("api: %s", msg)
 }

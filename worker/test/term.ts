@@ -27,6 +27,7 @@ export class Terminal {
 	modified = new Set<string>();
 	cursorField = ""; // the field the cursor is in, sent with the next key
 	logoff = "";
+	download?: { url: string; name: string }; // a file sent with the last screen
 
 	live = false; // say the client listens on GET /v1/live
 
@@ -59,6 +60,7 @@ export class Terminal {
 		}
 		this.state = res.body.state;
 		this.scr = res.body.screen;
+		this.download = res.body.download;
 		this.vals = {};
 		this.modified.clear();
 		this.cursorField = "";

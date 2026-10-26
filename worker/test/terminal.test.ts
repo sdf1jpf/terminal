@@ -33,6 +33,17 @@ describe("browser terminal", () => {
 		expect(body.system).toBe("SYS1");
 	});
 
+	it("takes a file sent with a screen only from the API", () => {
+		const res = structuredClone(response) as Record<string, unknown>;
+		expect((decodeScreen(res) as { download: unknown }).download).toBeNull();
+		res.download = { url: "/v1/invoices/INV00001/pdf", name: "../INV 1.pdf" };
+		expect((decodeScreen(res) as { download: unknown }).download).toEqual({ url: "/v1/invoices/INV00001/pdf", name: ".._INV_1.pdf" });
+		res.download = { url: "https://evil.example/x.pdf", name: "x.pdf" };
+		expect((decodeScreen(res) as { download: unknown }).download).toBeNull();
+		res.download = { url: "//evil.example/v1/x", name: "x.pdf" };
+		expect((decodeScreen(res) as { download: unknown }).download).toBeNull();
+	});
+
 	it("lays out fields BMS style", () => {
 		const { state, scr } = decodeScreen(response) as { state: string; scr: Screen };
 		expect(state).toBe("abc");

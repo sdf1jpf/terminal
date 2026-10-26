@@ -10,7 +10,7 @@ import { searchProducts } from "../products";
 import { padID } from "./detail";
 import { newSkuSearch, searchText } from "./skusearch";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
-import { fail, isCode, pf, type InvAddrState, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
+import { fail, isCode, pf, withDownload, type InvAddrState, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
 
 // CUSI01 INVOICE LIST lists invoices, newest first, for one customer or
 // all, with the customer's account position, opens new ones and marks
@@ -279,11 +279,11 @@ export const invoice: Program<InvoiceState> = {
 		keys(scr, open
 			? "PF1=HELP PF3=EXIT PF4=FIND SKU PF5=ADDRESS PF6=SHIP PF7/8=SCROLL PF9=CANCEL"
 			: released
-				? "PF1=HELP  PF3=EXIT  PF5=ADDRESS  PF6=SHOW SHIPMENT  PF7/8=SCROLL  PF10=BILL"
+				? "PF1=HELP PF2=PDF PF3=EXIT PF5=ADDRESS PF6=SHOW SHIPMENT PF7/8=SCROLL PF10=BILL"
 			: inv?.status === "B"
-				? "PF1=HELP  PF3=EXIT  PF5=ADDRESS  PF7=UP  PF8=DOWN  PF11=MARK PAID  PF12=CANCEL"
+				? "PF1=HELP PF2=PDF PF3=EXIT PF5=ADDRESS PF7=UP PF8=DOWN PF11=MARK PAID PF12=CANCEL"
 			: inv
-				? "PF1=HELP  PF3=EXIT  PF5=ADDRESS  PF7=UP  PF8=DOWN  PF12=CANCEL"
+				? "PF1=HELP  PF2=PDF  PF3=EXIT  PF5=ADDRESS  PF7=UP  PF8=DOWN  PF12=CANCEL"
 				: "PF1=HELP  PF3=EXIT  PF12=CANCEL");
 		if (s.errField && open) scr.cursorTo(s.errField);
 		else if (s.focus && open) scr.cursorTo(s.focus);
@@ -314,6 +314,10 @@ export const invoice: Program<InvoiceState> = {
 			case pf(3):
 			case pf(12):
 				return back(s);
+			case pf(2):
+				// An open invoice prints as a pro forma.
+				s.msg = `CUS1501I ${s.id}.PDF SENT TO YOUR TERMINAL`;
+				return withDownload(s, { url: `/v1/invoices/${s.id}/pdf`, name: `${s.id}.pdf` });
 			case pf(4):
 				s.vals = { sku: (input.fields.sku ?? "").trim().toUpperCase(), qty: (input.fields.qty ?? "").trim() };
 				return newSkuSearch(s, s.vals.sku);

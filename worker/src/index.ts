@@ -67,6 +67,12 @@
 //	GET    /v1/spool/{id}/print     paged for the printer, as text
 //	POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 //	DELETE /v1/spool/{id}           purge it
+//	GET    /v1/spool/{id}/pdf       printed on green-bar paper, as a PDF
+//	GET    /v1/invoices/{id}/pdf    the invoice as a PDF (a pro forma while open)
+//	GET    /v1/customers/{id}/statement   a statement of the last 30 days, as a PDF
+//	GET    /v1/archive?name=X&kind=K      archived output and documents, newest first
+//	GET    /v1/archive/{key}        one entry; {key}.pdf and {key}.txt are its files
+//	POST   /v1/archive/restore      put an archived listing back on the spool: {"key"}
 //	GET    /v1/tables               the system tables (KV), with their row counts
 //	GET    /v1/tables/{t}           a table's columns and rows
 //	PUT    /v1/tables/{t}/{key}     add or change a row
@@ -113,6 +119,9 @@ import {
 import { accountEntries, listPeriods, openPeriod, trialBalance } from "./ledger";
 import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
 import { requestKeys, screen } from "./screens";
+import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
+import { buildStatements, invoicePdf, listingPdf, statementPdf } from "./documents";
+import { pdfResponse } from "./pdf";
 import { notLocked, tso, USER_HEADER, type Sessions } from "./sessions";
 
 export interface Env {
@@ -122,6 +131,7 @@ export interface Env {
 	DEV_USER?: string; // wrangler dev only, when Access is not configured
 	JOBS: Queue<JobMessage>; // the batch job input queue
 	JOB_RUNNER: Workflow<JobMessage>;
+	ARCHIVE: R2Bucket; // old output and documents, as files (archive.ts)
 	AI: Ai; // Workers AI, for the HELP facility (ai.ts)
 	VECTORIZE: Vectorize; // the customer-help index: help topics and products by meaning
 	TABLES: KVNamespace; // the system tables (systables.ts)
@@ -215,6 +225,11 @@ app.get("/v1/customers/:id/transactions", signedOn, async (c) => {
 app.post("/v1/customers/:id/transactions", signedOn, async (c) =>
 	json(201, await postTransaction(c.env.DB, c.get("user"), c.req.param("id"), parsePosting(await readJSON(c.req.raw, transactionFields)))),
 );
+app.get("/v1/customers/:id/statement", signedOn, async (c) => {
+	const [st] = await buildStatements(c.env.DB, c.req.param("id"));
+	if (!st) throw notFound();
+	return pdfResponse(statementPdf(st), `STMT-${st.customer.id}-${st.asOf.slice(0, 10)}.pdf`);
+});
 app.get("/v1/customers/:id/history", signedOn, async (c) => json(200, await customerHistory(c.env.DB, c.req.param("id"))));
 
 app.get("/v1/search", signedOn, async (c) => {
@@ -286,6 +301,10 @@ app.put("/v1/invoices/:id/lines/:line", signedOn, async (c) => {
 app.delete("/v1/invoices/:id/lines/:line", signedOn, async (c) => {
 	await deleteLine(c.env.DB, c.req.param("id").toUpperCase(), lineNumber(c.req.param("line")));
 	return noContent();
+});
+app.get("/v1/invoices/:id/pdf", signedOn, async (c) => {
+	const { invoice, lines } = await getInvoice(c.env.DB, c.req.param("id").toUpperCase());
+	return pdfResponse(invoicePdf(invoice, lines, await getCustomer(c.env.DB, invoice.customer_id)), `${invoice.id}.pdf`);
 });
 app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
@@ -422,9 +441,32 @@ app.get("/v1/spool/:id/print", signedOn, async (c) => {
 	return new Response(printText(output, lines), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 });
 app.post("/v1/spool/:id/print", signedOn, async (c) => json(200, await printOutput(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+app.get("/v1/spool/:id/pdf", signedOn, async (c) => {
+	const { output, lines } = await getOutput(c.env.DB, c.req.param("id").toUpperCase());
+	return pdfResponse(listingPdf(output, lines), `${output.id}.pdf`);
+});
 app.delete("/v1/spool/:id", signedOn, async (c) => {
 	await purgeOutput(c.env.DB, c.get("user"), c.req.param("id").toUpperCase());
 	return noContent();
+});
+
+app.get("/v1/archive", signedOn, async (c) => json(200, await listArchive(c.env.DB, c.req.query("name") ?? "", c.req.query("kind") ?? "")));
+app.post("/v1/archive/restore", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["key"]);
+	return json(200, await restoreArchive(c.env.DB, c.env.ARCHIVE, c.get("user"), str(body, "key")));
+});
+app.get("/v1/archive/:key{.+}", signedOn, async (c) => {
+	const key = c.req.param("key");
+	const file = /^(.+)\.(pdf|txt)$/.exec(key);
+	if (!file) return json(200, await getEntry(c.env.DB, key));
+	const obj = await archiveFile(c.env.ARCHIVE, file[1], file[2] as "pdf" | "txt");
+	const name = file[1].split("/").pop()!;
+	return new Response(obj.body, {
+		headers: {
+			"Content-Type": file[2] === "pdf" ? "application/pdf" : "text/plain; charset=utf-8",
+			"Content-Disposition": `inline; filename="${name}.${file[2]}"`,
+		},
+	});
 });
 
 app.get("/v1/tables", signedOn, async (c) => json(200, await listTables(c.env.TABLES)));
@@ -499,6 +541,12 @@ for (const path of [
 	"/v1/spool",
 	"/v1/spool/:id",
 	"/v1/spool/:id/print",
+	"/v1/spool/:id/pdf",
+	"/v1/invoices/:id/pdf",
+	"/v1/customers/:id/statement",
+	"/v1/archive",
+	"/v1/archive/restore",
+	"/v1/archive/:key{.+}",
 	"/v1/tables",
 	"/v1/tables/:table",
 	"/v1/tables/:table/:key",

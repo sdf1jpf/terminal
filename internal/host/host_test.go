@@ -2,6 +2,9 @@ package host
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -259,6 +262,57 @@ func TestTimeoutOnLogonScreenStaysThere(t *testing.T) {
 	scr := s.Submit(t3.AIDTimeout, s.Start())
 	if len(f.reqs) != 0 || !strings.Contains(scr.Row(scr.Rows()), "ENTER=LOGON") {
 		t.Fatal("a timeout before logon should do nothing")
+	}
+}
+
+// fileAPI also serves downloads, and sends one with the next screen.
+type fileAPI struct {
+	fakeAPI
+	send  *api.Download
+	files map[string][]byte
+}
+
+func (f *fileAPI) Screen(ctx context.Context, req api.ScreenRequest) (api.ScreenResponse, error) {
+	resp, err := f.fakeAPI.Screen(ctx, req)
+	resp.Download, f.send = f.send, nil
+	return resp, err
+}
+
+func (f *fileAPI) Download(_ context.Context, path string) ([]byte, error) {
+	b, ok := f.files[path]
+	if !ok {
+		return nil, errors.New("api: not found")
+	}
+	return b, nil
+}
+
+func TestSavesFilesTheHostSends(t *testing.T) {
+	dir := t.TempDir()
+	f := &fileAPI{files: map[string][]byte{"/v1/invoices/INV00001/pdf": []byte("%PDF-1.4")}}
+	s := NewSession(&Config{SystemName: "TEST", Backend: f, DownloadDir: dir}, "TERM0001")
+	scr := s.Submit(t3.AIDEnter, s.Start())
+
+	for i, want := range []string{"INV00001.pdf", "INV00001-2.pdf"} {
+		f.send = &api.Download{URL: "/v1/invoices/INV00001/pdf", Name: "../INV00001.pdf"}
+		scr = s.Submit(t3.AIDPF2, scr)
+		path := filepath.Join(dir, want)
+		if b, err := os.ReadFile(path); err != nil || string(b) != "%PDF-1.4" {
+			t.Fatalf("copy %d: %q, %v", i+1, b, err)
+		}
+		if !strings.Contains(scr.Row(23), "CUS1507I SAVED "+path) {
+			t.Fatalf("message: %q", scr.Row(23))
+		}
+	}
+
+	f.send = &api.Download{URL: "/v1/nosuch", Name: "X.pdf"}
+	scr = s.Submit(t3.AIDEnter, scr)
+	if !strings.Contains(scr.Row(23), "CUS1509E NOT FOUND") {
+		t.Fatalf("failed download: %q", scr.Row(23))
+	}
+	f.send = &api.Download{URL: "https://evil.example/x", Name: "X.pdf"}
+	scr = s.Submit(t3.AIDEnter, scr)
+	if !strings.Contains(scr.Row(23), "CUS1509E BAD FILE LOCATION") {
+		t.Fatalf("foreign URL: %q", scr.Row(23))
 	}
 }
 

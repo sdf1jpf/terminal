@@ -72,6 +72,7 @@ async function send(aid) {
 		// timer is only a fallback.
 		schedule(live.open && next.live ? Math.max(next.refresh, LIVE_FALLBACK_S) : next.refresh);
 		connectLive();
+		if (next.download) save(next.download);
 			} catch (e) {
 		console.error(e);
 		hostMessage("HOST NOT RESPONDING - PRESS ENTER TO RETRY", () => send(state.lastAid));
@@ -79,6 +80,24 @@ async function send(aid) {
 	}
 	render();
 	if (state.pendingResize) fit();
+}
+
+// save fetches a file the host sent along with a screen (a PDF of an
+// invoice, say) and hands it to the browser to save.
+async function save({ url, name }) {
+	try {
+		const res = await fetch(url, { credentials: "same-origin", redirect: "manual" });
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const href = URL.createObjectURL(await res.blob());
+		const a = Object.assign(document.createElement("a"), { href, download: name });
+		document.body.append(a);
+		a.click();
+		a.remove();
+		setTimeout(() => URL.revokeObjectURL(href), 60_000);
+	} catch (e) {
+		console.error(e);
+		hostMessage(`${name} NOT RECEIVED - PRESS ENTER TO RETRY`.toUpperCase(), () => save({ url, name }));
+	}
 }
 
 // schedule redraws a screen that asks for it every so many seconds. While

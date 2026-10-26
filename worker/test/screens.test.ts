@@ -7,6 +7,8 @@ import { accessJWT } from "./access";
 import { post, Terminal, worker } from "./term";
 import { shipInvoice } from "./ship";
 import { journal } from "../src/ledger";
+import { archiveSpool } from "../src/archive";
+import { spoolReport } from "../src/spool";
 import { getCustomer, updateCustomer } from "../src/data";
 import type { Editable } from "../src/customer";
 
@@ -1119,7 +1121,8 @@ describe("operator console", () => {
 		await t.send("PF6");
 		expect(t.scr.map).toBe("CUSO02");
 		expect(t.row(9)).toMatch(/CUSAGING 15 6 \* \* \* +ACTIVE \d{4}-\d\d-\d\d \d\d:15/);
-		expect(t.row(12)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
+		expect(t.row(10)).toMatch(/CUSARCH +0 5 \* \* \* +ACTIVE/);
+		expect(t.row(13)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
 
 		await t.fill("job", "cusstmt", "cron", "0 7 31 2 *").send("ENTER");
 		expect(t.message).toBe("CUS0702I SCHEDULE CUSSTMT SET TO 0 7 31 2 *");
@@ -1130,12 +1133,12 @@ describe("operator console", () => {
 		await t.fill("job", "nosuch", "cron", "@daily").send("ENTER");
 		expect(t.scr.cursor).toEqual({ field: "job" });
 
-		await t.fill("sel3", "r").send("ENTER"); // EDISIM
+		await t.fill("sel4", "r").send("ENTER"); // EDISIM
 		expect(t.message).toBe("CUS0703I SCHEDULE EDISIM RELEASED");
-		expect(t.row(12)).toMatch(/EDISIM +0 \* \* \* \* +ACTIVE/);
-		await t.fill("sel3", "h").send("ENTER");
-		expect(t.row(12)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
-		await t.fill("sel2", "d").send("ENTER");
+		expect(t.row(13)).toMatch(/EDISIM +0 \* \* \* \* +ACTIVE/);
+		await t.fill("sel4", "h").send("ENTER");
+		expect(t.row(13)).toMatch(/EDISIM +0 \* \* \* \* +HELD/);
+		await t.fill("sel3", "d").send("ENTER");
 		expect(t.message).toBe("CUS0704I SCHEDULE CUSSTMT DELETED");
 		await t.fill("sel0", "x").send("ENTER");
 		expect(t.message).toMatch(/^CUS0103E/);
@@ -1175,6 +1178,12 @@ describe("held output", () => {
 
 		await t.fill("sel0", "o").send("ENTER");
 		expect(t.message).toMatch(/COPY 2$/);
+		expect(t.download).toBeUndefined();
+		await t.fill("sel0", "d").send("ENTER");
+		expect(t.message).toBe(`CUS1501I ${id}.PDF SENT TO YOUR TERMINAL`);
+		expect(t.download).toEqual({ url: `/v1/spool/${id}/pdf`, name: `${id}.pdf` });
+		await t.send("ENTER");
+		expect(t.download).toBeUndefined(); // once only
 		await t.fill("sel0", "z").send("ENTER");
 		expect(t.message).toMatch(/^CUS0103E/);
 		await t.fill("sel0", "p").send("ENTER");
@@ -1184,6 +1193,66 @@ describe("held output", () => {
 		expect(t.field("filter")!.value ?? "").toBe("");
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSM50");
+	});
+});
+
+describe("archive screens", () => {
+	it("lists the archive, browses an entry, sends its PDF and restores it", async () => {
+		const id = await spoolReport(env.DB, "IBMUSER", "CUSR01", "ARCHIVE ME", ["FIRST LINE", "SECOND LINE"]);
+		await env.DB.prepare("UPDATE spool SET created = '2026-01-15T00:00:00Z' WHERE id = ?").bind(id).run();
+		await archiveSpool(env.DB, env.ARCHIVE, "CUSARCH");
+		const key = `spool/2026-01/${id}`;
+
+		const t = await Terminal.logon();
+		await t.fill("option", `5.7 ${id}`).send("ENTER");
+		expect(t.scr.map).toBe("CUSQ03");
+		expect(t.row(9)).toMatch(new RegExp(`CUSR01 +${id} LISTING +2 .*ARCHIVE ME`));
+		await t.fill("kind", "x").send("ENTER");
+		expect(t.message).toBe('CUS1503E KIND "X" IS NOT L, M, S OR D');
+		await t.fill("kind", "s").send("ENTER");
+		expect(t.row(9)).toContain("NOTHING ARCHIVED MATCHES");
+		await t.fill("kind", "l").send("ENTER");
+
+		await t.fill("sel0", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSQ04");
+		expect(t.row(4)).toMatch(/^ FIRST LINE +$/);
+		await t.send("PF10");
+		expect(t.download).toEqual({ url: `/v1/archive/${key}.pdf`, name: `2026-01-${id}.pdf` });
+		await t.send("PF3");
+
+		await t.fill("sel0", "r").send("ENTER");
+		expect(t.message).toBe(`CUS1504I ${id} RESTORED TO THE SPOOL, HELD - 2 LINES`);
+		await t.fill("sel0", "r").send("ENTER");
+		expect(t.message).toBe(`CUS1506E ${id} IS ALREADY ON THE SPOOL`);
+		await t.fill("sel0", "d").send("ENTER");
+		expect(t.download?.url).toBe(`/v1/archive/${key}.pdf`);
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM50");
+
+		// The held output panel's PF6 opens it too.
+		await t.fill("option", "4").send("ENTER");
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSQ03");
+	});
+
+	it("sends invoice and statement PDFs from their screens", async () => {
+		const c = (await env.DB.prepare("SELECT id FROM customers WHERE status = 'A' ORDER BY id LIMIT 1").first<{ id: string }>())!.id;
+		const t = await Terminal.logon();
+		await t.fill("option", `1.2 ${c}`).send("ENTER");
+		expect(t.scr.map).toBe("CUSM02");
+		await t.send("PF2");
+		expect(t.message).toMatch(/^CUS1502I/);
+		expect(t.download).toMatchObject({ url: `/v1/customers/${c}/statement` });
+		expect(t.download!.name).toMatch(new RegExp(`^STMT-${c}-\\d{4}-\\d\\d-\\d\\d\\.pdf$`));
+		expect(t.message).toMatch(new RegExp(`^CUS1502I STATEMENT STMT-${c}-`));
+
+		const inv = await createInvoice(env.DB, "IBMUSER", c, "");
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSI01");
+		await t.fill(`sel:${inv.id}`, "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSI02");
+		await t.send("PF2");
+		expect(t.download).toEqual({ url: `/v1/invoices/${inv.id}/pdf`, name: `${inv.id}.pdf` });
 	});
 });
 
