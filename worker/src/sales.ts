@@ -287,6 +287,36 @@ export async function setTaxExempt(db: D1Database, user: string, customerId: str
 	return cert;
 }
 
+// setEarlyPay offers a customer a discount for paying early, as typed
+// on the pricing screen: 2/10 is 2% off if paid within 10 days of billing,
+// and a blank takes the offer away. Invoices billed from then on carry it.
+export async function setEarlyPay(db: D1Database, user: string, customerId: string, terms: string): Promise<{ pct10: number; days: number }> {
+	const t = terms.trim().replace(/%/g, "");
+	let pct10 = 0;
+	let days = 0;
+	if (t) {
+		const m = /^(\d{1,2}(?:\.\d)?)\/(\d{1,2})$/.exec(t);
+		if (!m) throw bad("early", "early-payment terms are percent/days, such as 2/10");
+		pct10 = parsePct("early", m[1], 100);
+		days = Number(m[2]);
+		if (pct10 === 0 || days < 1 || days > 29) throw bad("early", "the discount must be over 0%, for paying within 1 to 29 days");
+	}
+	const before = await db.prepare("SELECT early_pct10, early_days FROM customers WHERE id = ?").bind(customerId)
+		.first<{ early_pct10: number; early_days: number }>();
+	if (!before) throw new HttpError(404, "not_found", "record not found");
+	if (before.early_pct10 === pct10 && before.early_days === days) return { pct10, days };
+	const show = (p: number, d: number) => (p ? `${pct(p).replace("%", "")}/${d}` : "");
+	const ts = now();
+	await db.batch([
+		db.prepare("UPDATE customers SET early_pct10 = ?2, early_days = ?3, updated = ?4, updated_by = ?5 WHERE id = ?1")
+			.bind(customerId, pct10, days, ts, user),
+		db.prepare(
+			"INSERT INTO audit (customer_id, action, field, old_value, new_value, at, by) VALUES (?, 'CHANGE', 'EARLY PAY', ?, ?, ?, ?)",
+		).bind(customerId, show(before.early_pct10, before.early_days), show(pct10, days), ts, user),
+	]);
+	return { pct10, days };
+}
+
 // ---- pricing ----
 
 export async function listPricing(db: D1Database, customerId: string): Promise<Pricing[]> {

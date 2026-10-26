@@ -26,7 +26,7 @@
 
 import { HttpError } from "./http";
 import {
-	addLine, addressOf, billInvoice, cancelInvoice, createInvoice, getInvoice, payInvoice, setAddress,
+	addLine, addressOf, billInvoice, cancelInvoice, createInvoice, earlyDiscount, getInvoice, payInvoice, setAddress, termsText,
 	type Address, type Invoice, type InvoiceLine,
 } from "./invoices";
 import type { Transaction } from "./activity";
@@ -354,7 +354,7 @@ function productID(s: string[]): string {
 async function remittance(db: D1Database, partner: string, body: string[][]): Promise<string> {
 	const rmrs = seg(body, "RMR").filter((s) => s[1] === "IV");
 	if (rmrs.length === 0) throw new EdiError("820 has no RMR*IV invoice references");
-	const paid: { id: string; amount: number }[] = [];
+	const paid: { id: string; amount: number; full: boolean }[] = [];
 	for (const r of rmrs) {
 		const id = (r[2] ?? "").trim().toUpperCase();
 		const amount = Number(r[4]);
@@ -363,13 +363,18 @@ async function remittance(db: D1Database, partner: string, body: string[][]): Pr
 		if (!inv || inv.customer_id !== partner) throw why(`invoice ${id || "(blank)"} is not one of yours`);
 		if (inv.status === "P") throw why(`invoice ${id} is already paid`);
 		if (inv.status !== "B") throw why(`invoice ${id} has not been billed`);
-		if (amount !== inv.total) throw why(`invoice ${id} is for ${inv.total}, remittance says ${r[4] ?? "nothing"}`);
-		paid.push({ id, amount });
+		// Within its terms' discount days, the total less the discount pays it.
+		const disc = earlyDiscount(inv);
+		if (amount !== inv.total && !(disc > 0 && amount === inv.total - disc)) {
+			const net = disc > 0 ? ` (or ${inv.total - disc} with the early-payment discount)` : "";
+			throw why(`invoice ${id} is for ${inv.total}${net}, remittance says ${r[4] ?? "nothing"}`);
+		}
+		paid.push({ id, amount, full: amount === inv.total });
 	}
 	const bpr = seg(body, "BPR")[0];
 	const total = paid.reduce((t, p) => t + p.amount, 0);
 	if (bpr && Number(bpr[2]) !== total) throw new EdiError(`BPR02 payment ${bpr[2]} does not equal the remittances, ${total}`);
-	for (const p of paid) await payInvoice(db, "EDI", p.id);
+	for (const p of paid) await payInvoice(db, "EDI", p.id, !p.full);
 	return paid.map((p) => p.id).join(" ");
 }
 
@@ -401,6 +406,8 @@ async function sendInvoice(db: D1Database, inv: Invoice): Promise<Interchange | 
 		...party("ST", addressOf(inv, "ship")),
 		...lines.flatMap(it1),
 		["TDS", inv.total * 100],
+		// Terms: ITD*01*3*pct**days**30, discount days and net days from the invoice date.
+		...(inv.early_pct10 ? [["ITD", "01", "3", inv.early_pct10 / 10, "", inv.early_days, "", 30, "", "", "", "", termsText(inv)]] : []),
 		// Sales tax: TXI*ST*amount*percent, or TXI*ST*0 with the exemption.
 		...(inv.tax > 0 ? [["TXI", "ST", inv.tax, Number((inv.tax_note.match(/([\d.]+)%/)?.[1]) ?? 0)]]
 			: inv.tax_note.startsWith("EXEMPT") ? [["TXI", "ST", 0, "", "", "", "2", "", inv.tax_note.slice(7)]] : []),

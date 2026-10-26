@@ -9,7 +9,7 @@
 
 import type { Transaction } from "./activity";
 import type { Customer } from "./customer";
-import type { Invoice, InvoiceLine } from "./invoices";
+import { termsText, type Invoice, type InvoiceLine } from "./invoices";
 import { Pdf, type RGB } from "./pdf";
 import { AGING_BUCKETS, agedAccounts } from "./reports";
 import { printPages, type Output } from "./spool";
@@ -190,7 +190,7 @@ export function invoicePdf(inv: Invoice, lines: InvoiceLine[], cust: Customer): 
 		["INVOICE DATE", date(inv.billed || inv.created)],
 		["ACCOUNT", inv.customer_id],
 		["PO NUMBER", inv.po_number || "NONE"],
-		["TERMS", "NET 30"],
+		["TERMS", termsText(inv)],
 	]);
 	if (inv.status === "P") f.stamp(0, 12, `PAID ${date(inv.paid)}`);
 	if (inv.status === "O") f.put(0, 12, "NOT YET BILLED - FOR INFORMATION ONLY", true);
@@ -213,6 +213,13 @@ export function invoicePdf(inv: Invoice, lines: InvoiceLine[], cust: Customer): 
 	if (inv.billed) {
 		const due = new Date(Date.parse(inv.billed) + 30 * DAY).toISOString();
 		f.put(0, end + 2, pad("PAYMENT DUE BY", 62, true) + " " + pad(date(due), 12, true));
+		const disc = Math.round((inv.subtotal * inv.early_pct10) / 1000);
+		if (disc > 0 && inv.status === "B") {
+			const by = new Date(Date.parse(inv.billed) + inv.early_days * DAY).toISOString();
+			f.put(0, end + 3, pad(`OR PAY ${money(inv.total - disc)} BY ${date(by)}, LESS ${termsText(inv).split(" NET")[0]}`, 62, true) + " " +
+				pad(money(-disc), 12, true));
+		}
+		if (inv.discount_taken > 0) f.put(0, end + 3, pad("EARLY PAYMENT DISCOUNT TAKEN", 62, true) + " " + pad(money(-inv.discount_taken), 12, true));
 	}
 	f.footer([
 		`PLEASE REMIT TO ${COMPANY.name}, ${COMPANY.address}, ${COMPANY.city}. QUOTE INVOICE ${inv.id} WITH YOUR PAYMENT.`,
