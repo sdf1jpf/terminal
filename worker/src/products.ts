@@ -98,29 +98,49 @@ async function checkVendor(db: D1Database, vendor: string): Promise<void> {
 	if (!row) throw new HttpError(422, "invalid", `vendor ${vendor} is not on file`, "vendor");
 }
 
+// adjustment records a change in a product's stock value at cost, for
+// the ledger to journal. It runs after the statement that made the change,
+// and only if that changed a row.
+function adjustment(db: D1Database, sku: string, quantity: number, oldCost: number, newCost: number, amount: number, user: string) {
+	return db.prepare(
+		`INSERT INTO stock_adjustments (sku, quantity, old_cost, new_cost, amount, at, by)
+		 SELECT ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1 AND ?5 <> 0`,
+	).bind(sku, quantity, oldCost, newCost, amount, new Date().toISOString(), user);
+}
+
 export async function createProduct(db: D1Database, f: ProductEdit, user: string): Promise<Product> {
 	await checkVendor(db, f.vendor);
-	const row = await db.prepare(
-		`INSERT INTO products (sku, description, unit_price, on_hand, reorder_point, status, vendor, unit_cost, version, updated, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT (sku) DO NOTHING RETURNING *`,
-	).bind(f.sku, f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, f.vendor, f.unit_cost, new Date().toISOString(), user)
-		.first<Product>();
+	const [inserted] = await db.batch<Product>([
+		db.prepare(
+			`INSERT INTO products (sku, description, unit_price, on_hand, reorder_point, status, vendor, unit_cost, version, updated, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT (sku) DO NOTHING RETURNING *`,
+		).bind(f.sku, f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, f.vendor, f.unit_cost, new Date().toISOString(), user),
+		adjustment(db, f.sku, f.on_hand, 0, f.unit_cost, f.on_hand * f.unit_cost, user),
+	]);
+	const row = inserted.results[0];
 	if (!row) throw new HttpError(422, "invalid", `product ${f.sku} is already on file`, "sku");
 	return row;
 }
 
 // updateProduct applies an edit if the product is still at version. The
-// SKU is the key and cannot change.
+// SKU is the key and cannot change. A change to the quantity on hand or the
+// unit cost is recorded as a stock adjustment.
 export async function updateProduct(db: D1Database, sku: string, f: ProductEdit, version: number, user: string): Promise<Product> {
 	await checkVendor(db, f.vendor);
-	const row = await db.prepare(
-		`UPDATE products SET description = ?, unit_price = ?, on_hand = ?, reorder_point = ?, status = ?, vendor = ?, unit_cost = ?,
-		     version = version + 1, updated = ?, updated_by = ?
-		 WHERE sku = ? AND version = ? RETURNING *`,
-	).bind(f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, f.vendor, f.unit_cost, new Date().toISOString(), user, sku, version)
-		.first<Product>();
+	const old = await getProduct(db, sku); // 404 if it is gone
+	if (old.version !== version) throw new HttpError(409, "conflict", "record was changed by another user");
+	const amount = f.on_hand * f.unit_cost - old.on_hand * old.unit_cost;
+	const [updated] = await db.batch<Product>([
+		db.prepare(
+			`UPDATE products SET description = ?, unit_price = ?, on_hand = ?, reorder_point = ?, status = ?, vendor = ?, unit_cost = ?,
+			     version = version + 1, updated = ?, updated_by = ?
+			 WHERE sku = ? AND version = ? AND on_hand = ? AND unit_cost = ? RETURNING *`,
+		).bind(f.description, f.unit_price, f.on_hand, f.reorder_point, f.status, f.vendor, f.unit_cost, new Date().toISOString(), user,
+			old.sku, version, old.on_hand, old.unit_cost),
+		adjustment(db, old.sku, f.on_hand - old.on_hand, old.unit_cost, f.unit_cost, amount, user),
+	]);
+	const row = updated.results[0];
 	if (row) return row;
-	await getProduct(db, sku); // 404 if it is gone
 	throw new HttpError(409, "conflict", "record was changed by another user");
 }
 

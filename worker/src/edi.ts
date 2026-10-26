@@ -22,10 +22,10 @@
 //	855 PO acknowledgment in the vendor accepts it and promises a ship date
 //	856 ship notice     in   the vendor has shipped it
 
-import { getCustomer } from "./data";
 import { HttpError } from "./http";
 import {
-	addLine, billInvoice, cancelInvoice, createInvoice, getInvoice, payInvoice, type Invoice,
+	addLine, addressOf, billInvoice, cancelInvoice, createInvoice, getInvoice, payInvoice, setAddress,
+	type Address, type Invoice,
 } from "./invoices";
 import type { Transaction } from "./activity";
 import type { StepResult } from "./jobs";
@@ -260,8 +260,17 @@ async function purchaseOrder(db: D1Database, partner: string, body: string[][]):
 	const dup = await db.prepare("SELECT id FROM invoices WHERE customer_id = ? AND po_number = ?").bind(partner, po).first<{ id: string }>();
 	if (dup) throw Object.assign(new EdiError(`duplicate PO ${po}: already on ${dup.id}`), { reference: `PO ${po} ${dup.id}` });
 
+	const shipTo = partyAddress(body, "ST");
 	const inv = await createInvoice(db, "EDI", partner, po);
 	try {
+		if (shipTo) {
+			try {
+				await setAddress(db, inv.id, "ship", shipTo);
+			} catch (e) {
+				if (e instanceof HttpError) throw new EdiError(`N1*ST ship-to: ${e.message}`);
+				throw e;
+			}
+		}
 		for (const l of lines) {
 			const n = l[1] || "?";
 			const qty = Number(l[2]);
@@ -280,6 +289,30 @@ async function purchaseOrder(db: D1Database, partner: string, body: string[][]):
 		throw e;
 	}
 	return `PO ${po} ${inv.id}`;
+}
+
+// partyAddress reads a party's name and address from its N1 loop: N1 with
+// the name, then N3 with the street and N4 with the city, state and zip.
+// It returns undefined when the party is not named.
+function partyAddress(body: string[][], code: string): Address | undefined {
+	const at = body.findIndex((s) => s[0] === "N1" && s[1] === code);
+	if (at < 0) return undefined;
+	const a: Address = { name: body[at][2] ?? "", address: "", city: "", state: "", zip: "" };
+	for (const s of body.slice(at + 1)) {
+		if (s[0] === "N3") a.address = s[1] ?? "";
+		else if (s[0] === "N4") Object.assign(a, { city: s[1] ?? "", state: s[2] ?? "", zip: (s[3] ?? "").slice(0, 5) });
+		else if (s[0] !== "N2" && s[0] !== "REF" && s[0] !== "PER") break;
+	}
+	return a;
+}
+
+// party is the N1 loop for an address: the inverse of partyAddress.
+export function party(code: string, a: Address, id = ""): (string | number)[][] {
+	return [
+		id ? ["N1", code, a.name, "92", id] : ["N1", code, a.name],
+		...(a.address ? [["N3", a.address]] : []),
+		["N4", a.city, a.state, a.zip],
+	];
 }
 
 // productID returns the SKU from a PO1 or IT1 segment's product ID pairs.
@@ -333,11 +366,11 @@ export async function fromEDIOrder(db: D1Database, inv: Invoice): Promise<boolea
 async function sendInvoice(db: D1Database, inv: Invoice): Promise<Interchange | undefined> {
 	if (!(await fromEDIOrder(db, inv))) return undefined;
 	const { lines } = await getInvoice(db, inv.id);
-	const cust = await getCustomer(db, inv.customer_id).catch(() => undefined);
 	const billed = new Date(inv.billed);
 	return send(db, inv.customer_id, "810", [
 		["BIG", ymd(billed), inv.id, "", inv.po_number],
-		["N1", "BT", cust?.name ?? "", "92", inv.customer_id],
+		...party("BT", addressOf(inv, "bill"), inv.customer_id),
+		...party("ST", addressOf(inv, "ship")),
 		...lines.map((l) => ["IT1", l.line, l.quantity, "EA", l.unit_price, "", "VP", l.sku]),
 		["TDS", inv.total * 100],
 		["CTT", lines.length],

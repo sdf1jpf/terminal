@@ -3,14 +3,15 @@
 //
 // Releasing an open invoice to the warehouse opens a shipment in PICKING
 // (P) and freezes the invoice's lines: its pick ticket lists them by bin.
-// Packing it (K) records the cartons and weight, and shipping it (S) the
-// carrier and tracking number. A customer that ordered by EDI is sent an
+// Packing it (K) records the cartons and weight, and the system chooses the
+// carrier from the ship-to, weight and value (routeFor). Shipping it (S)
+// records the tracking number. A customer that ordered by EDI is sent an
 // 856 ship notice. Only a shipped invoice can be billed (invoices.ts).
 // Cancelling a shipment that has not shipped puts the invoice back to work.
 
-import { fromEDIOrder, send, ymd, type Interchange } from "./edi";
+import { fromEDIOrder, party, send, ymd, type Interchange } from "./edi";
 import { HttpError } from "./http";
-import { getInvoice, type Invoice, type InvoiceLine } from "./invoices";
+import { addressOf, cityLine, getInvoice, type Invoice, type InvoiceLine } from "./invoices";
 import type { StepResult } from "./jobs";
 
 export interface Shipment {
@@ -27,11 +28,36 @@ export interface Shipment {
 	packed: string;
 	shipped: string;
 	shipped_by: string;
+	route: string; // why the carrier was chosen
 }
 
 export const shipStatusNames: Record<string, string> = { P: "PICKING", K: "PACKED", S: "SHIPPED" };
 
 export const carriers: Record<string, string> = { UPS: "UPS GROUND", FDX: "FEDEX FREIGHT", TRK: "COMPANY TRUCK" };
+
+// The routing guide. The company truck delivers from the warehouse to the
+// states around it, whatever the size. Elsewhere, anything heavy or bulky
+// goes LTL freight, and so does a valuable order, for its full liability
+// cover; the rest goes UPS ground.
+export const WAREHOUSE_STATE = "OH";
+export const TRUCK_STATES = ["OH", "IN", "KY", "MI", "PA", "WV"];
+export const FREIGHT_WEIGHT = 150; // pounds in all
+export const FREIGHT_CARTON = 70; // pounds in one carton
+export const FREIGHT_VALUE = 5000; // dollars
+
+export interface Route {
+	carrier: string;
+	reason: string;
+}
+
+// routeFor chooses the carrier for a shipment.
+export function routeFor(shipTo: { state: string }, cartons: number, weight: number, value: number): Route {
+	if (TRUCK_STATES.includes(shipTo.state)) return { carrier: "TRK", reason: `${shipTo.state} IS IN THE TRUCK AREA` };
+	if (weight >= FREIGHT_WEIGHT) return { carrier: "FDX", reason: `${weight} LB IS ${FREIGHT_WEIGHT} LB OR MORE` };
+	if (weight / cartons > FREIGHT_CARTON) return { carrier: "FDX", reason: `CARTONS OVER ${FREIGHT_CARTON} LB` };
+	if (value >= FREIGHT_VALUE) return { carrier: "FDX", reason: `VALUE $${value} NEEDS FULL COVER` };
+	return { carrier: "UPS", reason: `${weight} LB TO ${shipTo.state}, OUTSIDE THE TRUCK AREA` };
+}
 
 const bad = (field: string, message: string) => new HttpError(422, "invalid", message, field);
 const now = () => new Date().toISOString();
@@ -93,13 +119,16 @@ async function why(db: D1Database, id: string, want: string, doing: string): Pro
 	throw bad("status", `shipment ${id} is ${shipStatusNames[shipment.status].toLowerCase()} - it cannot be ${doing}`);
 }
 
-// pack records a picked shipment's cartons and weight.
+// pack records a picked shipment's cartons and weight, and routes it.
 export async function pack(db: D1Database, id: string, cartons: number, weight: number): Promise<Shipment> {
 	if (!Number.isInteger(cartons) || cartons < 1 || cartons > 999) throw bad("cartons", "cartons must be a whole number from 1 to 999");
 	if (!Number.isInteger(weight) || weight < 1 || weight > 99_999) throw bad("weight", "weight must be whole pounds from 1 to 99999");
+	const { shipment, invoice } = await getShipment(db, id);
+	const r = routeFor(addressOf(invoice, "ship"), cartons, weight, invoice.total);
 	const row = await db.prepare(
-		"UPDATE shipments SET status = 'K', cartons = ?2, weight = ?3, packed = ?4 WHERE id = ?1 AND status = 'P' RETURNING *",
-	).bind(id, cartons, weight, now()).first<Shipment>();
+		`UPDATE shipments SET status = 'K', cartons = ?2, weight = ?3, packed = ?4, carrier = ?5, route = ?6
+		 WHERE id = ?1 AND status = 'P' RETURNING *`,
+	).bind(shipment.id, cartons, weight, now(), r.carrier, r.reason).first<Shipment>();
 	return row ?? why(db, id, "P", "packed");
 }
 
@@ -111,15 +140,14 @@ function trackingNumber(carrier: string, id: string): string {
 	return `PRO${id.slice(3)}${digits(4)}`;
 }
 
-// ship sends a packed shipment with a carrier and, if its invoice came
-// from an 850, sends the customer an 856.
-export async function ship(db: D1Database, user: string, id: string, carrier: string): Promise<{ shipment: Shipment; edi?: Interchange }> {
-	carrier = carrier.trim().toUpperCase();
-	if (!carriers[carrier]) throw bad("carrier", `carrier must be one of ${Object.keys(carriers).join(", ")}`);
+// ship sends a packed shipment with the carrier chosen when it was packed
+// and, if its invoice came from an 850, sends the customer an 856.
+export async function ship(db: D1Database, user: string, id: string): Promise<{ shipment: Shipment; edi?: Interchange }> {
+	const { shipment: packed } = await getShipment(db, id);
 	const row = await db.prepare(
-		`UPDATE shipments SET status = 'S', carrier = ?2, tracking = ?3, shipped = ?4, shipped_by = ?5
-		 WHERE id = ?1 AND status = 'K' RETURNING *`,
-	).bind(id, carrier, trackingNumber(carrier, id), now(), user).first<Shipment>();
+		`UPDATE shipments SET status = 'S', tracking = ?3, shipped = ?4, shipped_by = ?5
+		 WHERE id = ?1 AND status = 'K' AND carrier = ?2 RETURNING *`,
+	).bind(packed.id, packed.carrier, trackingNumber(packed.carrier, packed.id), now(), user).first<Shipment>();
 	const shipment = row ?? (await why(db, id, "K", "shipped"));
 	const edi = await sendShipNotice(db, shipment);
 	return edi ? { shipment, edi } : { shipment };
@@ -144,6 +172,7 @@ async function sendShipNotice(db: D1Database, shp: Shipment): Promise<Interchang
 		["TD5", "", "2", shp.carrier, "", carriers[shp.carrier]],
 		["REF", "CN", shp.tracking],
 		["DTM", "011", ymd(at)],
+		...party("ST", addressOf(invoice, "ship")),
 		["HL", "2", "1", "O"],
 		["PRF", invoice.po_number, "", "", "", "", invoice.id],
 		...lines.flatMap((l, i) => [["HL", 3 + i, "2", "I"], ["LIN", l.line, "VP", l.sku], ["SN1", "", l.quantity, "EA"]]),
@@ -157,19 +186,20 @@ async function sendShipNotice(db: D1Database, shp: Shipment): Promise<Interchang
 // picking, its lines in bin order so the picker walks the aisles once.
 export async function pickTickets(db: D1Database): Promise<StepResult> {
 	const { results } = await db.prepare(
-		`SELECT s.id, s.invoice_id, s.customer_id, c.name, c.address, c.city, c.state, c.zip, i.po_number
-		 FROM shipments s JOIN invoices i ON i.id = s.invoice_id LEFT JOIN customers c ON c.id = s.customer_id
+		`SELECT s.id, s.invoice_id, s.customer_id, i.po_number, i.ship_name, i.ship_address, i.ship_city, i.ship_state, i.ship_zip
+		 FROM shipments s JOIN invoices i ON i.id = s.invoice_id
 		 WHERE s.status = 'P' ORDER BY s.id`,
-	).all<{ id: string; invoice_id: string; customer_id: string; name: string | null; address: string; city: string; state: string; zip: string; po_number: string }>();
+	).all<Pick<Shipment, "id" | "invoice_id" | "customer_id"> & Pick<Invoice, "po_number" | "ship_name" | "ship_address" | "ship_city" | "ship_state" | "ship_zip">>();
 	const lines: string[] = [];
 	for (const s of results) {
 		const { lines: items } = await getInvoice(db, s.invoice_id);
+		const to = addressOf(s, "ship");
 		lines.push(
 			"",
 			`PICK TICKET ${s.id}   INVOICE ${s.invoice_id}   PO ${s.po_number || "(NONE)"}`,
-			`  SHIP TO ${s.customer_id} ${s.name ?? "(NOT ON FILE)"}`,
-			`          ${s.address ?? ""}`,
-			`          ${s.city ?? ""}, ${s.state ?? ""} ${s.zip ?? ""}`,
+			`  SHIP TO ${s.customer_id} ${to.name}`,
+			...(to.address ? [`          ${to.address}`] : []),
+			`          ${cityLine(to)}`,
 			"",
 			"  BIN     SKU        DESCRIPTION                       QTY  PICKED",
 			"  ------- ---------- ------------------------------ ------  ------",

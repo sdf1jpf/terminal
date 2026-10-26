@@ -12,16 +12,19 @@ import { browse } from "./browse";
 import { chart } from "./charts";
 import { opconsole, schedule } from "./console";
 import { detail } from "./detail";
-import { fieldHelp } from "./fieldhelp";
+import { helpFor } from "./fieldhelp";
 import { edi, edidoc } from "./edi";
 import { help } from "./help";
-import { invoice, invoices } from "./invoices";
+import { invaddr, invoice, invoices } from "./invoices";
 import { joblog, jobs } from "./jobs";
 import { product, products } from "./products";
 import { po, pos, vendors } from "./purchasing";
+import { vendhist } from "./vendhist";
 import { shipment, shipments } from "./shipping";
 import { glaccount, ledger } from "./ledger";
 import { menu } from "./menu";
+import { monitor } from "./monitor";
+import { tablerow, tablerows, tables } from "./tables";
 import { report } from "./report";
 import { search } from "./search";
 import { skusearch } from "./skusearch";
@@ -34,9 +37,9 @@ export const requestKeys = [
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
-	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, skusearch, edi, edidoc,
-	pos, po, vendors, shipments, shipment, ledger, glaccount,
-	console: opconsole, schedule, spool, output, search, ask,
+	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
+	pos, po, vendors, vendhist, shipments, shipment, ledger, glaccount,
+	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask,
 };
 
 // Panels with a command line, by the name of its field. What is entered
@@ -69,9 +72,10 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 	if (body.v !== 1) throw bad('"v" must be 1');
 	const aid = str(body, "aid");
 	const ctx: Ctx = {
+		env,
 		db: env.DB,
+		tables: env.TABLES,
 		jobs: env.JOBS,
-		ai: env,
 		user,
 		rows: clamp(int(body, "rows"), MIN_ROWS, MAX_ROWS),
 		cols: clamp(int(body, "cols"), MIN_COLS, MAX_COLS),
@@ -107,7 +111,7 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 			const inp = input(body, aid);
 			const vals = Object.fromEntries([...inp.modified].filter((n) => n in inp.fields).map((n) => [n, inp.fields[n]]));
 			const h = { p: "help" as const, back: current, ...(Object.keys(vals).length ? { vals } : {}) };
-			next = fieldHelp(current, inp.cursorField) ? { ...h, field: inp.cursorField } : h;
+			next = (await helpFor(env.TABLES, current, inp.cursorField)) ? { ...h, field: inp.cursorField } : h;
 		} else if (aid === "PF24" && cmdField) {
 			next = retrieve(current, cmdField, session);
 		} else {

@@ -8,6 +8,10 @@
 // Billing (B) posts the total to the customer's account as an invoice
 // transaction. Marking it paid (P) posts the payment.
 //
+// Each invoice carries its own bill-to and ship-to address, copied from the
+// customer when it is opened. The ship-to can be changed until the invoice
+// is released to the warehouse, the bill-to until it is billed.
+//
 // Each change is one D1 batch, which runs as one transaction. Statements
 // that must happen together carry the same guard, evaluated against the
 // same state, or follow on with `changes() = 1`, which in SQLite is the
@@ -26,7 +30,38 @@ export interface Invoice {
 	created_by: string;
 	billed: string;
 	paid: string;
+	bill_name: string;
+	bill_address: string;
+	bill_city: string;
+	bill_state: string;
+	bill_zip: string;
+	ship_name: string;
+	ship_address: string;
+	ship_city: string;
+	ship_state: string;
+	ship_zip: string;
 }
+
+export interface Address {
+	name: string;
+	address: string;
+	city: string;
+	state: string;
+	zip: string;
+}
+
+export type AddressKind = "bill" | "ship";
+
+// addressOf returns an invoice's bill-to or ship-to address.
+export function addressOf<K extends AddressKind>(inv: Record<`${K}_${keyof Address}`, string>, kind: K): Address {
+	return {
+		name: inv[`${kind}_name`], address: inv[`${kind}_address`], city: inv[`${kind}_city`],
+		state: inv[`${kind}_state`], zip: inv[`${kind}_zip`],
+	};
+}
+
+// cityLine is the last line of an address: CITY, ST 12345.
+export const cityLine = (a: Address) => (a.city ? `${a.city}, ${a.state} ${a.zip}` : "");
 
 export interface InvoiceLine {
 	invoice_id: string;
@@ -44,7 +79,8 @@ const MAX_QTY = 99_999;
 const bad = (field: string, message: string) => new HttpError(422, "invalid", message, field);
 const now = () => new Date().toISOString();
 
-// createInvoice opens a new, empty invoice for an active customer.
+// createInvoice opens a new, empty invoice for an active customer, billed
+// and shipped to the customer's address.
 export async function createInvoice(db: D1Database, user: string, customerId: string, po = ""): Promise<Invoice> {
 	po = po.trim().toUpperCase();
 	if (po.length > 22) throw bad("po", "PO number is limited to 22 characters");
@@ -54,8 +90,12 @@ export async function createInvoice(db: D1Database, user: string, customerId: st
 	const [, inserted] = await db.batch<Invoice>([
 		db.prepare("UPDATE counters SET value = value + 1 WHERE name = 'invoice_id'"),
 		db.prepare(
-			`INSERT INTO invoices (id, customer_id, status, po_number, created, created_by)
-			 SELECT printf('INV%05d', value), ?, 'O', ?, ?, ? FROM counters WHERE name = 'invoice_id'
+			`INSERT INTO invoices (id, customer_id, status, po_number, created, created_by,
+			                      bill_name, bill_address, bill_city, bill_state, bill_zip,
+			                      ship_name, ship_address, ship_city, ship_state, ship_zip)
+			 SELECT printf('INV%05d', n.value), c.id, 'O', ?2, ?3, ?4,
+			        c.name, c.address, c.city, c.state, c.zip, c.name, c.address, c.city, c.state, c.zip
+			 FROM counters n, customers c WHERE n.name = 'invoice_id' AND c.id = ?1
 			 RETURNING *`,
 		).bind(customerId, po, now(), user),
 	]);
@@ -86,6 +126,48 @@ export async function setPO(db: D1Database, id: string, po: string): Promise<Inv
 		.bind(id, po).first<Invoice>();
 	if (row) return row;
 	await mustBeOpen(db, id);
+	throw new HttpError(409, "conflict", "record was changed by another user");
+}
+
+const reState = /^[A-Z]{2}$/;
+const reZip = /^[0-9]{5}$/;
+
+// checkAddress normalizes an address and applies the customer file's rules
+// to it. Its errors name the screen's fields: bname, baddr, bcity, bstate
+// and bzip for the bill-to, sname and so on for the ship-to.
+export function checkAddress(kind: AddressKind, a: Address): Address {
+	const up = (v: string) => (v ?? "").trim().toUpperCase();
+	const out = { name: up(a.name), address: up(a.address), city: up(a.city), state: up(a.state), zip: up(a.zip) };
+	const f = kind[0];
+	const what = kind === "bill" ? "bill-to" : "ship-to";
+	if (out.name === "") throw bad(f + "name", `${what} name is required`);
+	if (out.name.length > 30) throw bad(f + "name", `${what} name is limited to 30 characters`);
+	if (out.address.length > 30) throw bad(f + "addr", `${what} address is limited to 30 characters`);
+	if (out.city === "") throw bad(f + "city", `${what} city is required`);
+	if (out.city.length > 18) throw bad(f + "city", `${what} city is limited to 18 characters`);
+	if (!reState.test(out.state)) throw bad(f + "state", `${what} state must be a two letter code`);
+	if (!reZip.test(out.zip)) throw bad(f + "zip", `${what} zip code must be five digits`);
+	return out;
+}
+
+// setAddress changes an invoice's bill-to or ship-to address. The ship-to
+// is frozen once the invoice is released to the warehouse, which has
+// printed it on the pick ticket; the bill-to once it is billed.
+export async function setAddress(db: D1Database, id: string, kind: AddressKind, a: Address): Promise<Invoice> {
+	const v = checkAddress(kind, a);
+	const guard = kind === "ship" ? isOpen : "EXISTS (SELECT 1 FROM invoices WHERE id = ?1 AND status = 'O')";
+	const row = await db.prepare(
+		`UPDATE invoices SET ${kind}_name = ?2, ${kind}_address = ?3, ${kind}_city = ?4, ${kind}_state = ?5, ${kind}_zip = ?6
+		 WHERE id = ?1 AND ${guard} RETURNING *`,
+	).bind(id, v.name, v.address, v.city, v.state, v.zip).first<Invoice>();
+	if (row) return row;
+	const { invoice } = await getInvoice(db, id);
+	const field = kind[0] + "name";
+	if (invoice.status !== "O") {
+		throw bad(field, `invoice ${id} is ${statusNames[invoice.status].toLowerCase()} - its addresses can no longer be changed`);
+	}
+	const shp = await db.prepare("SELECT id FROM shipments WHERE invoice_id = ?").bind(id).first<{ id: string }>();
+	if (shp) throw bad(field, `invoice ${id} is released to the warehouse on ${shp.id} - cancel the shipment to change the ship-to`);
 	throw new HttpError(409, "conflict", "record was changed by another user");
 }
 

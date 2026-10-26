@@ -45,7 +45,7 @@ export async function newAsk(ctx: Ctx, back: State, q = ""): Promise<AskState> {
 
 async function answer(ctx: Ctx, s: AskState): Promise<void> {
 	s.top = 0;
-	const got = await askAI(ctx.ai, s.q ?? "");
+	const got = await askAI(ctx.env, s.q ?? "");
 	s.answer = got.answer;
 	s.refs = got.topics.filter((t) => t.go).slice(0, MAX_REFS).map((t) => ({ title: t.title, go: t.go! }));
 	if (got.error) {
@@ -76,7 +76,7 @@ export async function newExplain(ctx: Ctx, back: State & { msg?: string }, id: s
 	}
 	const s: AskState = { p: "ask", back, job: job.id, q: `${job.name} ${job.id} RC=${job.rc}` };
 	try {
-		s.answer = await explainJob(ctx.ai, job, output);
+		s.answer = await explainJob(ctx.env, job, output);
 		s.msg = "CUS1206I ANALYSIS BY THE HELP FACILITY - CHECK THE LISTING BEFORE YOU ACT";
 	} catch (e) {
 		if (!(e instanceof AiError)) throw e;

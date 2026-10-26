@@ -414,7 +414,7 @@ describe("activity and history screens", () => {
 		await t.send("ENTER");
 		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* PAYMENT  ${inv.id} +-\\$124 IBMUSER`));
 		expect(t.row(12)).toMatch(new RegExp(`^ +2 .* BILLED   ${inv.id} +\\$124 IBMUSER`));
-		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* SHIPPED  ${shipment.id} TRK PRO`));
+		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* SHIPPED  ${shipment.id} UPS 1Z`));
 		expect(t.row(14)).toMatch(new RegExp(`^ +4 .* RELEASED ${shipment.id} ${inv.id} +IBMUSER`));
 		expect(t.row(15)).toMatch(new RegExp(`^ +5 .* OPENED   ${inv.id} PO AUDIT-1`));
 
@@ -437,7 +437,7 @@ describe("activity and history screens", () => {
 
 		await t.fill("line", "3").send("ENTER");
 		expect(t.row(6)).toContain("SHIPPED");
-		expect(t.row(10)).toMatch(/CARRIER .* TRK +PRO\d+ +1 CTN 10 LB/);
+		expect(t.row(10)).toMatch(/CARRIER .* UPS +1Z\w+ +1 CTN 10 LB/);
 		await t.send("PF6");
 		expect(t.scr.map).toBe("CUSS02");
 		await t.send("PF3");
@@ -777,10 +777,10 @@ describe("invoice screens", () => {
 		expect(t.message).toBe("CUS0811E WEIGHT MUST BE WHOLE POUNDS FROM 1 TO 99999");
 		expect(t.scr.cursor).toEqual({ field: "weight" });
 		await t.fill("weight", "35").send("PF10");
-		expect(t.message).toMatch(/^CUS0807I SHP\d{5} PACKED: 2 CARTONS, 35 LB/);
-		await t.fill("carrier", "dhl").send("PF10");
-		expect(t.message).toBe("CUS0812E CARRIER MUST BE ONE OF UPS, FDX, TRK");
-		await t.fill("carrier", "ups").send("PF10");
+		expect(t.message).toMatch(/^CUS0807I SHP\d{5} PACKED: 2 CARTONS, 35 LB - ROUTED UPS - PF10 SHIPS IT$/);
+		expect(t.field("carrier")).toBeUndefined();
+		expect(t.row(9)).toContain("SHIPS VIA UPS GROUND - 35 LB TO TX, OUTSIDE THE TRUCK AREA");
+		await t.send("PF10");
 		expect(t.message).toMatch(/^CUS0808I SHP\d{5} SHIPPED VIA UPS 1Z\w+ - PF11 BILLS IT$/);
 		await t.send("PF4");
 		expect(t.scr.map).toBe("CUSI02");
@@ -880,6 +880,74 @@ describe("invoice screens", () => {
 		expect(t.message).toBe("CUS0510E PRODUCT ZZZ-1 IS NOT ON FILE");
 	});
 
+	it("changes an invoice's bill-to and ship-to on CUSI04", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2.1 122").send("ENTER");
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI02");
+		const id = t.row(4).match(/INV\d{5}/)![0];
+		const cust = await env.DB.prepare("SELECT * FROM customers WHERE id = '000122'").first<{ name: string; city: string }>();
+		expect(t.row(7)).toContain(`SHIP TO`);
+		expect(t.row(7)).toContain(cust!.name);
+		expect(t.row(t.scr.rows)).toContain("PF5=ADDRESS");
+
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSI04");
+		expect(t.field("bname")?.value).toBe(cust!.name);
+		expect(t.field("scity")?.value).toBe(cust!.city);
+		expect(t.scr.cursor).toEqual({ field: "bname" });
+
+		await t.fill("sname", "north yard", "saddr", "4 rail spur", "scity", "toledo", "sstate", "o").send("ENTER");
+		expect(t.message).toBe("CUS0521E SHIP-TO STATE MUST BE A TWO LETTER CODE");
+		expect(t.scr.cursor).toEqual({ field: "sstate" });
+		expect(t.field("sname")?.value).toBe("NORTH YARD");
+		await t.fill("sstate", "oh", "szip", "43604").send("ENTER");
+		expect(t.message).toBe(`CUS0520I SHIP-TO ADDRESS SAVED FOR ${id}`);
+		expect(t.field("scity")?.value).toBe("TOLEDO");
+		expect(t.field("bcity")?.value).toBe(cust!.city);
+
+		// PF1 explains a field.
+		t.cursorField = "szip";
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH01");
+		expect(t.row(1)).toContain("HELP - SHIP-TO ZIP");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI04");
+
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSI02");
+		expect(t.row(7)).toContain("NORTH YARD, 4 RAIL SPUR, TOLEDO, OH 43604");
+
+		// Released, the ship-to is frozen but the bill-to is not.
+		await t.fill("sku", "saf-glv", "qty", "1").send("ENTER");
+		await t.send("PF6");
+		expect(t.message).toMatch(/^CUS0515I .* RELEASED TO THE WAREHOUSE/);
+		await t.send("PF5");
+		expect(t.field("sname")).toBeUndefined();
+		expect(t.row(13)).toContain("NORTH YARD");
+		expect(t.row(12)).toMatch(/FROZEN - RELEASED TO THE WAREHOUSE ON SHP\d{5}/);
+		await t.fill("bname", "accounts payable").send("ENTER");
+		expect(t.message).toBe(`CUS0520I BILL-TO ADDRESS SAVED FOR ${id}`);
+		await t.send("PF5");
+		expect(t.message).toBe("CUS0000W PF5 IS NOT ACTIVE ON THIS SCREEN");
+		await t.send("PF6");
+		expect(t.message).toBe("CUS0524I BILL-TO RESET FROM CUSTOMER 000122");
+		expect(t.field("bname")?.value).toBe(cust!.name);
+	});
+
+	it("copies the bill-to to the ship-to with PF5", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "2.1 119").send("ENTER");
+		await t.send("PF5");
+		await t.send("PF5");
+		await t.fill("bname", "west plant", "bzip", "11111").send("PF5");
+		expect(t.message).toMatch(/^CUS0523I SHIP-TO SET TO THE BILL-TO ADDRESS/);
+		expect(t.field("sname")?.value).toBe("WEST PLANT");
+		expect(t.field("szip")?.value).toBe("11111");
+		// PF5 saves only the ship-to.
+		expect(t.field("bname")?.value).not.toBe("WEST PLANT");
+	});
+
 	it("will not open an invoice for a customer on hold", async () => {
 		const t = await Terminal.logon();
 		await t.fill("option", "2.1").send("ENTER");
@@ -968,6 +1036,33 @@ describe("purchasing screens", () => {
 		const after = (await env.DB.prepare("SELECT on_hand FROM products WHERE sku = 'STL-A36'").first<{ on_hand: number }>())!.on_hand;
 		expect(after).toBe(before + 6);
 
+		// PF5 shows the PO's history, newest first; a line opens what it concerns.
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSV04");
+		expect(t.field("vendor")?.value).toBe("V00004");
+		expect(t.field("po")?.value).toBe(id);
+		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* RECEIVED ${id} IN FULL`));
+		expect(t.row(12)).toMatch(new RegExp(`^ +2 .* RECEIPT  ${id} 4 STL-A36 +\\$984 IBMUSER`));
+		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* RECEIPT  ${id} 2 STL-A36 +\\$492 IBMUSER`));
+		expect(t.row(14)).toMatch(new RegExp(`^ +4 .* EDI OUT  850 SENT ${id}`));
+		expect(t.row(15)).toMatch(new RegExp(`^ +5 .* SENT     ${id} +\\$1,476`));
+		expect(t.row(16)).toMatch(new RegExp(`^ +6 .* OPENED   ${id} `));
+		await t.fill("line", "9").send("ENTER");
+		expect(t.message).toBe("CUS0246E LINE MUST BE 1 TO 6");
+		await t.fill("line", "4").send("ENTER");
+		expect(t.scr.map).toBe("CUSE02");
+		await t.send("PF3");
+		await t.fill("line", "2").send("ENTER");
+		expect(t.scr.map).toBe("CUSV02");
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSV04");
+		await t.fill("po", "").send("ENTER");
+		expect(t.field("po")?.value ?? "").toBe("");
+		await t.fill("po", "99999").send("ENTER");
+		expect(t.message).toBe("CUS0722E PO99999 IS NOT A PURCHASE ORDER FROM V00004");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSV02");
+
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSV01");
 		expect(t.row(9)).toContain(`${id} V00004 RECEIVED`);
@@ -976,6 +1071,25 @@ describe("purchasing screens", () => {
 		await t.fill("sel:V00001", "s").send("ENTER");
 		expect(t.scr.map).toBe("CUSV01");
 		expect(t.field("vendor")?.value).toBe("V00001");
+	});
+
+	it("shows a vendor's history from the vendor list and the menu", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "3.3").send("ENTER");
+		await t.fill("sel:V00003", "h").send("ENTER");
+		expect(t.scr.map).toBe("CUSV04");
+		expect(t.row(4)).toContain("ALLIED FLUID POWER");
+		expect(t.field("po")?.value ?? "").toBe("");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSV03");
+		await t.send("PF3");
+		await t.send("PF3");
+		await t.fill("option", "3.4 9").send("ENTER");
+		expect(t.scr.map).toBe("CUSV04");
+		expect(t.message).toBe("CUS0701E VENDOR V00009 NOT FOUND");
+		expect(t.scr.cursor).toEqual({ field: "vendor" });
+		await t.fill("vendor", "2").send("ENTER");
+		expect(t.row(4)).toContain("GREAT LAKES BEARING CO");
 	});
 
 	it("shows the vendor, cost and stock on order on the product", async () => {
@@ -1169,8 +1283,8 @@ describe("ledger screens", () => {
 		expect(t.message).toMatch(/^\$HASP100 CUSTRIAL ON INTRDR - JOB\d{5} SUBMITTED/);
 		await journal(env.DB, "TEST");
 		await t.send("ENTER");
-		expect(t.row(19)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
-		expect(t.row(20)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
+		expect(t.row(20)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
+		expect(t.row(21)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
 
 		await t.send("PF5");
 		expect(t.message).toBe("CUS0903W PRESS PF5 AGAIN TO RUN THE MONTH-END CLOSE AND CLOSE THE PERIOD");

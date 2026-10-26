@@ -252,6 +252,12 @@ GET    /v1/spool/{id}           an output group and its lines
 GET    /v1/spool/{id}/print     paged for the printer, as text/plain
 POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 DELETE /v1/spool/{id}           purge it, and its job
+GET    /v1/tables               the system tables, with their row counts
+GET    /v1/tables/{t}           a table's columns and rows
+PUT    /v1/tables/{t}/{key}     add or change a row
+DELETE /v1/tables/{t}/{key}     delete a row
+DELETE /v1/tables/{t}           put a table back to its defaults
+GET    /v1/monitor?minutes=N    transaction statistics: 5, 15, 60, 240 or 1440 minutes
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -325,7 +331,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox |
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
-| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output |
+| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
 | T, X | | Tutorial, log off |
 
 A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
@@ -435,6 +441,14 @@ An invoice goes OPEN, then BILLED, then PAID:
   line. Typing part of a SKU or description with a `?` (such as `GLOVE?`) and
   pressing Enter searches too, and so does a SKU that is not on file but
   matches some products.
+- **Addresses:** every invoice has its own bill-to and ship-to, copied from
+  the customer when it is opened (an EDI order's `N1*ST` loop sets the
+  ship-to). PF5 shows them on **INVOICE ADDRESSES** (CUSI04): overtype one and
+  press Enter, PF5 copies the bill-to to the ship-to, and PF6 resets them
+  from the customer. The ship-to can be changed until the invoice is released
+  to the warehouse, the bill-to until it is billed. The ship-to goes on the
+  invoice screen, the pick ticket, the shipment and the 856; both go on the
+  810. Changing the customer's address later does not change its invoices.
 - **PF10 bills it:** the total is posted to the customer's account as an
   invoice (`I`) transaction, and the lines can no longer be changed.
 - **PF11 marks it paid:** a payment (`P`) for the total is posted.
@@ -502,6 +516,12 @@ which also shows how many are on order.
   press Enter, or PF11 (or `R` on the list) to receive everything still due.
   Each receipt is kept for the ledger. The PO is `RECEIVED` once every line
   is in.
+- **History:** **VENDOR HISTORY** (CUSV04) numbers a vendor's events, newest
+  first: POs opened, sent and received in full, each receipt at cost, and
+  the EDI interchanges with its system. Fill in `PURCHASE ORDER` to see one
+  PO's events. Type a line number to open that PO or interchange. You can
+  open the history from option 3.4 (`3.4 V00002 PO00003`), with `H` beside a
+  vendor, or with PF5 on a PO.
 
 PF6 on the list submits **CUSREORD**, which orders every active product at
 or below its reorder point back up to twice that point, counting what is
@@ -521,11 +541,19 @@ just one status) opens **SHIPPING** (CUSS01), and `S` beside a shipment
 opens **SHIPMENT** (CUSS02): its pick ticket, with each line's bin, in bin
 order.
 
-- **Pack:** type the cartons and weight and press PF10 (`PACKED`).
-- **Ship:** type the carrier (`UPS`, `FDX` or `TRK`) and press PF10
-  (`SHIPPED`, with a tracking number). A customer that ordered by EDI is
-  sent an **856 ship notice** with the cartons, carrier, tracking number and
-  lines.
+- **Pack:** type the cartons and weight and press PF10 (`PACKED`). The
+  system then picks the carrier from the invoice's ship-to, the weight and
+  the order's value, and the screen shows which one and why:
+  - `TRK` (company truck) when the ship-to is in the truck area: the
+    warehouse's state (OH) and IN, KY, MI, PA, WV.
+  - `FDX` (FedEx Freight) elsewhere for 150 lb or more, any carton over
+    70 lb, or an order of $5,000 or more.
+  - `UPS` ground for everything else.
+
+  The rules are `routeFor` in `worker/src/shipping.ts`.
+- **Ship:** press PF10 (`SHIPPED`, with a tracking number). A customer that
+  ordered by EDI is sent an **856 ship notice** with the cartons, carrier,
+  tracking number and lines.
 - **Bill:** PF11 on the shipment, or PF10 on the invoice. Billing an
   invoice that has not shipped is refused.
 
@@ -549,6 +577,11 @@ The ledger is fed in batch from the subledgers:
 | Payment posted | 1000 Cash | 1200 Accounts receivable |
 | Cost of a billed invoice (at product unit cost) | 5000 Cost of goods sold | 1300 Inventory |
 | Goods received on a purchase order | 1300 Inventory | 2000 Accounts payable |
+| Stock gained by hand (a new product's stock, or a higher on hand or unit cost on the product screen) | 1300 Inventory | 5100 Inventory adjustments |
+| Stock lost by hand (a lower on hand or unit cost) | 5100 Inventory adjustments | 1300 Inventory |
+
+Each hand edit that changes the stock's value at cost is recorded in
+`stock_adjustments`, and the product screen's message shows the amount.
 
 The first run also posts opening balances against 3000 Retained earnings
 for the customer balances and the stock that were on file before the
@@ -678,6 +711,46 @@ purge as `$HASP250`. Purging a job's output removes the job from the batch
 job list too. `PRT1` is simulated: `GET /v1/spool/{id}/print` returns the
 listing paged for it, 60 lines to a page with a heading and a form feed
 between pages.
+
+## Transaction monitor
+
+Every request the Worker answers is timed and written to
+[Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/)
+(dataset `customer_transactions`). A screen request counts as the transaction
+of the screen it sends back (`CUSM00`, `CUSO01`), an API call as its route
+(`GET /v1/customers/:id`).
+
+Menu option 5.5 (or `MONITOR`) opens the **TRANSACTION MONITOR** (CUSO03),
+like CICS statistics: the total, transactions per minute, average and
+maximum response time and abends (status 500 and up) for the window, then
+by transaction with count, rate, average, 95th percentile and maximum. PF6
+switches to the rate over time with a bar per interval, PF10 and PF11
+shorten and lengthen the window (5 minutes to 24 hours), and the screen
+refreshes every 30 seconds. `GET /v1/monitor` returns the same figures.
+
+Writing needs only the binding. Reading uses the Analytics Engine SQL API,
+which needs an API token with **Account → Account Analytics → Read**, set as
+a Worker secret: `cd worker && npx wrangler secret put AE_API_TOKEN`. Until
+it is set, the screen says so and `GET /v1/monitor` answers 503.
+
+## System tables
+
+Small reference tables live in [Workers KV](https://developers.cloudflare.com/kv/)
+(namespace `customer-api-tables`, binding `TABLES`) so every request can read
+them from the edge cache:
+
+| Table | What it holds |
+| --- | --- |
+| `CARRIER` | Carriers: priority, service states, weight, carton and order value limits, base and per-pound charge, transit days. Carriers are tried by priority and the first whose limits all hold takes the order; the defaults are the shipping desk's routing (truck in OH IN KY MI PA WV, UPS up to 149 lb, 70 lb a carton and $4,999, FedEx Freight otherwise). |
+| `TAXCODE` | Sales tax rate by ship-to state, and whether freight is taxed. |
+| `HELP` | PF1 help text by `panel.field` (`BROWSE.FILTER`) or field name. A row replaces the built-in help for that field, keeping its list of valid values, or adds help where there is none. |
+
+Menu option 5.6 (or `TABLES`) opens **SYSTEM TABLES** (CUSO04). `S` shows a
+table's rows (CUSO05), where `U` changes a row (CUSO06), `D` deletes one,
+PF5 adds one and PF9 twice puts the table back to its defaults. Changes are
+logged on SYSLOG (`CUS0801I`-`CUS0803I`). A table nobody has changed is not
+stored and reads as its defaults. KV is eventually consistent, so another
+location can see the old row for up to a minute.
 
 ## Printing a screen
 

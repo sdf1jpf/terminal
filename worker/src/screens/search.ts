@@ -66,7 +66,7 @@ async function resolve(ctx: Ctx, s: SearchState): Promise<void> {
 	if (!forced && (!/\s/.test(text) || (await hits(ctx, s)).length > 0)) return;
 	try {
 		const hint = s.type ? `${hitTypes[s.type as HitType]}S: ` : "";
-		const { filter, also } = await naturalSearch(ctx.ai, hint + text.toLowerCase());
+		const { filter, also } = await naturalSearch(ctx.env, hint + text.toLowerCase());
 		if (s.type) filter.type = s.type as HitType;
 		s.filter = filter;
 		if (also.length > 0) s.also = also;

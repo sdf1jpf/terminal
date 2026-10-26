@@ -23,7 +23,8 @@
 //	GET    /v1/invoices?customer=X  invoices, newest first
 //	POST   /v1/invoices             open one: {"customer_id", "po_number"}
 //	GET    /v1/invoices/{id}        -> {"invoice", "lines"}
-//	PUT    /v1/invoices/{id}        change the PO number: {"po_number"}
+//	PUT    /v1/invoices/{id}        change the PO number or addresses: {"po_number", "bill_to", "ship_to"},
+//	                                each address {"name", "address", "city", "state", "zip"}
 //	DELETE /v1/invoices/{id}        cancel an open invoice, returning its stock
 //	POST   /v1/invoices/{id}/lines  add a line: {"sku", "quantity"}
 //	PUT    /v1/invoices/{id}/lines/{n}   change its quantity: {"quantity"}
@@ -47,8 +48,8 @@
 //	POST   /v1/shipments            release an open invoice to the warehouse: {"invoice_id"}
 //	GET    /v1/shipments/{id}       -> {"shipment", "invoice", "lines"}
 //	DELETE /v1/shipments/{id}       cancel one that has not shipped
-//	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}
-//	POST   /v1/shipments/{id}/ship  {"carrier"}: UPS, FDX or TRK; sends an 856 for EDI orders
+//	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}; the system chooses the carrier ("carrier", "route")
+//	POST   /v1/shipments/{id}/ship  with the carrier chosen at packing; sends an 856 for EDI orders
 //	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
 //	GET    /v1/ledger/periods       accounting periods, newest first
 //	GET    /v1/ledger/accounts/{n}?period=X   an account's journal entries in a period
@@ -65,6 +66,12 @@
 //	GET    /v1/spool/{id}/print     paged for the printer, as text
 //	POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 //	DELETE /v1/spool/{id}           purge it
+//	GET    /v1/tables               the system tables (KV), with their row counts
+//	GET    /v1/tables/{t}           a table's columns and rows
+//	PUT    /v1/tables/{t}/{key}     add or change a row
+//	DELETE /v1/tables/{t}/{key}
+//	DELETE /v1/tables/{t}           put a table back to its defaults
+//	GET    /v1/monitor?minutes=N    transaction statistics (Analytics Engine)
 //
 // A cron trigger runs the job scheduler every minute (scheduler.ts), and
 // keeps the HELP facility's Vectorize index current (ai.ts).
@@ -72,22 +79,28 @@
 // Routing is Hono. Everything except health is behind Cloudflare Access,
 // applied per route by the signedOn middleware (auth.ts). The browser
 // terminal at / is static assets (public/) and never reaches this code.
+// Every request is timed and written to the transaction monitor
+// (monitor.ts).
 
 import { Hono, type MiddlewareHandler } from "hono";
 import { AiError, ask, describe, explainJob, naturalSearch } from "./ai";
+import { routePath } from "hono/route";
 import { customerHistory, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, int, json, noContent, readJSON, str } from "./http";
 import {
-	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
+	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setAddress, setPO,
+	type Address,
 } from "./invoices";
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
 import { recent } from "./syslog";
+import { record, stats } from "./monitor";
+import { deleteRow, listTables, putRow, readTable, resetTable, sorted, table } from "./systables";
 import { filterSearch, hitTypes, search, type HitType } from "./search";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, searchProducts, updateProduct } from "./products";
 import {
@@ -106,11 +119,15 @@ export interface Env {
 	JOB_RUNNER: Workflow<JobMessage>;
 	AI: Ai; // Workers AI, for the HELP facility (ai.ts)
 	VECTORIZE: Vectorize; // the customer-help index: help topics and products by meaning
+	TABLES: KVNamespace; // the system tables (systables.ts)
+	TXN?: AnalyticsEngineDataset; // the transaction monitor (monitor.ts)
+	CF_ACCOUNT_ID?: string; // for the Analytics Engine SQL API
+	AE_API_TOKEN?: string; // secret: an API token with Account Analytics Read
 }
 
 export { JobRunner } from "./jobs";
 
-type App = { Bindings: Env; Variables: { user: string } };
+type App = { Bindings: Env; Variables: { user: string; tran?: string; terminal?: string } };
 
 // signedOn verifies the Access JWT and sets "user" to the logged-on userid,
 // or throws 401. It runs per route, so unknown paths and wrong methods get
@@ -130,13 +147,28 @@ app.onError((e) => {
 });
 app.notFound(() => errorResponse(new HttpError(404, "not_found", "no such endpoint")));
 
+// Time every request for the transaction monitor. A screen request is the
+// transaction of the screen it sends back; an API request is its route.
+app.use("*", async (c, next) => {
+	const start = Date.now();
+	await next();
+	const route = routePath(c);
+	const tran = c.get("tran") ?? (route === "*" || route === "/*" ? "UNKNOWN" : `${c.req.method} ${route}`);
+	const kind = c.get("tran") ? "SCREEN" : "API";
+	record(c.env, { tran, kind, user: c.get("user") ?? "", terminal: c.get("terminal") ?? "", ms: Date.now() - start, status: c.res.status });
+});
+
 app.get("/v1/health", () => json(200, { status: "ok" }));
 
 app.post("/v1/session", signedOn, (c) => json(201, { userid: c.get("user") }));
 
-app.post("/v1/screen", signedOn, async (c) =>
-	json(200, await screen(c.env, c.get("user"), new URL(c.req.url), await readJSON(c.req.raw, requestKeys))),
-);
+app.post("/v1/screen", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, requestKeys);
+	c.set("terminal", typeof body.terminal === "string" ? body.terminal : "");
+	const res = await screen(c.env, c.get("user"), new URL(c.req.url), body);
+	c.set("tran", "screen" in res ? res.screen.map : "LOGOFF");
+	return json(200, res);
+});
 
 app.get("/v1/customers", signedOn, async (c) => {
 	const q = (k: string) => c.req.query(k) ?? "";
@@ -209,8 +241,14 @@ app.post("/v1/invoices", signedOn, async (c) => {
 });
 app.get("/v1/invoices/:id", signedOn, async (c) => json(200, await getInvoice(c.env.DB, c.req.param("id").toUpperCase())));
 app.put("/v1/invoices/:id", signedOn, async (c) => {
-	const body = await readJSON(c.req.raw, ["po_number"]);
-	return json(200, await setPO(c.env.DB, c.req.param("id").toUpperCase(), str(body, "po_number")));
+	const body = await readJSON(c.req.raw, ["po_number", "bill_to", "ship_to"]);
+	const id = c.req.param("id").toUpperCase();
+	const addrs = (["bill", "ship"] as const).map((kind) => [kind, address(body, `${kind}_to`)] as const);
+	let inv = "po_number" in body || addrs.every(([, a]) => !a)
+		? await setPO(c.env.DB, id, str(body, "po_number"))
+		: (await getInvoice(c.env.DB, id)).invoice;
+	for (const [kind, a] of addrs) if (a) inv = await setAddress(c.env.DB, id, kind, a);
+	return json(200, inv);
 });
 app.delete("/v1/invoices/:id", signedOn, async (c) => {
 	await cancelInvoice(c.env.DB, c.req.param("id").toUpperCase());
@@ -230,6 +268,22 @@ app.delete("/v1/invoices/:id/lines/:line", signedOn, async (c) => {
 });
 app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+
+// address reads an optional address object from a request body.
+function address(body: Record<string, unknown>, key: string): Address | undefined {
+	const v = body[key];
+	if (v === undefined) return undefined;
+	if (typeof v !== "object" || v === null || Array.isArray(v)) {
+		throw new HttpError(400, "bad_request", `invalid request body: "${key}" must be an object`);
+	}
+	const a = v as Record<string, unknown>;
+	for (const k of Object.keys(a)) {
+		if (!["name", "address", "city", "state", "zip"].includes(k)) {
+			throw new HttpError(400, "bad_request", `invalid request body: unknown field "${key}.${k}"`);
+		}
+	}
+	return { name: str(a, "name"), address: str(a, "address"), city: str(a, "city"), state: str(a, "state"), zip: str(a, "zip") };
+}
 
 function lineNumber(s: string): number {
 	if (!/^\d{1,5}$/.test(s)) throw new HttpError(404, "not_found", "invoice line not found");
@@ -294,8 +348,7 @@ app.post("/v1/shipments/:id/pack", signedOn, async (c) => {
 	return json(200, await pack(c.env.DB, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
 });
 app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
-	const body = await readJSON(c.req.raw, ["carrier"]);
-	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase(), str(body, "carrier")));
+	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase()));
 });
 
 app.get("/v1/ledger", signedOn, async (c) => json(200, await trialBalance(c.env.DB, c.req.query("period") ?? "")));
@@ -353,6 +406,30 @@ app.delete("/v1/spool/:id", signedOn, async (c) => {
 	return noContent();
 });
 
+app.get("/v1/tables", signedOn, async (c) => json(200, await listTables(c.env.TABLES)));
+app.get("/v1/tables/:table", signedOn, async (c) => {
+	const name = c.req.param("table").toUpperCase();
+	const t = table(name);
+	const { rows, custom } = await readTable(c.env.TABLES, name);
+	const columns = t.columns.map(({ name, label, kind, len, lines, min, max }) => ({ name, label, kind, len, lines, min, max }));
+	return json(200, { name, title: t.title, key: t.key.label, columns, custom, rows: sorted(rows) });
+});
+app.put("/v1/tables/:table/:key", signedOn, async (c) => {
+	const t = table(c.req.param("table"));
+	const body = await readJSON(c.req.raw, t.columns.map((col) => col.name));
+	return json(200, await putRow(c.env.TABLES, c.env.DB, c.get("user"), c.req.param("table"), c.req.param("key"), body));
+});
+app.delete("/v1/tables/:table/:key", signedOn, async (c) => {
+	await deleteRow(c.env.TABLES, c.env.DB, c.get("user"), c.req.param("table"), c.req.param("key"));
+	return noContent();
+});
+app.delete("/v1/tables/:table", signedOn, async (c) => {
+	await resetTable(c.env.TABLES, c.env.DB, c.get("user"), c.req.param("table"));
+	return noContent();
+});
+
+app.get("/v1/monitor", signedOn, async (c) => json(200, await stats(c.env, Number(c.req.query("minutes") ?? 15))));
+
 // A known path with a method it does not take is 405, not 404. Registered
 // after the real routes, so it only runs when none of them matched.
 for (const path of [
@@ -400,6 +477,10 @@ for (const path of [
 	"/v1/spool",
 	"/v1/spool/:id",
 	"/v1/spool/:id/print",
+	"/v1/tables",
+	"/v1/tables/:table",
+	"/v1/tables/:table/:key",
+	"/v1/monitor",
 ]) {
 	app.all(path, (c) => {
 		throw new HttpError(405, "method_not_allowed", `${c.req.method} is not allowed on ${c.req.path.replace(/\/+$/, "")}`);

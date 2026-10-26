@@ -1,4 +1,4 @@
-import { fieldHelp, fieldValues, type Value } from "./fieldhelp";
+import { fieldValues, helpFor, type Value } from "./fieldhelp";
 import { newAsk } from "./ask";
 import { header, keys, message, newScreen, pad, type Ctx } from "./screen";
 import { pf, withFill, type HelpState, type Next, type Program } from "./program";
@@ -31,7 +31,7 @@ export const keyRows = [
 
 export const help: Program<HelpState> = {
 	async render(ctx, h) {
-		const fh = h.field ? fieldHelp(h.back, h.field) : undefined;
+		const fh = h.field ? await helpFor(ctx.tables, h.back, h.field) : undefined;
 		if (fh) {
 			const scr = newScreen(ctx, "CUSH01");
 			header(scr, ctx, "HELP - " + fh.title);
@@ -83,7 +83,7 @@ export const help: Program<HelpState> = {
 		h.msg = h.errSel = undefined;
 		if (h.field && input.aid === pf(1)) return { p: "help", back: h.back, vals: h.vals };
 		if (!h.field && input.aid === pf(5)) return newAsk(ctx, h.back);
-		const fh = h.field ? fieldHelp(h.back, h.field) : undefined;
+		const fh = h.field ? await helpFor(ctx.tables, h.back, h.field) : undefined;
 		const values = fh ? await fieldValues(ctx, fh, h.back) : [];
 		if (h.field && values.length > 0) {
 			const rows = listRows(ctx, fh!.lines.length);

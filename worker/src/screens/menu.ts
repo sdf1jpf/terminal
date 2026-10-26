@@ -8,6 +8,7 @@ import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
 import { newLedger } from "./ledger";
 import { find } from "./search";
+import { newVendHist } from "./vendhist";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program, type State } from "./program";
 
@@ -37,7 +38,7 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "ORDERS", desc: "Invoices, shipping, EDI", sub: "2" },
 			{ key: "3", name: "INVENTORY", desc: "Products, purchasing, vendors", sub: "3" },
 			{ key: "4", name: "ACCOUNTING", desc: "Ledger, close, dunning, credit", sub: "4" },
-			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, schedule, output", sub: "5" },
+			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, output, monitor, tables", sub: "5" },
 			{
 				key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys; HELP and a question", aliases: ["T", "HELP", "ASK"],
 				go: (ctx, m, _arg, rest) => (rest ? newAsk(ctx, m, rest) : { p: "help", back: m }),
@@ -78,6 +79,10 @@ const menus: Record<string, Menu> = {
 			{ key: "1", name: "PRODUCTS", desc: "Products and stock", go: (_ctx, m, arg) => ({ p: "products", back: m, filter: arg }) },
 			{ key: "2", name: "PURCHASING", desc: "Purchase orders", aliases: ["P", "PO"], go: (_ctx, m, arg) => newPOs(m, arg) },
 			{ key: "3", name: "VENDORS", desc: "Vendor list", go: (_ctx, m) => ({ p: "vendors", back: m }) },
+			{
+				key: "4", name: "VHISTORY", desc: "Vendor and PO history", aliases: ["VH", "POHIST"],
+				go: (_ctx, m, arg, rest) => newVendHist(m, arg, rest.split(/\s+/)[1] ?? ""),
+			},
 		],
 	},
 	"4": {
@@ -111,6 +116,8 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "CONSOLE", desc: "Operator console, SYSLOG", aliases: ["O", "OPERATOR", "LOG", "SYSLOG"], go: (_ctx, m) => ({ p: "console", back: m }) },
 			{ key: "3", name: "SCHEDULE", desc: "Job schedule", go: (_ctx, m) => ({ p: "schedule", back: m }) },
 			{ key: "4", name: "HELD", desc: "Held output, reprint", aliases: ["H", "SPOOL", "OUTPUT"], go: (_ctx, m, arg) => ({ p: "spool", back: m, filter: arg }) },
+			{ key: "5", name: "MONITOR", desc: "Transaction rates, response times", aliases: ["STATS", "CEMT"], go: (_ctx, m) => ({ p: "monitor", back: m }) },
+			{ key: "6", name: "TABLES", desc: "Carrier rates, tax codes, help text", aliases: ["SYSTABLES"], go: (_ctx, m) => ({ p: "tables", back: m }) },
 		],
 	},
 };

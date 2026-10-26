@@ -1,8 +1,8 @@
 import { getCustomer } from "../data";
 import type { Customer } from "../customer";
 import {
-	addLine, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
-	statusNames, type Invoice, type InvoiceLine,
+	addLine, addressOf, cancelInvoice, changeLine, cityLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice,
+	setAddress, setPO, statusNames, type Address, type AddressKind, type Invoice, type InvoiceLine,
 } from "../invoices";
 import { bill } from "../edi";
 import { release, shipmentFor, shipStatusNames, type Shipment } from "../shipping";
@@ -10,14 +10,15 @@ import { searchProducts } from "../products";
 import { padID } from "./detail";
 import { newSkuSearch, searchText } from "./skusearch";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
-import { fail, isCode, pf, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
+import { fail, isCode, pf, type InvAddrState, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
 
 // CUSI01 INVOICE LIST lists invoices, newest first, for one customer or
 // all, with the customer's account position, opens new ones and marks
 // billed ones paid. CUSI02 INVOICE builds an open invoice from the
 // product file, bills it to the customer's account and marks it paid.
 // PF4 on an open invoice, or a ? or * in the SKU, searches the product
-// file (CUSI03, skusearch.ts) for the SKU to add.
+// file (CUSI03, skusearch.ts) for the SKU to add. PF5 shows the invoice's
+// bill-to and ship-to addresses (CUSI04), which can be changed there.
 // Open invoices show in white, billed ones in yellow and paid ones in green.
 
 const statusColor = (status: string): Color => (status === "O" ? "white" : status === "B" ? "yellow" : "green");
@@ -240,6 +241,8 @@ export const invoice: Program<InvoiceState> = {
 			if (inv.billed) when.push(`BILLED ${stamp(ctx, inv.billed).slice(0, 10)}`);
 			if (inv.paid) when.push(`PAID ${stamp(ctx, inv.paid).slice(0, 10)}`);
 			scr.text(6, right(scr, 44), lpad(when.join("  "), 36), { color: "green" });
+			label(scr, 7, 4, dots("SHIP TO", 12));
+			value(scr, 7, 18, oneLine(addressOf(inv, "ship")).slice(0, scr.cols - 19));
 
 			if (open) {
 				label(scr, 8, 4, "ADD LINE:  SKU ===>");
@@ -274,12 +277,14 @@ export const invoice: Program<InvoiceState> = {
 
 		message(scr, msg);
 		keys(scr, open
-			? "ENTER=APPLY PF1=HELP PF3=EXIT PF4=FIND SKU PF6=SHIP PF7/8=SCROLL PF9=CANCEL"
+			? "PF1=HELP PF3=EXIT PF4=FIND SKU PF5=ADDRESS PF6=SHIP PF7/8=SCROLL PF9=CANCEL"
 			: released
-				? "PF1=HELP  PF3=EXIT  PF6=SHOW SHIPMENT  PF7/8=SCROLL  PF10=BILL  PF12=CANCEL"
+				? "PF1=HELP  PF3=EXIT  PF5=ADDRESS  PF6=SHOW SHIPMENT  PF7/8=SCROLL  PF10=BILL"
 			: inv?.status === "B"
-				? "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF11=MARK PAID  PF12=CANCEL"
-				: "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF12=CANCEL");
+				? "PF1=HELP  PF3=EXIT  PF5=ADDRESS  PF7=UP  PF8=DOWN  PF11=MARK PAID  PF12=CANCEL"
+			: inv
+				? "PF1=HELP  PF3=EXIT  PF5=ADDRESS  PF7=UP  PF8=DOWN  PF12=CANCEL"
+				: "PF1=HELP  PF3=EXIT  PF12=CANCEL");
 		if (s.errField && open) scr.cursorTo(s.errField);
 		else if (s.focus && open) scr.cursorTo(s.focus);
 		else if (open) scr.cursorTo("sku");
@@ -292,7 +297,7 @@ export const invoice: Program<InvoiceState> = {
 		// The keys that act on the invoice depend on its status: lines are
 		// changed only while it is open (O) and not released to the
 		// warehouse (R), and only a billed one can be paid.
-		const active: Record<string, string> = { ENTER: "O", PF4: "O", PF6: "OR", PF9: "O", PF10: "R", PF11: "B" };
+		const active: Record<string, string> = { ENTER: "O", PF4: "O", PF5: "ORBP", PF6: "OR", PF9: "O", PF10: "R", PF11: "B" };
 		if (active[input.aid]) {
 			const status = await getInvoice(ctx.db, s.id).then(
 				async ({ invoice }) => (invoice.status === "O" && (await shipmentFor(ctx.db, invoice.id)) ? "R" : invoice.status),
@@ -312,6 +317,8 @@ export const invoice: Program<InvoiceState> = {
 			case pf(4):
 				s.vals = { sku: (input.fields.sku ?? "").trim().toUpperCase(), qty: (input.fields.qty ?? "").trim() };
 				return newSkuSearch(s, s.vals.sku);
+			case pf(5):
+				return { p: "invaddr", back: s, id: s.id };
 			case pf(6): {
 				const shp = await shipmentFor(ctx.db, s.id);
 				if (shp && s.back.p === "shipment" && s.back.id === shp.id) return s.back;
@@ -355,6 +362,9 @@ export const invoice: Program<InvoiceState> = {
 		return s;
 	},
 };
+
+// oneLine is an address on one line: NAME, STREET, CITY, ST 12345.
+export const oneLine = (a: Address) => [a.name, a.address, cityLine(a)].filter(Boolean).join(", ");
 
 function shipLine(x: Shipment): string {
 	if (x.status === "S") return `SHIPPED ON ${x.id} VIA ${x.carrier} ${x.tracking}`;
@@ -462,3 +472,155 @@ async function apply(ctx: Ctx, s: InvoiceState, f: Record<string, string>, modif
 	if (done > 0) s.msg = `CUS0514I INVOICE ${s.id} UPDATED`;
 	return s;
 }
+
+// ---- CUSI04 INVOICE ADDRESSES ----
+
+// The address fields, by kind: bname, baddr, bcity, bstate and bzip for the
+// bill-to, sname and so on for the ship-to.
+const addrFields = ["name", "addr", "city", "state", "zip"] as const;
+const addrKeys: Record<(typeof addrFields)[number], keyof Address> = {
+	name: "name", addr: "address", city: "city", state: "state", zip: "zip",
+};
+
+function typedAddress(f: Record<string, string>, kind: AddressKind): Address {
+	const a = { name: "", address: "", city: "", state: "", zip: "" };
+	for (const k of addrFields) a[addrKeys[k]] = (f[kind[0] + k] ?? "").trim().toUpperCase();
+	return a;
+}
+
+export const invaddr: Program<InvAddrState> = {
+	async render(ctx, s) {
+		const scr = newScreen(ctx, "CUSI04");
+		header(scr, ctx, "INVOICE ADDRESSES");
+		let inv: Invoice | undefined;
+		let msg = s.msg ?? "";
+		try {
+			({ invoice: inv } = await getInvoice(ctx.db, s.id));
+		} catch (e) {
+			msg = isCode(e, "not_found") ? `CUS0504E INVOICE ${s.id} NOT FOUND` : fail(e);
+		}
+		const shp = inv ? await shipmentFor(ctx.db, inv.id) : undefined;
+		// The bill-to can be changed until the invoice is billed, the ship-to
+		// until it is released to the warehouse.
+		const editable: Record<AddressKind, boolean> = { bill: inv?.status === "O", ship: inv?.status === "O" && !shp };
+
+		label(scr, 4, 4, dots("INVOICE", 12));
+		scr.text(4, 18, s.id, { color: "white", bright: true });
+		if (inv) {
+			scr.text(4, 28, statusNames[inv.status], { color: statusColor(inv.status), bright: true });
+			const c = await customer(ctx, inv.customer_id);
+			label(scr, 5, 4, dots("CUSTOMER", 12));
+			value(scr, 5, 18, `${inv.customer_id} ${c?.name ?? "(NOT ON FILE)"}`);
+			if (c) {
+				label(scr, 17, 4, "CUSTOMER ADDRESS ON FILE:");
+				scr.text(17, 30, oneLine(c).slice(0, scr.cols - 31), { color: "green" });
+			}
+
+			const blocks: [AddressKind, number, string, string][] = [
+				["bill", 7, "BILL TO", "CAN BE CHANGED UNTIL THE INVOICE IS BILLED"],
+				["ship", 12, "SHIP TO", shp ? `FROZEN - RELEASED TO THE WAREHOUSE ON ${shp.id}` : "CAN BE CHANGED UNTIL IT IS RELEASED TO THE WAREHOUSE"],
+			];
+			for (const [kind, row, title, note] of blocks) {
+				const a = addressOf(inv, kind);
+				const v = (k: (typeof addrFields)[number]) => s.vals?.[kind[0] + k] ?? a[addrKeys[k]];
+				scr.text(row, 4, title, { color: "white", bright: true });
+				if (inv.status === "O") scr.text(row, 14, note, { color: editable[kind] ? "blue" : "yellow" });
+				label(scr, row + 1, 6, dots("NAME", 10));
+				label(scr, row + 2, 6, dots("ADDRESS", 10));
+				label(scr, row + 3, 6, dots("CITY", 10));
+				label(scr, row + 3, 37, "STATE");
+				label(scr, row + 3, 47, "ZIP");
+				const f = kind[0];
+				const at: [string, number, number, number][] = [
+					["name", row + 1, 18, 30], ["addr", row + 2, 18, 30], ["city", row + 3, 18, 18], ["state", row + 3, 43, 2], ["zip", row + 3, 51, 5],
+				];
+				for (const [k, r, col, len] of at) {
+					if (editable[kind]) {
+						scr.input(r, col, len, f + k, v(k as (typeof addrFields)[number]),
+							{ numeric: k === "zip", bright: s.errField === f + k });
+					} else {
+						value(scr, r, col, v(k as (typeof addrFields)[number]));
+					}
+				}
+			}
+		}
+
+		message(scr, msg);
+		keys(scr, editable.ship
+			? "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF5=COPY BILL-TO  PF6=RESET FROM CUSTOMER"
+			: editable.bill
+				? "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF6=RESET BILL-TO FROM CUSTOMER"
+				: "PF1=HELP  PF3=EXIT  PF12=CANCEL");
+		if (s.errField) scr.cursorTo(s.errField);
+		else if (editable.bill) scr.cursorTo("bname");
+		return scr;
+	},
+
+	async handle(ctx, s, input) {
+		s.msg = s.errField = s.vals = undefined;
+		const back = () => {
+			s.back.msg = undefined;
+			return s.back;
+		};
+		if (input.aid === pf(3) || input.aid === pf(12)) return back();
+
+		let inv: Invoice;
+		try {
+			({ invoice: inv } = await getInvoice(ctx.db, s.id));
+		} catch (e) {
+			s.msg = isCode(e, "not_found") ? `CUS0504E INVOICE ${s.id} NOT FOUND` : fail(e);
+			return s;
+		}
+		const shp = await shipmentFor(ctx.db, s.id);
+		const editable: Record<AddressKind, boolean> = { bill: inv.status === "O", ship: inv.status === "O" && !shp };
+		const typed = { bill: typedAddress(input.fields, "bill"), ship: typedAddress(input.fields, "ship") };
+		const changed = (kind: AddressKind) => editable[kind] && addrFields.some((k) => input.modified.has(kind[0] + k));
+
+		// save changes the addresses given, keeping what was typed if one fails.
+		const save = async (want: [AddressKind, Address][], ok: string): Promise<Next> => {
+			try {
+				for (const [kind, a] of want) await setAddress(ctx.db, s.id, kind, a);
+			} catch (e) {
+				s.vals = Object.fromEntries(Object.entries(input.fields).filter(([k]) => /^[bs](name|addr|city|state|zip)$/.test(k)));
+				for (const [kind, a] of want) for (const k of addrFields) s.vals[kind[0] + k] = a[addrKeys[k]];
+				if (isCode(e, "invalid")) {
+					s.errField = e.field;
+					s.msg = `CUS0521E ${e.message.toUpperCase()}`;
+				} else if (isCode(e, "conflict")) {
+					s.msg = `CUS0509E INVOICE ${s.id} WAS CHANGED BY ANOTHER USER - REVIEW AND RESUBMIT`;
+				} else {
+					s.msg = fail(e);
+				}
+				return s;
+			}
+			s.msg = ok;
+			return s;
+		};
+
+		switch (input.aid) {
+			case "ENTER": {
+				const want = (["bill", "ship"] as const).filter(changed).map((k) => [k, typed[k]] as [AddressKind, Address]);
+				if (want.length === 0) {
+					if (editable.bill) s.msg = "CUS0522I TYPE OVER AN ADDRESS AND PRESS ENTER TO SAVE IT";
+					return s;
+				}
+				return save(want, `CUS0520I ${want.map(([k]) => (k === "bill" ? "BILL-TO" : "SHIP-TO")).join(" AND ")} ADDRESS SAVED FOR ${s.id}`);
+			}
+			case pf(5):
+				if (!editable.ship) break;
+				return save([["ship", typed.bill]], `CUS0523I SHIP-TO SET TO THE BILL-TO ADDRESS FOR ${s.id}`);
+			case pf(6): {
+				if (!editable.bill) break;
+				const c = await customer(ctx, inv.customer_id);
+				if (!c) {
+					s.msg = `CUS0201E CUSTOMER ${inv.customer_id} NOT FOUND`;
+					return s;
+				}
+				const kinds = (["bill", "ship"] as const).filter((k) => editable[k]);
+				return save(kinds.map((k) => [k, c]), `CUS0524I ${kinds.length === 2 ? "ADDRESSES" : "BILL-TO"} RESET FROM CUSTOMER ${c.id}`);
+			}
+		}
+		s.msg = invalidKey(input.aid);
+		return s;
+	},
+};
