@@ -1,4 +1,5 @@
 import { fieldValues, helpFor, type Value } from "./fieldhelp";
+import { newAsk } from "./ask";
 import { header, keys, message, newScreen, pad, type Ctx } from "./screen";
 import { pf, withFill, type HelpState, type Next, type Program } from "./program";
 
@@ -10,7 +11,7 @@ import { pf, withFill, type HelpState, type Next, type Program } from "./program
 // style: S (or /) beside one returns with it in the field. PF7 and PF8
 // scroll a long list.
 
-const rows = [
+export const keyRows = [
 	["ENTER", "Send the screen to the host (AID key)"],
 	["F1 - F12", "PF1-PF12. Shift+F1-F12 are PF13-PF24 (PF24 RETRIEVE)"],
 	["PGUP / PGDN", "PF7 / PF8 (scroll up / down)"],
@@ -66,14 +67,14 @@ export const help: Program<HelpState> = {
 
 		scr.text(4, 4, "This is a block-mode terminal. You fill in fields locally, then an AID", { color: "green" });
 		scr.text(5, 4, "key sends the whole screen to the host, which replies with a new one.", { color: "green" });
-		rows.forEach(([k, d], i) => {
+		keyRows.forEach(([k, d], i) => {
 			scr.text(7 + i, 4, k, { color: "white", bright: true });
 			scr.text(7 + i, 22, d, { color: "turquoise" });
 		});
 		scr.text(scr.rows - 2, 4, "Status line: X () host busy   X -f protected   X NUM numeric only   X > full",
 			{ color: "blue" });
 
-		keys(scr, "PF3=RETURN");
+		keys(scr, "PF3=RETURN  PF5=ASK A QUESTION");
 		scr.setCursor(scr.rows, 2);
 		return scr;
 	},
@@ -81,6 +82,7 @@ export const help: Program<HelpState> = {
 	async handle(ctx, h, input) {
 		h.msg = h.errSel = undefined;
 		if (h.field && input.aid === pf(1)) return { p: "help", back: h.back, vals: h.vals };
+		if (!h.field && input.aid === pf(5)) return newAsk(ctx, h.back);
 		const fh = h.field ? await helpFor(ctx.tables, h.back, h.field) : undefined;
 		const values = fh ? await fieldValues(ctx, fh, h.back) : [];
 		if (h.field && values.length > 0) {

@@ -28,6 +28,11 @@
   // The job scheduler: every minute, submit the jobs whose schedule is due
   // (see src/scheduler.ts).
   "triggers": { "crons": ["* * * * *"] },
+  // Workers AI answers HELP questions, explains abends and turns plain
+  // English into searches; the Vectorize index finds help topics and
+  // products by meaning (see src/ai.ts).
+  "ai": { "binding": "AI" },
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "customer-help" }],
   "workflows": [
     { "binding": "JOB_RUNNER", "name": "customer-job-runner", "class_name": "JobRunner" }
   ],

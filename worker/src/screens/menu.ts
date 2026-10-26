@@ -1,4 +1,5 @@
 import { newActivity } from "./activity";
+import { newAsk } from "./ask";
 import { newChart } from "./charts";
 import { newAdd, newInquiry } from "./detail";
 import { newEdi } from "./edi";
@@ -6,7 +7,7 @@ import { newInvoices } from "./invoices";
 import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
 import { newLedger } from "./ledger";
-import { newSearch } from "./search";
+import { find } from "./search";
 import { newVendHist } from "./vendhist";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program, type State } from "./program";
@@ -38,7 +39,10 @@ const menus: Record<string, Menu> = {
 			{ key: "3", name: "INVENTORY", desc: "Products, purchasing, vendors", sub: "3" },
 			{ key: "4", name: "ACCOUNTING", desc: "Ledger, close, dunning, credit", sub: "4" },
 			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, output, monitor, tables", sub: "5" },
-			{ key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys", aliases: ["T", "HELP"], go: (_ctx, m) => ({ p: "help", back: m }) },
+			{
+				key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys; HELP and a question", aliases: ["T", "HELP", "ASK"],
+				go: (ctx, m, _arg, rest) => (rest ? newAsk(ctx, m, rest) : { p: "help", back: m }),
+			},
 			{ key: "X", name: "EXIT", desc: "Log off", aliases: ["X", "LOGOFF"], go: (ctx) => logoff(ctx) },
 		],
 	},
@@ -55,7 +59,7 @@ const menus: Record<string, Menu> = {
 			},
 			{
 				key: "5", name: "SEARCH", desc: "Find anything by name or number", aliases: ["FIND"],
-				go: (_ctx, m, _arg, rest) => newSearch(m, rest),
+				go: (ctx, m, _arg, rest) => find(ctx, m, rest),
 			},
 		],
 	},
@@ -136,6 +140,18 @@ export function menuValues(s: State): { code: string; desc: string }[] {
 	return mn.options.map((o) => ({ code: o.key, desc: `${o.name} - ${o.desc}`.toUpperCase() }));
 }
 
+// menuTopics lists every option with its fast path, for the HELP
+// facility's knowledge base (knowledge.ts).
+export function menuTopics(): { path: string; name: string; desc: string; aliases: string[]; menu: string }[] {
+	const out: { path: string; name: string; desc: string; aliases: string[]; menu: string }[] = [];
+	for (const [k, menu] of Object.entries(menus)) {
+		for (const o of menu.options) {
+			out.push({ path: k ? `${k}.${o.key}` : o.key, name: o.name, desc: o.desc, aliases: o.aliases ?? [], menu: menu.title });
+		}
+	}
+	return out;
+}
+
 // byName finds an option by name or alias on any menu.
 function byName(word: string): Option | undefined {
 	for (const menu of Object.values(menus)) {
@@ -176,7 +192,7 @@ export const menu: Program<MenuState> = {
 				col += k.length + v.length + 4;
 			}
 			scr.text(20, 4, "Enter an option, or a fast path such as 1.2 000105 to jump straight", { color: "blue" });
-			scr.text(21, 4, "to a customer. Press PF1 at any time for help.", { color: "blue" });
+			scr.text(21, 4, "to a customer. PF1 is help; HELP and a question asks the system.", { color: "blue" });
 		} else {
 			scr.text(20, 4, "Enter an option, or a name such as INQUIRY 000105. PF3 returns to the", { color: "blue" });
 			scr.text(21, 4, "primary menu, and =X logs off.", { color: "blue" });

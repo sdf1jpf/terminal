@@ -4,6 +4,7 @@
 // minute a schedule last ran for is claimed before the job is submitted,
 // so a trigger that fires twice for a minute submits it once.
 
+import { syncIndex } from "./ai";
 import { CronError, matches, nextRun, normalize, parseCron } from "./cron";
 import { HttpError } from "./http";
 import type { Env } from "./index";
@@ -121,9 +122,14 @@ export async function runSchedules(env: Env, at: Date): Promise<Job[]> {
 	return submitted;
 }
 
-// tick is the cron trigger's handler: it runs the schedules and, once an
-// hour, trims the log.
+// tick is the cron trigger's handler: it runs the schedules, keeps the
+// HELP facility's index current and, once an hour, trims the log.
 export async function tick(env: Env, at: Date): Promise<void> {
 	await runSchedules(env, at);
+	try {
+		if (await syncIndex(env)) await syslog(env.DB, SCHEDULER, "CUS1210I HELP FACILITY INDEX UPDATED");
+	} catch (e) {
+		console.error("updating the help index:", e);
+	}
 	if (at.getUTCMinutes() === 0) await prune(env.DB);
 }

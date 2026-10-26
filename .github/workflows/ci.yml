@@ -72,6 +72,10 @@ jobs:
         run: npx wrangler queues info customer-jobs >/dev/null || npx wrangler queues create customer-jobs
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Create the help index if it is missing
+        run: npx wrangler vectorize get customer-help >/dev/null || npx wrangler vectorize create customer-help --dimensions=768 --metric=cosine
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v3

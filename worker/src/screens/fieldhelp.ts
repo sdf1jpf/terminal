@@ -600,8 +600,12 @@ const help: Record<string, FieldHelp> = {
 	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
-		lines: ["Type S beside a job and press Enter to view its output."],
-		values: v(["S", "VIEW THE OUTPUT"]),
+		lines: [
+			"Type a code beside a job and press Enter. E asks the HELP facility",
+			"to read the output of a job that abended or ended with a non-zero",
+			"return code and explain what went wrong and what to do.",
+		],
+		values: v(["S", "VIEW THE OUTPUT"], ["E", "EXPLAIN WHY IT FAILED"]),
 	},
 	"search.q": {
 		title: "SEARCH FOR",
@@ -615,6 +619,23 @@ const help: Record<string, FieldHelp> = {
 			"Any part will do: GEAR finds BLUE GEAR CO, and 105 finds customer",
 			"000105 with its invoices and shipments. FIND ACME on any command",
 			"line searches straight away.",
+			"",
+			"Plain English works too, when no name or number matches: CUSTOMERS",
+			"IN OHIO OVER THEIR CREDIT LIMIT, OPEN INVOICES OVER 5000, or",
+			"?PARTS FOR A CONVEYOR. Start with ? to always search that way.",
+		],
+	},
+	"ask.q": {
+		title: "QUESTION",
+		lines: [
+			"A question about using the system, in your own words, such as HOW",
+			"DO I PUT A CUSTOMER ON HOLD or WHAT DOES CUSCRREV DO. Press Enter",
+			"and the HELP facility answers from the system's help topics, with",
+			"the topics it used listed below: S beside one goes to that screen.",
+			"",
+			"HELP and a question on any command line asks it straight away.",
+			"Answers come from Workers AI; check them before acting on them.",
+			"PF24 (RETRIEVE) brings back earlier questions.",
 		],
 	},
 	"search.type": {
@@ -628,6 +649,14 @@ const help: Record<string, FieldHelp> = {
 		values: show,
 	},
 };
+
+// fieldTopics lists every field's help by its key ("browse.status", or
+// "status" for every panel), for the HELP facility's knowledge base.
+export function fieldTopics(): { key: string; title: string; lines: string[]; values: Value[] }[] {
+	return Object.entries(help).map(([key, fh]) => ({
+		key, title: fh.title, lines: fh.lines, values: Array.isArray(fh.values) ? fh.values : [],
+	}));
+}
 
 // fieldValues returns the valid values for a field, or none.
 export async function fieldValues(ctx: Ctx, fh: FieldHelp, s: State): Promise<Value[]> {

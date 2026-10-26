@@ -8,6 +8,7 @@ import { HttpError, int, str } from "../http";
 import { syslog } from "../syslog";
 import { activity, event } from "./activity";
 import { archdoc, archive } from "./archive";
+import { ask } from "./ask";
 import { browse } from "./browse";
 import { chart } from "./charts";
 import { opconsole, schedule } from "./console";
@@ -41,14 +42,14 @@ export const requestKeys = [
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
 	pos, po, vendors, vendhist, shipments, shipment, ledger, glaccount,
-	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, archive, archdoc,
+	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc,
 };
 
 // Panels with a command line, by the name of its field. What is entered
 // there goes in the session's command history, newest first, and PF24
 // (RETRIEVE, as in ISPF) puts it back on the command line: once for the
 // last command, again for the one before.
-const commandLines: Partial<Record<State["p"], string>> = { menu: "option", console: "cmd" };
+const commandLines: Partial<Record<State["p"], string>> = { menu: "option", console: "cmd", ask: "q" };
 const HISTORY = 20;
 
 // An idle terminal logs itself off with TIMEOUT, like TSO's S522.
