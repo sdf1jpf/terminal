@@ -36,6 +36,7 @@ export type Cursor = { field: string } | { row: number; col: number };
 export interface Ctx {
 	db: D1Database;
 	jobs: Queue<JobMessage>; // the batch job input queue
+	archive: R2Bucket; // archived output and documents (archive.ts)
 	user: string; // the Access userid
 	rows: number;
 	cols: number;

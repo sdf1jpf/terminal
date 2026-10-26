@@ -4,7 +4,7 @@ import { HttpError } from "../http";
 import { newActivity } from "./activity";
 import { newInvoices } from "./invoices";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, right, stamp, value, type Color, type Ctx, type Opts, type Screen } from "./screen";
-import { fail, isCode, pf, setMsg, type DetailState, type Mode, type Next, type Program, type State } from "./program";
+import { fail, isCode, pf, setMsg, withDownload, type DetailState, type Mode, type Next, type Program, type State } from "./program";
 
 // Displays, updates, adds or deletes a single customer.
 
@@ -93,7 +93,7 @@ export const detail: Program<DetailState> = {
 
 		message(scr, d.msg ?? "");
 		keys(scr, {
-			inquiry: "PF1=HELP PF3=EXIT PF4=UPDATE PF5=EVENTS PF6=INVOICES PF9=DELETE PF12=CANCEL",
+			inquiry: "PF1=HELP PF2=STMT PF3=EXIT PF4=UPD PF5=EVENTS PF6=INVOICES PF9=DEL PF12=CANCEL",
 			update: "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF",
 			add: "ENTER=SAVE  PF1=HELP  PF3=EXIT  PF12=CANCEL  CTRL+E=ERASE EOF",
 			delete: "PF1=HELP  PF3=EXIT  PF10=CONFIRM DELETE  PF12=CANCEL",
@@ -185,12 +185,19 @@ async function handleInquiry(ctx: Ctx, d: DetailState, aid: string, f: Record<st
 			await loadDetail(ctx, d, d.cust!.id); // re-read for the latest copy
 			if (d.loaded) d.mode = aid === pf(9) ? "delete" : "update";
 			return d;
+		case pf(2):
 		case pf(5):
 		case pf(6):
 			if (!d.loaded) {
 				d.msg = "CUS0204E DISPLAY A CUSTOMER FIRST";
 				d.errField = "id";
 				return d;
+			}
+			if (aid === pf(2)) {
+				const id = d.cust!.id;
+				const name = `STMT-${id}-${stamp(ctx, new Date().toISOString()).slice(0, 10)}.pdf`;
+				d.msg = `CUS1502I STATEMENT ${name} SENT TO YOUR TERMINAL`;
+				return withDownload(d, { url: `/v1/customers/${id}/statement`, name });
 			}
 			return aid === pf(5) ? newActivity(ctx, d, d.cust!.id) : newInvoices(d, d.cust!.id);
 		case "CLEAR":

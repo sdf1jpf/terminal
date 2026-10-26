@@ -28,13 +28,14 @@ func main() {
 		lu      = flag.String("lu", "TERM0001", "terminal name shown in the status line")
 		latency = flag.Duration("latency", 0, "extra delay added to every host response, for effect")
 		idle    = flag.Duration("idle", 30*time.Minute, "log off after this long without a key pressed (0 never)")
-		prints  = flag.String("print-dir", defaultPrintDir(), "where the PRINT key (Ctrl+P) saves screens")
+		prints  = flag.String("print-dir", defaultPrintDir(), "where the PRINT key (Ctrl+P) saves screens, and PDFs the host sends are saved")
 	)
 	flag.Parse()
 
 	sess := host.NewSession(&host.Config{
-		SystemName: *sysName,
-		Backend:    api.NewClient(*apiURL, access(*apiURL)),
+		SystemName:  *sysName,
+		Backend:     api.NewClient(*apiURL, access(*apiURL)),
+		DownloadDir: *prints,
 	}, *lu)
 	term := tn3270.New(sess, tn3270.Options{
 		LUName: *lu, SystemName: *sysName, Latency: *latency, PrintDir: *prints, IdleTimeout: *idle,

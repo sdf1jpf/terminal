@@ -7,6 +7,7 @@ import type { Env } from "../index";
 import { HttpError, int, str } from "../http";
 import { syslog } from "../syslog";
 import { activity, event } from "./activity";
+import { archdoc, archive } from "./archive";
 import { browse } from "./browse";
 import { chart } from "./charts";
 import { opconsole, schedule } from "./console";
@@ -26,7 +27,7 @@ import { search } from "./search";
 import { skusearch } from "./skusearch";
 import { output, spool } from "./spool";
 import { MIN_COLS, MIN_ROWS, time, type Ctx, type Screen } from "./screen";
-import { takeFill, withFill, type Input, type Next, type Program, type State } from "./program";
+import { takeDownload, takeFill, withFill, type Download, type Input, type Next, type Program, type State } from "./program";
 
 export const requestKeys = [
 	"v", "aid", "state", "fields", "modified", "cursor", "rows", "cols", "terminal", "system", "tz_offset",
@@ -35,7 +36,7 @@ export const requestKeys = [
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, skusearch, edi, edidoc,
 	pos, po, vendors, shipments, shipment, ledger, glaccount,
-	console: opconsole, schedule, spool, output, search,
+	console: opconsole, schedule, spool, output, search, archive, archdoc,
 };
 
 // Panels with a command line, by the name of its field. What is entered
@@ -61,7 +62,7 @@ const aids = new Set([
 ]);
 
 export type ScreenResponse =
-	| { v: 1; state: string; screen: ReturnType<Screen["toJSON"]> }
+	| { v: 1; state: string; screen: ReturnType<Screen["toJSON"]>; download?: Download }
 	| { v: 1; logoff: { message: string } };
 
 export async function screen(env: Env, user: string, url: URL, body: Record<string, unknown>): Promise<ScreenResponse> {
@@ -70,6 +71,7 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 	const ctx: Ctx = {
 		db: env.DB,
 		jobs: env.JOBS,
+		archive: env.ARCHIVE,
 		user,
 		rows: clamp(int(body, "rows"), MIN_ROWS, MAX_ROWS),
 		cols: clamp(int(body, "cols"), MIN_COLS, MAX_COLS),
@@ -124,9 +126,10 @@ export async function screen(env: Env, user: string, url: URL, body: Record<stri
 		return { v: 1, logoff: { message: next.logoff } };
 	}
 	const fill = takeFill(next);
+	const download = takeDownload(next);
 	const scr = await (programs[next.p] as Program<State>).render(ctx, next);
 	if (fill) scr.fill(fill.fields, fill.cursor);
-	return { v: 1, state: encode(next, session), screen: scr.toJSON() };
+	return { v: 1, state: encode(next, session), screen: scr.toJSON(), ...(download ? { download } : {}) };
 }
 
 // Session is what the commarea carries for the whole conversation rather

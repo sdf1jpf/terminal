@@ -46,7 +46,8 @@ type ScreenRequest struct {
 }
 
 // ScreenResponse holds the next screen and the commarea to send back with
-// the next request, or Logoff when the operator has logged off.
+// the next request, or Logoff when the operator has logged off. Download,
+// when set, is a file sent along with the screen, such as an invoice PDF.
 type ScreenResponse struct {
 	V      int     `json:"v"`
 	State  string  `json:"state"`
@@ -54,6 +55,14 @@ type ScreenResponse struct {
 	Logoff *struct {
 		Message string `json:"message"`
 	} `json:"logoff"`
+	Download *Download `json:"download"`
+}
+
+// Download names a file to fetch from the API (URL is a path such as
+// /v1/invoices/INV00012/pdf) and save as Name.
+type Download struct {
+	URL  string `json:"url"`
+	Name string `json:"name"`
 }
 
 type Screen struct {

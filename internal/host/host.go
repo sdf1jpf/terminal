@@ -8,6 +8,10 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,9 +27,16 @@ type Backend interface {
 	Screen(ctx context.Context, req api.ScreenRequest) (api.ScreenResponse, error)
 }
 
+// Downloader is a Backend that can fetch the files screens send along,
+// such as an invoice PDF. *api.Client implements it.
+type Downloader interface {
+	Download(ctx context.Context, path string) ([]byte, error)
+}
+
 type Config struct {
-	SystemName string // e.g. "SYS1"
-	Backend    Backend
+	SystemName  string // e.g. "SYS1"
+	Backend     Backend
+	DownloadDir string // where files sent with a screen are saved
 }
 
 // Session is the terminal's connection to the application. It implements
@@ -82,7 +93,64 @@ func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
 		return withMessage(scr, "CUS0299E NO SCREEN IN THE HOST'S REPLY")
 	}
 	s.state = resp.State
-	return build(resp.Screen)
+	next := build(resp.Screen)
+	if resp.Download != nil {
+		message(next, s.save(resp.Download))
+	}
+	return next
+}
+
+// save fetches a file the application sent with a screen into the
+// download directory and returns the message to show for it.
+func (s *Session) save(d *api.Download) string {
+	dl, ok := s.api().(Downloader)
+	if !ok || s.cfg.DownloadDir == "" {
+		return "CUS1508W THIS TERMINAL CANNOT RECEIVE FILES"
+	}
+	if !strings.HasPrefix(d.URL, "/v1/") {
+		return "CUS1509E BAD FILE LOCATION FROM THE HOST"
+	}
+	b, err := dl.Download(s.ctx(), d.URL)
+	if err != nil {
+		return strings.Replace(s.fail(err), "CUS0299E", "CUS1509E", 1)
+	}
+	path, err := writeNew(s.cfg.DownloadDir, d.Name, b)
+	if err != nil {
+		return "CUS1509E " + strings.ToUpper(err.Error())
+	}
+	return "CUS1507I SAVED " + path
+}
+
+var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// writeNew writes a new file in dir, adding -2, -3 and so on to the name if
+// it is taken, and returns its path.
+func writeNew(dir, name string, b []byte) (string, error) {
+	name = unsafeName.ReplaceAllString(filepath.Base(name), "_")
+	if name == "" || name == "." || name == ".." {
+		name = "DOWNLOAD"
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	path := filepath.Join(dir, name)
+	for n := 2; ; n++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			path = filepath.Join(dir, fmt.Sprintf("%s-%d%s", stem, n, ext))
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, err = f.Write(b)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		return path, err
+	}
 }
 
 // start fetches the application's first screen after logon.

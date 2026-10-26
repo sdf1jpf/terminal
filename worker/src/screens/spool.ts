@@ -1,10 +1,11 @@
 import { getOutput, listOutput, printOutput, purgeOutput, PRINTER, type Output } from "../spool";
 import { header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, type Ctx } from "./screen";
-import { fail, isCode, pf, type OutputState, type Program, type SpoolState } from "./program";
+import { fail, isCode, pf, withDownload, type OutputState, type Program, type SpoolState } from "./program";
 
 // CUSQ01 HELD OUTPUT lists the print spool, like SDSF's H panel: job output
 // listings and reports printed from screens. S browses one (CUSQ02), O
-// prints it on PRT1 (again, for a reprint), and P purges it.
+// prints it on PRT1 (again, for a reprint), D sends it to the terminal as a
+// PDF on green-bar paper, and P purges it. PF6 opens the archive (CUSQ03).
 
 // spoolRows is how many output groups fit on a page: 13 on 24x80.
 const spoolRows = (ctx: Ctx) => ctx.rows - 11;
@@ -13,7 +14,7 @@ function spoolLine(name: string, id: string, owner: string, status: string, line
 	return `${pad(name, 8)} ${pad(id, 8)} ${pad(owner, 8)} ${pad(status, 7)} ${lpad(lines, 5)} ${lpad(copies, 3)} ${pad(created, 16)} ${title}`;
 }
 
-function scroll(s: { top?: number; msg?: string }, aid: string, rows: number, total: number): void {
+export function scroll(s: { top?: number; msg?: string }, aid: string, rows: number, total: number): void {
 	if (aid === pf(7)) {
 		if (!s.top) s.msg = "CUS0101W ALREADY AT TOP OF DATA";
 		s.top = Math.max((s.top ?? 0) - rows, 0);
@@ -44,7 +45,7 @@ export const spool: Program<SpoolState> = {
 		if (list.length > 0) {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(6, 2, `SELECT: S=BROWSE  O=PRINT ON ${PRINTER}  P=PURGE`, { color: "blue" });
+		scr.text(6, 2, `SELECT: S=BROWSE  O=PRINT ON ${PRINTER}  D=PDF  P=PURGE`, { color: "blue" });
 		scr.text(7, 2, "S " + spoolLine("JOBNAME", "JOBID", "OWNER", "STATUS", "LINES", "CPY", "CREATED", "TITLE").slice(0, scr.cols - 5),
 			{ color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
@@ -57,7 +58,7 @@ export const spool: Program<SpoolState> = {
 		s.ids = list.slice(top, top + rows).map((o) => o.id);
 
 		message(scr, msg);
-		keys(scr, "ENTER=PROCESS  PF1=HELP  PF3=EXIT  PF5=REFRESH  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		keys(scr, "ENTER=PROCESS  PF1=HELP  PF3=EXIT  PF5=REFRESH  PF6=ARCHIVE  PF7/8=SCROLL");
 		if (s.errSel) scr.cursorTo(s.errSel);
 		else scr.cursorTo("filter");
 		return scr;
@@ -74,6 +75,8 @@ export const spool: Program<SpoolState> = {
 			case pf(5):
 				s.msg = "CUS0402I OUTPUT QUEUE REFRESHED";
 				return s;
+			case pf(6):
+				return { p: "archive", back: s };
 			case pf(7):
 			case pf(8):
 				scroll(s, input.aid, spoolRows(ctx), (await listOutput(ctx.db, s.filter ?? "")).length);
@@ -105,6 +108,9 @@ export const spool: Program<SpoolState> = {
 						s.msg = `$HASP150 ${o.name} ${o.id} ON ${PRINTER} - ${o.lines} LINES, COPY ${o.copies}`;
 						return s;
 					}
+					case "D":
+						s.msg = `CUS1501I ${id}.PDF SENT TO YOUR TERMINAL`;
+						return withDownload(s, { url: `/v1/spool/${id}/pdf`, name: `${id}.pdf` });
 					case "P":
 						await purgeOutput(ctx.db, ctx.user, id);
 						s.msg = `$HASP250 ${id} PURGED`;
@@ -125,7 +131,8 @@ export const spool: Program<SpoolState> = {
 // outputRows is how many listing lines fit on a page: 18 on 24x80.
 const outputRows = (ctx: Ctx) => ctx.rows - 6;
 
-// CUSQ02 OUTPUT DISPLAY browses one output group. PF4 prints it.
+// CUSQ02 OUTPUT DISPLAY browses one output group. PF4 prints it, PF10
+// sends it to the terminal as a PDF.
 export const output: Program<OutputState> = {
 	async render(ctx, s) {
 		const scr = newScreen(ctx, "CUSQ02");
@@ -144,7 +151,7 @@ export const output: Program<OutputState> = {
 			msg = isCode(e, "not_found") ? `CUS0401E ${s.id} IS NO LONGER ON THE SPOOL` : fail(e);
 		}
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF4=PRINT  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		keys(scr, "PF1=HELP  PF3=EXIT  PF4=PRINT  PF7=UP  PF8=DOWN  PF10=PDF  PF12=CANCEL");
 		scr.setCursor(scr.rows, 2);
 		return scr;
 	},
@@ -166,6 +173,9 @@ export const output: Program<OutputState> = {
 					s.msg = isCode(e, "not_found") ? `CUS0401E ${s.id} IS NO LONGER ON THE SPOOL` : fail(e);
 				}
 				return s;
+			case pf(10):
+				s.msg = `CUS1501I ${s.id}.PDF SENT TO YOUR TERMINAL`;
+				return withDownload(s, { url: `/v1/spool/${s.id}/pdf`, name: `${s.id}.pdf` });
 			case pf(7):
 			case pf(8): {
 				const total = await getOutput(ctx.db, s.id).then((g) => g.lines.length, () => 0);

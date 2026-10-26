@@ -180,7 +180,7 @@ approval before each deploy, add required reviewers to that environment
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Use an Access service token instead of a browser sign-in |
 | `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
 | `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
-| `-print-dir DIR` | Where Ctrl+P saves screens (default `~/terminal-prints`) |
+| `-print-dir DIR` | Where Ctrl+P saves screens, and PDFs the host sends (default `~/terminal-prints`) |
 | `-idle 30m` | Log off after this long without a key pressed (`0` never) |
 
 ## Mac app launcher
@@ -246,6 +246,12 @@ GET    /v1/spool/{id}           an output group and its lines
 GET    /v1/spool/{id}/print     paged for the printer, as text/plain
 POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 DELETE /v1/spool/{id}           purge it, and its job
+GET    /v1/spool/{id}/pdf       printed on green-bar paper, as a PDF
+GET    /v1/invoices/{id}/pdf    the invoice as a PDF (a pro forma while open)
+GET    /v1/customers/{id}/statement   a 30-day statement, as a PDF
+GET    /v1/archive?name=X&kind=K      archived output and documents
+GET    /v1/archive/{key}        one entry; {key}.pdf and {key}.txt are its files
+POST   /v1/archive/restore      put an archived listing back on the spool: {"key"}
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -630,6 +636,42 @@ purge as `$HASP250`. Purging a job's output removes the job from the batch
 job list too. `PRT1` is simulated: `GET /v1/spool/{id}/print` returns the
 listing paged for it, 60 lines to a page with a heading and a form feed
 between pages.
+
+## PDFs and the archive
+
+Documents come out as PDFs, drawn the way an impact printer fills
+preprinted forms: Courier at 10 characters to the inch on a letter page
+under the company heading.
+
+- **Listings**: `D` beside output on CUSQ01, or PF10 on CUSQ02, sends it on
+  14 7/8 x 11 inch green-bar paper, tractor holes and all.
+- **Invoices**: PF2 on an invoice (CUSI02). An open one prints as a pro forma,
+  a paid one is stamped PAID.
+- **Statements**: PF2 on customer inquiry (CUSM02), the last 30 days with an
+  aging line.
+
+The file arrives with the screen (see `download` in
+[docs/screen-protocol.md](docs/screen-protocol.md)): the Go terminal saves it
+in `~/terminal-prints` and says where on the message line; the browser
+downloads it. The same PDFs are at `GET /v1/spool/{id}/pdf`,
+`GET /v1/invoices/{id}/pdf` and `GET /v1/customers/{id}/statement`.
+
+The **archive** is an R2 bucket, `customer-archive`. Each entry is a text
+file and a PDF:
+
+| What | Filed by | Key |
+| --- | --- | --- |
+| Spool output more than 7 days old, moved off the spool | **CUSARCH**, daily at 05:00 UTC | `spool/2026-10/JOB00012` |
+| Each customer's statement | **CUSSTMT** | `statements/2026-10/000101` |
+| Each dunning letter | **CUSDUNN** | `letters/2026-10-26/000101-L2` |
+| The trial balance and aging of a closed month | **CUSCLOSE** (STEP040) | `month-end/2026-10/TRIALBAL` |
+
+Option 5.5 opens **ARCHIVE** (CUSQ03; PF6 from held output gets there too):
+filter by name or reference and by kind, `S` browses an entry (CUSQ04), `D`
+sends its PDF, and `R` restores an archived listing to the spool, held,
+under its old ID. The API is `GET /v1/archive?name=&kind=`,
+`GET /v1/archive/{key}` (`.pdf` and `.txt` for the files) and
+`POST /v1/archive/restore {"key"}`.
 
 ## Printing a screen
 

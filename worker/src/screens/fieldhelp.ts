@@ -434,7 +434,35 @@ const help: Record<string, FieldHelp> = {
 		values: v(
 			["S", "BROWSE THE OUTPUT"],
 			["O", "PRINT IT ON PRT1; IT STAYS ON THE SPOOL FOR ANOTHER COPY"],
+			["D", "SEND IT TO YOUR TERMINAL AS A PDF, ON GREEN-BAR PAPER"],
 			["P", "PURGE IT, AND THE JOB'S ENTRY WITH IT"],
+		),
+	},
+	"archive.filter": {
+		title: "NAME OR REF",
+		lines: [
+			"Show only entries whose job name or reference starts with this: a job",
+			"name such as CUSSTMT, an output ID such as JOB00012, a customer number",
+			"for statements and letters, or a period such as 2026-10. Blank for all.",
+		],
+	},
+	"archive.kind": {
+		title: "KIND",
+		lines: ["Show only one kind of entry. Leave it blank for all of them."],
+		values: v(
+			["L", "LISTING: OUTPUT MOVED OFF THE SPOOL BY CUSARCH AFTER A WEEK"],
+			["M", "MONTH-END: TRIAL BALANCE AND AGING FILED BY CUSCLOSE"],
+			["S", "STATEMENT: FILED BY CUSSTMT, ONE PER CUSTOMER PER MONTH"],
+			["D", "DUNNING LETTER: FILED BY CUSDUNN"],
+		),
+	},
+	"archive.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type a code beside an entry and press Enter."],
+		values: v(
+			["S", "BROWSE IT"],
+			["D", "SEND ITS PDF TO YOUR TERMINAL"],
+			["R", "RESTORE A LISTING TO THE SPOOL, HELD, UNDER ITS ORIGINAL ID"],
 		),
 	},
 	"jobs.sel": {
