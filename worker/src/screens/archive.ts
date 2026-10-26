@@ -1,3 +1,4 @@
+import { mailable, mailDocument } from "../mail";
 import { archiveLines, getEntry, kindNames, listArchive, restoreArchive, type Entry, type Kind } from "../archive";
 import { header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, type Ctx } from "./screen";
 import { scroll } from "./spool";
@@ -6,7 +7,7 @@ import { fail, isCode, pf, withDownload, type ArchDocState, type ArchiveState, t
 // CUSQ03 ARCHIVE lists what has been filed in the archive (R2): output
 // moved off the spool after a week, statements, dunning letters and the
 // month-end reports. S browses an entry (CUSQ04), D sends its PDF to the
-// terminal, and R puts an archived listing back on the spool, held.
+// terminal, M mails it, and R puts an archived listing back on the spool, held.
 
 const archiveRows = (ctx: Ctx) => ctx.rows - 11;
 
@@ -39,7 +40,7 @@ export const archive: Program<ArchiveState> = {
 		if (list.length > 0) {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(6, 2, "SELECT: S=BROWSE  D=PDF  R=RESTORE TO THE SPOOL (LISTINGS)", { color: "blue" });
+		scr.text(6, 2, "SELECT: S=BROWSE  D=PDF  M=MAIL THE PDF  R=RESTORE TO THE SPOOL (LISTINGS)", { color: "blue" });
 		scr.text(7, 2, "S " + archiveLine("NAME", "REF", "KIND", "LINES", "ARCHIVED", "TITLE").slice(0, scr.cols - 5),
 			{ color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
@@ -104,6 +105,17 @@ export const archive: Program<ArchiveState> = {
 					case "D":
 						s.msg = `CUS1501I ${fileName(key)}.PDF SENT TO YOUR TERMINAL`;
 						return withDownload(s, { url: `/v1/archive/${key}.pdf`, name: `${fileName(key)}.pdf` });
+					case "M": {
+						if (!mailable(ctx.env)) {
+							s.msg = "CUS1525E MAIL IS NOT SET UP ON THIS SYSTEM";
+							return s;
+						}
+						const m = await mailDocument(ctx.env, await getEntry(ctx.db, key), ctx.user);
+						s.msg = !m ? `CUS1526W ${fileName(key)} WAS MAILED BEFORE - SEE OPTION 5.8`
+							: m.status === "SENT" ? `CUS1520I ${fileName(key)}.PDF MAILED TO ${ctx.env.MAIL_TO!.toUpperCase()}`
+							: `CUS1521E MAIL FAILED: ${m.detail.toUpperCase()}`;
+						return s;
+					}
 					case "R": {
 						const o = await restoreArchive(ctx.db, ctx.env.ARCHIVE, ctx.user, key);
 						s.msg = `CUS1504I ${o.id} RESTORED TO THE SPOOL, HELD - ${o.lines} LINES`;

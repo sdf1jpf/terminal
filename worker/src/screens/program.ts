@@ -240,6 +240,16 @@ export interface ArchiveState {
 	errSel?: string;
 	msg?: string;
 }
+export interface MailState {
+	p: "mail";
+	back: State;
+	ref?: string; // only mail about this customer or PO
+	seqs?: number[]; // the log entries on the rows shown, for the selection codes
+	top?: number;
+	errSel?: string;
+	msg?: string;
+}
+export interface MailMsgState { p: "mailmsg"; back: State; seq: number; msg?: string }
 export interface ArchDocState { p: "archdoc"; back: State; key: string; top?: number; msg?: string }
 
 export interface MonitorState {
@@ -301,7 +311,7 @@ export type State =
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
-	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState;
+	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

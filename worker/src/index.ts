@@ -73,6 +73,8 @@
 //	GET    /v1/archive?name=X&kind=K      archived output and documents, newest first
 //	GET    /v1/archive/{key}        one entry; {key}.pdf and {key}.txt are its files
 //	POST   /v1/archive/restore      put an archived listing back on the spool: {"key"}
+//	GET    /v1/mail?ref=X           the mail log, newest first: statements and letters sent, vendor mail received
+//	GET    /v1/mail/{seq}
 //	GET    /v1/tables               the system tables (KV), with their row counts
 //	GET    /v1/tables/{t}           a table's columns and rows
 //	PUT    /v1/tables/{t}/{key}     add or change a row
@@ -122,6 +124,7 @@ import { requestKeys, screen } from "./screens";
 import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
 import { buildStatements, invoicePdf, listingPdf, statementPdf } from "./documents";
 import { pdfResponse } from "./pdf";
+import { getMail, listMail, receiveMail } from "./mail";
 import { notLocked, tso, USER_HEADER, type Sessions } from "./sessions";
 
 export interface Env {
@@ -132,6 +135,9 @@ export interface Env {
 	JOBS: Queue<JobMessage>; // the batch job input queue
 	JOB_RUNNER: Workflow<JobMessage>;
 	ARCHIVE: R2Bucket; // old output and documents, as files (archive.ts)
+	MAIL?: SendEmail; // Email Routing, sending only to MAIL_TO (mail.ts)
+	MAIL_FROM?: string; // the company's address on its domain
+	MAIL_TO?: string; // the one verified address all mail goes to
 	AI: Ai; // Workers AI, for the HELP facility (ai.ts)
 	VECTORIZE: Vectorize; // the customer-help index: help topics and products by meaning
 	TABLES: KVNamespace; // the system tables (systables.ts)
@@ -450,6 +456,8 @@ app.delete("/v1/spool/:id", signedOn, async (c) => {
 	return noContent();
 });
 
+app.get("/v1/mail", signedOn, async (c) => json(200, await listMail(c.env.DB, c.req.query("ref") ?? "")));
+app.get("/v1/mail/:seq{[0-9]+}", signedOn, async (c) => json(200, await getMail(c.env.DB, Number(c.req.param("seq")))));
 app.get("/v1/archive", signedOn, async (c) => json(200, await listArchive(c.env.DB, c.req.query("name") ?? "", c.req.query("kind") ?? "")));
 app.post("/v1/archive/restore", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["key"]);
@@ -547,6 +555,8 @@ for (const path of [
 	"/v1/archive",
 	"/v1/archive/restore",
 	"/v1/archive/:key{.+}",
+	"/v1/mail",
+	"/v1/mail/:seq",
 	"/v1/tables",
 	"/v1/tables/:table",
 	"/v1/tables/:table/:key",
@@ -557,10 +567,12 @@ for (const path of [
 	});
 }
 
-// The queue consumer, the cron trigger and the JobRunner workflow stay
-// outside Hono.
+// The queue consumer, the cron trigger, the email handler and the
+// JobRunner workflow stay outside Hono.
 export default {
 	fetch: app.fetch,
 	queue: startJobs,
 	scheduled: async (controller, env) => tick(env, new Date(controller.scheduledTime)),
+	// Mail routed to the Worker by Email Routing: vendor correspondence.
+	email: async (message, env) => void (await receiveMail(env, message)),
 } satisfies ExportedHandler<Env, JobMessage>;
