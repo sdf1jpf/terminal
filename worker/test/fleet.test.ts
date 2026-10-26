@@ -1,14 +1,15 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-	assignLoad, board, cancelLoad, dispatchLoad, dutyMinutes, freightDay, getLoad, getTruck, group, listLoads, planLoads, returnLoad, schedule,
+	assignLoad, board, cancelLoad, deliverStop, dispatchLoad, stopNotDelivered, dutyMinutes, freightDay, getLoad, getTruck, group, listLoads, planLoads, returnLoad, schedule,
 	sequence, serviceState, truckServiced, waitingShipments, type Driver, type Truck, type Waiting,
 } from "../src/fleet";
 import { bearing, DEPOT, locate, miles } from "../src/geo";
 import { HttpError } from "../src/http";
 import { addLine, createInvoice } from "../src/invoices";
 import { pack, release, ship, type Shipment } from "../src/shipping";
-import { confirmDelivery, trackingEvents } from "../src/tracking";
+import { lookAtInvoice, timeline } from "../src/lifecycle";
+import { confirmDelivery, getTracking, trackingEvents } from "../src/tracking";
 import { Terminal } from "./term";
 
 const db = env.DB;
@@ -78,7 +79,7 @@ describe("routes", () => {
 	it("groups shipments by direction and weight", () => {
 		const w = (id: string, city: string, st: string, weight: number): Waiting => {
 			const p = locate(city, st);
-			return { shipment_id: id, invoice_id: "", customer_id: "", name: "", city, state: st, cartons: 1, weight, ...p, bearing: bearing(DEPOT, p) };
+			return { shipment_id: id, invoice_id: "", customer_id: "", name: "", city, state: st, cartons: 1, weight, ...p, bearing: bearing(DEPOT, p), redeliver: false };
 		};
 		const { loads, tooHeavy } = group([
 			w("A", "DETROIT", "MI", 3000), w("B", "TOLEDO", "OH", 3000), w("C", "CINCINNATI", "OH", 3000),
@@ -207,12 +208,60 @@ describe("fleet", () => {
 		expect(row.next?.shipment_id).toBe(stops[1].shipment_id);
 		expect(row.load.delivered).toBe(1);
 
+		// Signing off by hand from tracking signs off the stop.
+		expect((await getLoad(db, l.id)).stops[0]).toMatchObject({ pod_status: "D", pod_signed: "SMITH", pod_cartons: 2 });
+
+		// It comes back only when every stop is signed off.
+		expect((await err(returnLoad(db, "DISPATCH", l.id, 0))).message).toMatch(/1 stop\(s\) on load .* have no proof of delivery/);
 		const before = (await getTruck(db, l.truck_id)).odometer;
+		await stopNotDelivered(db, "DRIVER", l.id, stops[1].shipment_id, "receiver closed");
 		const back = await returnLoad(db, "DISPATCH", l.id, 0);
-		expect(back).toMatchObject({ status: "C", actual_miles: l.miles });
+		expect(back).toMatchObject({ status: "C", actual_miles: l.miles, delivered: 1, missed: 1 });
 		expect((await getTruck(db, l.truck_id)).odometer).toBe(before + l.miles);
 		const log = await db.prepare("SELECT text FROM syslog WHERE text LIKE ?").bind(`CUS1908W LOAD ${l.id}%`).first<{ text: string }>();
-		expect(log?.text).toContain("1 STOP(S) NOT SIGNED FOR");
+		expect(log?.text).toContain("1 SHIPMENT(S) BACK TO REDELIVER");
+	});
+
+	it("takes proof of delivery and redelivers what came back", async () => {
+		const day = freightDay();
+		const a = await packed("000101", 900);
+		const [l] = (await planLoads(db, "DISPATCH", day)).loads;
+		expect((await err(deliverStop(db, "DRIVER", l.id, a.id, "SMITH"))).message).toMatch(/planned - stops are signed off while it is out/);
+		await dispatchLoad(db, env.TABLES, "DISPATCH", l.id);
+		expect((await err(deliverStop(db, "DRIVER", l.id, a.id, " "))).field).toBe("signed");
+		expect((await err(deliverStop(db, "DRIVER", l.id, a.id, "SMITH", 9))).field).toBe("cartons");
+		expect((await err(deliverStop(db, "DRIVER", l.id, "SHP99999", "SMITH"))).code).toBe("not_found");
+
+		// Not delivered: an exception on the order, and it waits again.
+		const x = await stopNotDelivered(db, "DRIVER", l.id, a.id, "dock closed");
+		expect(x).toMatchObject({ pod_status: "X", pod_note: "DOCK CLOSED", delivery: "X" });
+		expect((await trackingEvents(db, a.id))[0]).toMatchObject({ code: "EXCEPTION", location: "DAYTON, OH", detail: "NOT DELIVERED: DOCK CLOSED - BACK TO WAREHOUSE" });
+		const { results: signals } = await db.prepare("SELECT what FROM order_signals WHERE ref = ?").bind(a.invoice_id).all<{ what: string }>();
+		expect(signals.map((r) => r.what)).toContain("DELIVERY EXCEPTION");
+		// It rides back on the truck, and waits for the next load.
+		await returnLoad(db, "DISPATCH", l.id, 0);
+		const waiting = await waitingShipments(db);
+		expect(waiting.map((w) => [w.shipment_id, w.redeliver])).toEqual([[a.id, true]]);
+		// Asking tracking about it while it waits changes nothing.
+		expect((await getTracking(db, env.TABLES, a.id, true)).shipment.delivery).toBe("X");
+
+		// The next load takes it out again, without shipping it twice.
+		const [again] = (await planLoads(db, "DISPATCH", day)).loads;
+		expect(again.truck_id).not.toBe(l.truck_id);
+		expect((await getTracking(db, env.TABLES, a.id, true)).shipment.delivery).toBe("X");
+		const { shipped } = await dispatchLoad(db, env.TABLES, "DISPATCH", again.id);
+		expect(shipped).toEqual([a.id]);
+		const shp = (await getTracking(db, env.TABLES, a.id)).shipment;
+		expect(shp).toMatchObject({ status: "S", delivery: "O" });
+		const y = await deliverStop(db, "DRIVER", again.id, a.id, "jones", 1, "");
+		expect(y).toMatchObject({ pod_status: "D", pod_signed: "JONES", pod_cartons: 1, pod_note: "SHORT 1 CTN", delivery: "D", signed_by: "JONES" });
+		expect((await trackingEvents(db, a.id))[0].detail).toBe("DELIVERED, SIGNED BY JONES - SHORT 1 CTN");
+		expect((await err(deliverStop(db, "DRIVER", again.id, a.id, "JONES"))).message).toMatch(/already signed off/);
+		await lookAtInvoice(db, a.invoice_id);
+		const tl = (await timeline(db, "I", a.invoice_id)).map((e) => e.event);
+		expect(tl).toEqual(expect.arrayContaining(["SHIPPED", "OUT FOR DLVY", "EXCEPTION", "DELIVERED"]));
+		const row = (await board(db, day)).find((r) => r.load.id === again.id)!;
+		expect(row.next).toBeUndefined();
 	});
 
 	it("cancels a planned load, and drops a cancelled shipment from one", async () => {
@@ -288,7 +337,15 @@ describe("freight screens", () => {
 		await t.fill(`sel:${l.id}`, "s").send("ENTER");
 		expect(t.scr.map).toBe("CUSF06");
 		await t.fill("miles", "150").send("PF10");
-		expect(t.message).toBe(`CUS1933W LOAD ${l.id} COMPLETE, 150 MI ON TRUCK ${l.truck_id} - 1 STOP(S) NOT SIGNED FOR`);
+		expect(t.message).toMatch(/^CUS1928E 1 STOP\(S\) ON LOAD .* HAVE NO PROOF OF DELIVERY/);
+		await t.fill(`sel:${a.id}`, "d").send("ENTER");
+		expect(t.message).toBe("CUS1928E ENTER WHO SIGNED FOR IT");
+		expect(t.scr.cursor).toEqual({ field: "signed" });
+		await t.fill(`sel:${a.id}`, "d", "signed", "garcia").send("ENTER");
+		expect(t.message).toBe("CUS1942I STOP 1 DELIVERED, 2 CTN SIGNED FOR BY GARCIA");
+		expect(t.row(13)).toContain("DLVD GARCIA");
+		await t.fill("miles", "150").send("PF10");
+		expect(t.message).toBe(`CUS1933I LOAD ${l.id} COMPLETE, 150 MI ON TRUCK ${l.truck_id}`);
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSF07");
 		expect(screenText(t)).toContain("COMPLETE");
@@ -316,6 +373,11 @@ describe("freight screens", () => {
 		expect((await call("GET", `/v1/loads/${loads[0].id}`)).status).toBe(200);
 		expect((await call("POST", `/v1/loads/${loads[0].id}/dispatch`)).status).toBe(200);
 		expect((await call("GET", "/v1/dispatch")).status).toBe(200);
+		const { stops } = await (await call("GET", `/v1/loads/${loads[0].id}`)).json<{ stops: { shipment_id: string }[] }>();
+		expect((await call("POST", `/v1/loads/${loads[0].id}/return`, { miles: 120 })).status).toBe(422);
+		res = await call("POST", `/v1/loads/${loads[0].id}/stops/${stops[0].shipment_id}/delivered`, { signed_by: "X", cartons: 0, note: "" });
+		expect(res.status).toBe(200);
+		expect((await call("POST", `/v1/loads/${loads[0].id}/stops/${stops[0].shipment_id}/missed`, { reason: "X" })).status).toBe(422);
 		expect((await call("POST", `/v1/loads/${loads[0].id}/return`, { miles: 120 })).status).toBe(200);
 		expect((await call("GET", "/v1/loads?day=bad")).status).toBe(422);
 		expect((await call("DELETE", "/v1/dispatch")).status).toBe(405);

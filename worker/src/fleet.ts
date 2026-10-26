@@ -12,8 +12,12 @@
 //
 // A load goes PLANNED -> DISPATCHED (dispatchLoad ships its shipments and
 // they are out for delivery) -> COMPLETE (returnLoad: the truck is back,
-// its odometer goes up by the miles). Each delivery is signed off with who
-// signed for it (tracking.ts), which the dispatch board shows.
+// its odometer goes up by the miles). The driver signs off each stop
+// (proof of delivery): delivered, with who signed and the cartons taken,
+// or not delivered, with why (deliverStop, stopNotDelivered). That is the
+// shipment's tracking and lands on the order's timeline; a stop not
+// delivered comes back and its shipment waits for another load. A load
+// comes back only when every stop is signed off.
 //
 // Trucks are due for service every SERVICE_MILES or SERVICE_DAYS, whichever
 // comes first; a truck that is due, in the shop or retired is not planned.
@@ -82,6 +86,12 @@ export interface Stop {
 	cartons: number;
 	leg_miles: number;
 	eta_min: number;
+	pod_status: "" | "D" | "X"; // proof of delivery: not yet, delivered, not delivered
+	pod_at: string;
+	pod_signed: string;
+	pod_cartons: number;
+	pod_note: string;
+	pod_by: string;
 }
 
 // StopStatus is a stop with where its shipment stands.
@@ -98,6 +108,7 @@ export interface StopStatus extends Stop {
 export interface LoadSummary extends Load {
 	stops: number;
 	delivered: number;
+	missed: number; // stops not delivered
 	weight: number;
 	cartons: number;
 }
@@ -401,24 +412,27 @@ export interface Waiting extends Place {
 	state: string;
 	cartons: number;
 	bearing: number;
+	redeliver: boolean; // it came back on an earlier load
 }
 
 // waitingShipments returns the packed company truck shipments not on a
-// load yet, oldest first.
+// load yet, and those that came back not delivered, oldest first.
 export async function waitingShipments(db: D1Database): Promise<Waiting[]> {
 	const { results } = await db.prepare(
-		`SELECT s.id AS shipment_id, s.invoice_id, s.customer_id, s.weight, s.cartons, i.*
+		`SELECT s.id AS shipment_id, s.invoice_id, s.customer_id, s.weight, s.cartons, s.status AS ship_status, i.*
 		 FROM shipments s JOIN invoices i ON i.id = s.invoice_id
-		 WHERE s.carrier = 'TRK' AND s.status = 'K' AND NOT EXISTS (SELECT 1 FROM load_stops l WHERE l.shipment_id = s.id)
+		 WHERE s.carrier = 'TRK' AND NOT EXISTS (SELECT 1 FROM load_stops l WHERE l.shipment_id = s.id AND l.pod_status <> 'X')
+		   AND (s.status = 'K' OR (s.status = 'S' AND s.delivery = 'X'
+		        AND EXISTS (SELECT 1 FROM load_stops l WHERE l.shipment_id = s.id AND l.pod_status = 'X')))
 		 ORDER BY s.id`,
-	).all<Invoice & { shipment_id: string; invoice_id: string; weight: number; cartons: number }>();
+	).all<Invoice & { shipment_id: string; invoice_id: string; weight: number; cartons: number; ship_status: string }>();
 	return results.map((r) => {
 		const to = addressOf(r, "ship");
 		const p = locate(to.city, to.state);
 		return {
 			shipment_id: r.shipment_id, invoice_id: r.invoice_id, customer_id: r.customer_id,
 			name: to.name.slice(0, 30), city: to.city.toUpperCase(), state: to.state.toUpperCase(),
-			weight: r.weight, cartons: r.cartons, ...p, bearing: bearing(DEPOT, p),
+			weight: r.weight, cartons: r.cartons, ...p, bearing: bearing(DEPOT, p), redeliver: r.ship_status === "S",
 		};
 	});
 }
@@ -593,8 +607,8 @@ async function insertLoad(db: D1Database, user: string, day: string, truck: stri
 // ---- loads ----
 
 const summary = `SELECT l.*, COUNT(s.seq) AS stops, COALESCE(SUM(s.weight), 0) AS weight, COALESCE(SUM(s.cartons), 0) AS cartons,
-	  COUNT(CASE WHEN h.delivery = 'D' THEN 1 END) AS delivered
-	FROM loads l LEFT JOIN load_stops s ON s.load_id = l.id LEFT JOIN shipments h ON h.id = s.shipment_id`;
+	  COUNT(CASE WHEN s.pod_status = 'D' THEN 1 END) AS delivered, COUNT(CASE WHEN s.pod_status = 'X' THEN 1 END) AS missed
+	FROM loads l LEFT JOIN load_stops s ON s.load_id = l.id`;
 
 // listLoads returns a day's loads.
 export async function listLoads(db: D1Database, day: string): Promise<LoadSummary[]> {
@@ -614,12 +628,16 @@ export async function getLoad(db: D1Database, id: string): Promise<{ load: LoadS
 	return { load, stops, truck, driver };
 }
 
-// loadFor returns the load a shipment rides on, if any.
-export async function loadFor(db: D1Database, shipmentId: string): Promise<(Load & { seq: number; stops: number }) | undefined> {
+export type StopOnLoad = Load & Pick<Stop, "seq" | "pod_status" | "pod_at" | "pod_note"> & { stops: number };
+
+// loadFor returns the load a shipment rides on, if any: the one it is on
+// now, or the last that brought it back.
+export async function loadFor(db: D1Database, shipmentId: string): Promise<StopOnLoad | undefined> {
 	return (await db.prepare(
-		`SELECT l.*, s.seq, (SELECT COUNT(*) FROM load_stops WHERE load_id = l.id) AS stops
-		 FROM load_stops s JOIN loads l ON l.id = s.load_id WHERE s.shipment_id = ?`,
-	).bind(shipmentId).first<Load & { seq: number; stops: number }>()) ?? undefined;
+		`SELECT l.*, s.seq, s.pod_status, s.pod_at, s.pod_note, (SELECT COUNT(*) FROM load_stops WHERE load_id = l.id) AS stops
+		 FROM load_stops s JOIN loads l ON l.id = s.load_id WHERE s.shipment_id = ?
+		 ORDER BY s.pod_status = 'X', l.created DESC LIMIT 1`,
+	).bind(shipmentId).first<StopOnLoad>()) ?? undefined;
 }
 
 async function planned(db: D1Database, id: string, doing: string) {
@@ -692,7 +710,7 @@ async function replan(db: D1Database, load: Load, stops: Stop[]): Promise<void> 
 export async function dispatchLoad(db: D1Database, tables: KVNamespace, user: string, id: string): Promise<{ load: LoadSummary; shipped: string[] }> {
 	let { load, stops, truck, driver } = await planned(db, id, "dispatched");
 	if (stops.length === 0) throw bad("status", `load ${load.id} has no stops left - cancel it`);
-		if (stops.some((s, i) => s.seq !== i + 1)) {
+	if (stops.some((s, i) => s.seq !== i + 1)) {
 		await replan(db, load, stops);
 		({ load, stops, truck, driver } = await getLoad(db, load.id));
 	}
@@ -703,10 +721,16 @@ export async function dispatchLoad(db: D1Database, tables: KVNamespace, user: st
 	).bind(load.id, now(), user).run();
 	if (res.meta.changes === 0) throw new HttpError(409, "conflict", "record was changed by another user");
 	const shipped: string[] = [];
-	for (const s of packed) {
-		const { shipment } = await ship(db, user, s.shipment_id, load.id);
-		await trackShipment(db, tables, shipment);
-		shipped.push(shipment.id);
+	for (const s of stops) {
+		if (packed.includes(s)) {
+			const { shipment } = await ship(db, user, s.shipment_id, load.id);
+			await trackShipment(db, tables, shipment);
+		} else {
+			// Back out after a failed delivery.
+			const shp = await db.prepare("SELECT * FROM shipments WHERE id = ?").bind(s.shipment_id).first<Shipment>();
+			if (shp) await trackShipment(db, tables, shp);
+		}
+		shipped.push(s.shipment_id);
 	}
 	await syslog(db, user, `CUS1907I LOAD ${load.id} DISPATCHED: TRUCK ${truck.id}, DRIVER ${driver.id}, ${stops.length} STOP(S), ${load.miles} MI`);
 	return { load: (await getLoad(db, load.id)).load, shipped };
@@ -719,14 +743,92 @@ export async function returnLoad(db: D1Database, user: string, id: string, actua
 	const { load } = await getLoad(db, id);
 	if (load.status !== "D") throw bad("status", `load ${load.id} is ${loadStatusNames[load.status].toLowerCase()} - only a dispatched load comes back`);
 	if (!Number.isInteger(actual) || actual < 0 || actual > 5000) throw bad("miles", "the miles must be a whole number from 0 to 5000");
+	const open = load.stops - load.delivered - load.missed;
+	if (open > 0) throw bad("status", `${open} stop(s) on load ${load.id} have no proof of delivery - mark each delivered or not delivered`);
 	const mi = actual || load.miles;
 	const res = await db.prepare("UPDATE loads SET status = 'C', returned = ?2, actual_miles = ?3 WHERE id = ?1 AND status = 'D'")
 		.bind(load.id, now(), mi).run();
 	if (res.meta.changes === 0) throw new HttpError(409, "conflict", "record was changed by another user");
 	await db.prepare("UPDATE trucks SET odometer = odometer + ?2 WHERE id = ?1").bind(load.truck_id, mi).run();
-	const open = load.stops - load.delivered;
-	await syslog(db, user, `CUS1908${open ? "W" : "I"} LOAD ${load.id} BACK: TRUCK ${load.truck_id}, ${mi} MI` + (open ? `, ${open} STOP(S) NOT SIGNED FOR` : ""));
+	await syslog(db, user, `CUS1908${load.missed ? "W" : "I"} LOAD ${load.id} BACK: TRUCK ${load.truck_id}, ${mi} MI` +
+		(load.missed ? `, ${load.missed} SHIPMENT(S) BACK TO REDELIVER` : ""));
 	return (await getLoad(db, load.id)).load;
+}
+
+// ---- proof of delivery ----
+
+async function stopToSign(db: D1Database, loadId: string, shipmentId: string) {
+	const got = await getLoad(db, loadId);
+	const stop = got.stops.find((s) => s.shipment_id === shipmentId.trim().toUpperCase());
+	if (!stop) throw new HttpError(404, "not_found", `${shipmentId.toUpperCase()} is not on load ${got.load.id}`);
+	if (got.load.status !== "D") throw bad("status", `load ${got.load.id} is ${loadStatusNames[got.load.status].toLowerCase()} - stops are signed off while it is out`);
+	if (stop.pod_status !== "") throw bad("status", `stop ${stop.seq} (${stop.shipment_id}) is already signed off`);
+	return { ...got, stop };
+}
+
+// activeStop returns the dispatched load and stop a shipment is out on and
+// not yet signed off, if any.
+export async function activeStop(db: D1Database, shipmentId: string): Promise<StopOnLoad | undefined> {
+	const l = await loadFor(db, shipmentId);
+	return l && l.status === "D" && l.pod_status === "" ? l : undefined;
+}
+
+// deliverStop records a stop delivered: who signed, the cartons they took
+// (all of them if 0) and a note such as a shortage or damage. The shipment
+// is delivered, which its order's timeline shows.
+export async function deliverStop(db: D1Database, user: string, loadId: string, shipmentId: string, signedBy: string, cartons = 0, note = ""): Promise<StopStatus> {
+	const { load, stop } = await stopToSign(db, loadId, shipmentId);
+	const who = signedBy.trim().toUpperCase();
+	if (!who) throw bad("signed", "enter who signed for it");
+	if (who.length > 20) throw bad("signed", "signed by is at most 20 characters");
+	if (!Number.isInteger(cartons) || cartons < 0 || cartons > stop.cartons) throw bad("cartons", `cartons taken must be from 0 to ${stop.cartons}`);
+	const ctn = cartons || stop.cartons;
+	const memo = (note.trim() || (ctn < stop.cartons ? `SHORT ${stop.cartons - ctn} CTN` : "")).toUpperCase().slice(0, 30);
+	const at = now();
+	const where = `${stop.city}, ${stop.state}`;
+	const open = "EXISTS (SELECT 1 FROM load_stops WHERE load_id = ?1 AND shipment_id = ?2 AND pod_status = '')";
+	const res = await db.batch([
+		db.prepare(
+			`INSERT INTO tracking_events (shipment_id, at, code, location, detail) SELECT ?2, ?3, 'DELIVERED', ?4, ?5 WHERE ${open}
+			 ON CONFLICT (shipment_id, at, code) DO NOTHING`,
+		).bind(load.id, stop.shipment_id, at, where.slice(0, 30), `DELIVERED, SIGNED BY ${who}${memo ? " - " + memo : ""}`.slice(0, 60)),
+		db.prepare(
+			`UPDATE shipments SET delivery = 'D', delivered = ?3, signed_by = ?4, tracked = ?3, eta = substr(?3, 1, 10) WHERE id = ?2 AND ${open}`,
+		).bind(load.id, stop.shipment_id, at, who),
+		db.prepare(
+			`UPDATE load_stops SET pod_status = 'D', pod_at = ?3, pod_signed = ?4, pod_cartons = ?5, pod_note = ?6, pod_by = ?7
+			 WHERE load_id = ?1 AND shipment_id = ?2 AND pod_status = ''`,
+		).bind(load.id, stop.shipment_id, at, who, ctn, memo, user),
+	]);
+	if (res[2].meta.changes === 0) throw new HttpError(409, "conflict", "record was changed by another user");
+	await syslog(db, user, `CUS1940I ${stop.shipment_id} DELIVERED, STOP ${stop.seq} OF LOAD ${load.id}, SIGNED BY ${who}${memo ? " - " + memo : ""}`.slice(0, 120));
+	return (await getLoad(db, load.id)).stops.find((s) => s.seq === stop.seq)!;
+}
+
+// stopNotDelivered records a stop the truck could not deliver, and why
+// (receiver closed, refused, no one to sign). The shipment rides back to
+// the warehouse and waits for another load; its order's timeline shows
+// the exception.
+export async function stopNotDelivered(db: D1Database, user: string, loadId: string, shipmentId: string, reason: string): Promise<StopStatus> {
+	const { load, stop } = await stopToSign(db, loadId, shipmentId);
+	const why = reason.trim().toUpperCase();
+	if (!why) throw bad("signed", "enter why it was not delivered");
+	if (why.length > 30) throw bad("signed", "the reason is at most 30 characters");
+	const at = now();
+	const open = "EXISTS (SELECT 1 FROM load_stops WHERE load_id = ?1 AND shipment_id = ?2 AND pod_status = '')";
+	const res = await db.batch([
+		db.prepare(
+			`INSERT INTO tracking_events (shipment_id, at, code, location, detail) SELECT ?2, ?3, 'EXCEPTION', ?4, ?5 WHERE ${open}
+			 ON CONFLICT (shipment_id, at, code) DO NOTHING`,
+		).bind(load.id, stop.shipment_id, at, `${stop.city}, ${stop.state}`.slice(0, 30), `NOT DELIVERED: ${why} - BACK TO WAREHOUSE`.slice(0, 60)),
+		db.prepare(`UPDATE shipments SET delivery = 'X', tracked = ?3, eta = '' WHERE id = ?2 AND ${open}`).bind(load.id, stop.shipment_id, at),
+		db.prepare(
+			`UPDATE load_stops SET pod_status = 'X', pod_at = ?3, pod_note = ?4, pod_by = ?5 WHERE load_id = ?1 AND shipment_id = ?2 AND pod_status = ''`,
+		).bind(load.id, stop.shipment_id, at, why, user),
+	]);
+	if (res[2].meta.changes === 0) throw new HttpError(409, "conflict", "record was changed by another user");
+	await syslog(db, user, `CUS1941W ${stop.shipment_id} NOT DELIVERED, STOP ${stop.seq} OF LOAD ${load.id}: ${why}`.slice(0, 120));
+	return (await getLoad(db, load.id)).stops.find((s) => s.seq === stop.seq)!;
 }
 
 // ---- the dispatch board ----
@@ -736,8 +838,8 @@ export interface BoardRow {
 	truck: Truck;
 	driver: Driver;
 	stops: StopStatus[];
-	next?: StopStatus; // the first stop not delivered yet
-	nextEta: string; // RFC 3339, when the plan has the truck there
+	next?: StopStatus; // the first stop not signed off yet
+	nextEta: string; // RFC 3339, when the truck should be there: the plan, from the last stop signed off
 	backEta: string; // ... and back at the warehouse
 	late: boolean; // the plan had it at the next stop already
 }
@@ -748,9 +850,12 @@ export async function board(db: D1Database, day: string, at = Date.now()): Promi
 	const rows: BoardRow[] = [];
 	for (const l of await listLoads(db, day)) {
 		const { load, stops, truck, driver } = await getLoad(db, l.id);
-		const next = load.status === "C" ? undefined : stops.find((s) => s.delivery !== "D");
+		const next = load.status === "C" ? undefined : stops.find((s) => s.pod_status === "");
 		const left = load.dispatched ? Date.parse(load.dispatched) : NaN;
-		const nextEta = next && !isNaN(left) ? new Date(left + next.eta_min * 60_000).toISOString() : "";
+		// From the last stop signed off, the plan's time from there on.
+		const last = stops.filter((s) => s.pod_at && (!next || s.seq < next.seq)).pop();
+		const from = last ? Date.parse(last.pod_at) + (next ? next.eta_min - last.eta_min - DWELL_MIN : 0) * 60_000 : left + (next?.eta_min ?? 0) * 60_000;
+		const nextEta = next && !isNaN(left) ? new Date(from).toISOString() : "";
 		const backEta = !isNaN(left) ? new Date(left + (load.duty_min - PRETRIP_MIN) * 60_000).toISOString() : "";
 		rows.push({ load, truck, driver, stops, next, nextEta, backEta, late: nextEta !== "" && Date.parse(nextEta) + DWELL_MIN * 60_000 < at });
 	}
@@ -768,7 +873,10 @@ export function fleetTracking(db: D1Database, fallback: TrackingProvider): Track
 		name: "FLEET",
 		async track(req: TrackRequest, at: number) {
 			const load = await loadFor(db, req.shipment);
-			if (!load || !load.dispatched) return fallback.track(req, at);
+			if (!load) return fallback.track(req, at);
+			// Brought back after a failed delivery: it waits at the
+			// warehouse, for another load or on one not gone yet.
+			if (load.pod_status === "X" || !load.dispatched) return { delivery: "X", eta: "", scans: [] };
 			const gone = new Date(Math.max(Date.parse(load.dispatched), Date.parse(req.shipped))).toISOString();
 			const scans: Scan[] = [
 				{ at: req.shipped, code: "LABEL", location: DEPOT.name, detail: `ON LOAD ${load.id}, STOP ${load.seq} OF ${load.stops}` },
