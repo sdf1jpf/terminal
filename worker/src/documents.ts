@@ -194,7 +194,17 @@ export function invoicePdf(inv: Invoice, lines: InvoiceLine[], cust: Customer): 
 	]);
 	if (inv.status === "P") f.stamp(0, 12, `PAID ${date(inv.paid)}`);
 	if (inv.status === "O") f.put(0, 12, "NOT YET BILLED - FOR INFORMATION ONLY", true);
-	const end = f.table(INVOICE_HEAD, lines.map(invoiceRow), form, 14);
+	// A line priced below list by the customer's pricing (sales.ts) shows
+	// its list price and the agreement under it.
+	const rows = lines.flatMap((l) => l.list_price > l.unit_price
+		? [invoiceRow(l), `${"".padEnd(15)}LIST ${money(l.list_price)} EACH - ${l.price_rule || "DISCOUNT"}`]
+		: [invoiceRow(l)]);
+	let end = f.table(INVOICE_HEAD, rows, form, 14);
+	const list = lines.reduce((t, l) => t + l.quantity * Math.max(l.list_price, l.unit_price), 0);
+	if (list > inv.total) {
+		f.put(0, ++end, pad("TOTAL AT LIST", 62, true) + " " + pad(money(list), 12, true));
+		f.put(0, ++end, pad("LESS YOUR DISCOUNTS", 62, true) + " " + pad(money(inv.total - list), 12, true));
+	}
 	f.put(0, end + 1, pad("INVOICE TOTAL", 62, true) + " " + pad(money(inv.total), 12, true), true);
 	if (inv.billed) {
 		const due = new Date(Date.parse(inv.billed) + 30 * DAY).toISOString();

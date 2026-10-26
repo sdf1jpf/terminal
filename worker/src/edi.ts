@@ -27,7 +27,7 @@
 import { HttpError } from "./http";
 import {
 	addLine, addressOf, billInvoice, cancelInvoice, createInvoice, getInvoice, payInvoice, setAddress,
-	type Address, type Invoice,
+	type Address, type Invoice, type InvoiceLine,
 } from "./invoices";
 import type { Transaction } from "./activity";
 import type { StepResult } from "./jobs";
@@ -397,10 +397,22 @@ async function sendInvoice(db: D1Database, inv: Invoice): Promise<Interchange | 
 		["BIG", ymd(billed), inv.id, "", inv.po_number],
 		...party("BT", addressOf(inv, "bill"), inv.customer_id),
 		...party("ST", addressOf(inv, "ship")),
-		...lines.map((l) => ["IT1", l.line, l.quantity, "EA", l.unit_price, "", "VP", l.sku]),
+		...lines.flatMap(it1),
 		["TDS", inv.total * 100],
 		["CTT", lines.length],
 	], inv.id);
+}
+
+// it1 is an 810 line. A line priced below list by the customer's pricing
+// (sales.ts) goes at list with an allowance (SAC C310 discount) for the
+// difference, so the TDS is the lines less their allowances.
+function it1(l: InvoiceLine): (string | number)[][] {
+	const off = (l.list_price - l.unit_price) * l.quantity;
+	if (off <= 0) return [["IT1", l.line, l.quantity, "EA", l.unit_price, "", "VP", l.sku]];
+	return [
+		["IT1", l.line, l.quantity, "EA", l.list_price, "", "VP", l.sku],
+		["SAC", "A", "C310", "", "", off * 100, "", "", "", "", "", "", "", "", "", l.price_rule || "DISCOUNT"],
+	];
 }
 
 // ---- the trading partners' side, for the simulator ----

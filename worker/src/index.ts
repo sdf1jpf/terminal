@@ -41,6 +41,17 @@
 //	POST   /v1/edi/exceptions/{n}/correct   put this product on the order instead: {"sku"}
 //	POST   /v1/edi/exceptions/{n}/drop      leave the line off the order
 //	POST   /v1/edi/exceptions/{n}/reject    reject the whole order, cancelling its invoice
+//	GET    /v1/customers/{id}/sales   who sells to it and its pricing: -> {"assignment", "pricing"}
+//	PUT    /v1/customers/{id}/sales   assign it: {"territory", "salesperson"} ("" for its state's)
+//	PUT    /v1/customers/{id}/pricing/{item}   a SKU, product line or *: {"discount"} (a percentage) or {"price"}
+//	DELETE /v1/customers/{id}/pricing/{item}
+//	GET    /v1/territories          sales territories, with their states
+//	PUT    /v1/territories/{code}   add or change one: {"name", "salesperson", "states"}
+//	DELETE /v1/territories/{code}   one with no states or customers
+//	GET    /v1/salespeople
+//	POST   /v1/salespeople          add one: {"name", "commission", "status"}
+//	PUT    /v1/salespeople/{id}     change one: the same
+//	GET    /v1/sales?by=T|S&month=YYYY-MM   billed sales by territory or salesperson, with commission
 //	GET    /v1/vendors              vendors, with their open PO and product counts
 //	GET    /v1/vendors/{id}
 //	GET    /v1/purchase-orders?vendor=X   purchase orders, newest first
@@ -105,12 +116,16 @@
 // Every request is timed and written to the transaction monitor
 // (monitor.ts).
 
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { AiError, ask, describe, explainJob, naturalSearch } from "./ai";
 import { routePath } from "hono/route";
 import { customerHistory, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
+import {
+	assign, assignment, deletePricing, deleteTerritory, listPricing, listSalespeople, listTerritories, salesBy, saveSalesperson,
+	saveTerritory, setPricing,
+} from "./sales";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, int, json, noContent, readJSON, str } from "./http";
 import {
@@ -395,6 +410,51 @@ app.post("/v1/edi/exceptions/:seq/drop", signedOn, async (c) => json(200, await 
 app.post("/v1/edi/exceptions/:seq/reject", signedOn, async (c) => json(200, await rejectOrder(c.env.DB, c.get("user"), exceptionSeq(c))));
 app.get("/v1/edi/:id", signedOn, async (c) => json(200, await getInterchange(c.env.DB, c.req.param("id"))));
 
+app.get("/v1/customers/:id/sales", signedOn, async (c) => {
+	const id = c.req.param("id");
+	return json(200, { assignment: await assignment(c.env.DB, id), pricing: await listPricing(c.env.DB, id) });
+});
+app.put("/v1/customers/:id/sales", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["territory", "salesperson"]);
+	return json(200, await assign(c.env.DB, c.get("user"), c.req.param("id"), { territory: str(body, "territory"), salesperson: str(body, "salesperson") }));
+});
+app.put("/v1/customers/:id/pricing/:item", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["discount", "price"]);
+	// Either may be a number or a string such as "12.5".
+	const text = (k: string) => (body[k] === undefined || body[k] === null ? "" : String(body[k]));
+	return json(200, await setPricing(c.env.DB, c.get("user"), c.req.param("id"), { item: c.req.param("item"), disc: text("discount"), price: text("price") }));
+});
+app.delete("/v1/customers/:id/pricing/:item", signedOn, async (c) => {
+	await deletePricing(c.env.DB, c.get("user"), c.req.param("id"), c.req.param("item").toUpperCase());
+	return noContent();
+});
+app.get("/v1/territories", signedOn, async (c) => json(200, await listTerritories(c.env.DB)));
+app.put("/v1/territories/:code", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["name", "salesperson", "states"]);
+	return json(200, await saveTerritory(c.env.DB, c.get("user"), {
+		code: c.req.param("code"), name: str(body, "name"), salesperson: str(body, "salesperson"), states: str(body, "states"),
+	}));
+});
+app.delete("/v1/territories/:code", signedOn, async (c) => {
+	await deleteTerritory(c.env.DB, c.req.param("code").toUpperCase());
+	return noContent();
+});
+app.get("/v1/salespeople", signedOn, async (c) => json(200, await listSalespeople(c.env.DB)));
+const salesperson = async (c: Context<App>, id: string) => {
+	const body = await readJSON(c.req.raw, ["name", "commission", "status"]);
+	const r = await saveSalesperson(c.env.DB, c.get("user"), id, { name: str(body, "name"), comm: str(body, "commission"), status: str(body, "status") });
+	return json(id ? 200 : 201, r);
+};
+app.post("/v1/salespeople", signedOn, (c) => salesperson(c, ""));
+app.put("/v1/salespeople/:id", signedOn, (c) => salesperson(c, c.req.param("id").toUpperCase()));
+app.get("/v1/sales", signedOn, async (c) => {
+	const by = (c.req.query("by") ?? "T").toUpperCase();
+	if (by !== "T" && by !== "S") throw new HttpError(400, "bad_request", 'by must be T (territory) or S (salesperson)');
+	const month = c.req.query("month") ?? new Date().toISOString().slice(0, 7);
+	if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new HttpError(400, "bad_request", "month must be YYYY-MM");
+	return json(200, await salesBy(c.env.DB, by, month));
+});
+
 app.get("/v1/vendors", signedOn, async (c) => json(200, await listVendors(c.env.DB)));
 app.get("/v1/vendors/:id", signedOn, async (c) => json(200, await getVendor(c.env.DB, c.req.param("id"))));
 
@@ -657,6 +717,13 @@ for (const path of [
 	"/v1/tables/:table",
 	"/v1/tables/:table/:key",
 	"/v1/monitor",
+	"/v1/customers/:id/sales",
+	"/v1/customers/:id/pricing/:item",
+	"/v1/territories",
+	"/v1/territories/:code",
+	"/v1/salespeople",
+	"/v1/salespeople/:id",
+	"/v1/sales",
 ]) {
 	app.all(path, (c) => {
 		throw new HttpError(405, "method_not_allowed", `${c.req.method} is not allowed on ${c.req.path.replace(/\/+$/, "")}`);

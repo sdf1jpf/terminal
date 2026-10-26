@@ -103,7 +103,7 @@ describe("documents", () => {
 	it("runs a long invoice onto more pages", async () => {
 		const { invoice } = await getInvoice(env.DB, await billedInvoice("000102"));
 		const lines = Array.from({ length: 90 }, (_, i) => ({
-			invoice_id: invoice.id, line: i + 1, sku: "BLT-0516", description: "BOLT", quantity: 1, unit_price: 2,
+			invoice_id: invoice.id, line: i + 1, sku: "BLT-0516", description: "BOLT", quantity: 1, unit_price: 2, list_price: 2, disc_pct10: 0, price_rule: "",
 		}));
 		const b = invoicePdf({ ...invoice, status: "P", paid: new Date().toISOString() }, lines, await getCustomer(env.DB, "000102"));
 		expect(checkPdf(b)).toBeGreaterThan(1);
