@@ -33,6 +33,7 @@
 //	DELETE /v1/invoices/{id}/lines/{n}
 //	POST   /v1/invoices/{id}/bill   post the total to the customer's account
 //	POST   /v1/invoices/{id}/pay    post the payment
+//	GET    /v1/invoices/{id}/timeline   its lifecycle: -> {"flow", "workflow", "pending", "events"}
 //	GET    /v1/edi?partner=X        EDI mailbox, newest first (without the raw X12)
 //	POST   /v1/edi                  receive an X12 interchange (the body, as text)
 //	GET    /v1/edi/{id}             one interchange with its raw X12
@@ -109,6 +110,7 @@ import {
 } from "./invoices";
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
+import { getFlow, pendingSignals, timeline, workflowStatus, type OrderParams } from "./lifecycle";
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
 import { recent } from "./syslog";
@@ -136,6 +138,7 @@ export interface Env {
 	DEV_USER?: string; // wrangler dev only, when Access is not configured
 	JOBS: Queue<JobMessage>; // the batch job input queue
 	JOB_RUNNER: Workflow<JobMessage>;
+	ORDER_FLOW: Workflow<OrderParams>; // one OrderLifecycle per invoice (lifecycle.ts)
 	ARCHIVE: R2Bucket; // old output and documents, as files (archive.ts)
 	BROWSER?: BrowserRun; // Browser Rendering, for snapshots (snapshot.ts)
 	MAIL?: SendEmail; // Email Routing, sending only to MAIL_TO (mail.ts)
@@ -151,6 +154,7 @@ export interface Env {
 }
 
 export { JobRunner } from "./jobs";
+export { OrderLifecycle } from "./lifecycle";
 export { Sessions } from "./sessions";
 
 type App = { Bindings: Env; Variables: { user: string; tran?: string; terminal?: string } };
@@ -324,6 +328,16 @@ app.get("/v1/invoices/:id/pdf", signedOn, async (c) => {
 });
 app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+app.get("/v1/invoices/:id/timeline", signedOn, async (c) => {
+	const id = c.req.param("id").toUpperCase();
+	const [flow, events, pending, workflow] = await Promise.all([
+		getFlow(c.env.DB, "I", id), timeline(c.env.DB, "I", id), pendingSignals(c.env.DB, "I", id), workflowStatus(c.env, "I", id),
+	]);
+	if (!flow && events.length === 0 && !(await c.env.DB.prepare("SELECT 1 FROM invoices WHERE id = ?").bind(id).first())) {
+		throw new HttpError(404, "not_found", "invoice not found");
+	}
+	return json(200, { flow: flow ?? null, workflow, pending, events });
+});
 
 // address reads an optional address object from a request body.
 function address(body: Record<string, unknown>, key: string): Address | undefined {
@@ -556,6 +570,7 @@ for (const path of [
 	"/v1/invoices/:id/lines/:line",
 	"/v1/invoices/:id/bill",
 	"/v1/invoices/:id/pay",
+	"/v1/invoices/:id/timeline",
 	"/v1/edi",
 	"/v1/edi/:id",
 	"/v1/vendors",
@@ -603,7 +618,7 @@ for (const path of [
 }
 
 // The queue consumer, the cron trigger, the email handler and the
-// JobRunner workflow stay outside Hono.
+// JobRunner and OrderLifecycle workflows stay outside Hono.
 export default {
 	fetch: app.fetch,
 	queue: startJobs,

@@ -40,8 +40,11 @@
   // products by meaning (see src/ai.ts).
   "ai": { "binding": "AI" },
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "customer-help" }],
+  // Each order's life, from order to cash, runs as an OrderLifecycle named
+  // after it (see src/lifecycle.ts).
   "workflows": [
-    { "binding": "JOB_RUNNER", "name": "customer-job-runner", "class_name": "JobRunner" }
+    { "binding": "JOB_RUNNER", "name": "customer-job-runner", "class_name": "JobRunner" },
+    { "binding": "ORDER_FLOW", "name": "customer-order-lifecycle", "class_name": "OrderLifecycle" }
   ],
   // The system tables: carrier rates, tax codes, help text (src/systables.ts).
   "kv_namespaces": [{ "binding": "TABLES", "id": "5d7e445e101c4f219a4eecd27d3efab3" }],

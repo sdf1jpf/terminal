@@ -226,7 +226,7 @@ const help: Record<string, FieldHelp> = {
 	"invoices.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type a code beside an invoice and press Enter."],
-		values: v(["S", "SHOW THE INVOICE"], ["P", "MARK A BILLED INVOICE PAID: POSTS A PAYMENT FOR ITS TOTAL"]),
+		values: v(["S", "SHOW THE INVOICE"], ["P", "MARK A BILLED INVOICE PAID: POSTS A PAYMENT FOR ITS TOTAL"], ["T", "ITS LIFECYCLE TIMELINE"]),
 	},
 	"invoice.sku": {
 		title: "ADD LINE: SKU",
@@ -378,6 +378,16 @@ const help: Record<string, FieldHelp> = {
 			"  H  its event history: orders, receipts and EDI",
 		],
 		values: v(["S", "LIST ITS PURCHASE ORDERS"], ["H", "EVENT HISTORY"]),
+	},
+	"timeline.id": {
+		title: "ORDER NUMBER",
+		lines: [
+			"The invoice whose lifecycle to show, such as INV00042 or just 42. Each",
+			"invoice's life runs as a workflow: it bills the invoice when it ships,",
+			"waits for payment, and sends a reminder when payment is due (net 30),",
+			"a second notice 30 days later and a final notice 30 days after that,",
+			"which puts the account on hold. The timeline lists what it has seen.",
+		],
 	},
 	"vendhist.vendor": {
 		title: "VENDOR NUMBER",

@@ -276,7 +276,8 @@ export async function cancelInvoice(db: D1Database, id: string): Promise<void> {
 		db.prepare(`DELETE FROM invoice_lines WHERE invoice_id = ?1 AND ${isOpen}`).bind(id),
 		db.prepare(`DELETE FROM invoices WHERE id = ?1 AND ${isOpen}`).bind(id),
 	]);
-	if (deleted.meta.changes === 1) return;
+	// The count includes the order signal its trigger adds (lifecycle.ts).
+	if (deleted.meta.changes > 0) return;
 	await mustBeOpen(db, id);
 }
 
