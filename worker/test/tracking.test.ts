@@ -28,7 +28,7 @@ const get = async (id: string) => (await db.prepare("SELECT * FROM shipments WHE
 
 describe("tracking", () => {
 	it("plays out the same trip for a tracking number every time", () => {
-		const req = { carrier: "UPS", tracking: "1Z123E00001", shipped: "2026-10-26T15:00:00.000Z", shipTo: { name: "X", address: "", city: "BARRE", state: "VT", zip: "" }, transitDays: 4 };
+		const req = { shipment: "SHP99999", carrier: "UPS", tracking: "1Z123E00001", shipped: "2026-10-26T15:00:00.000Z", shipTo: { name: "X", address: "", city: "BARRE", state: "VT", zip: "" }, transitDays: 4 };
 		const trip = simulatedTrip(req);
 		expect(simulatedTrip(req)).toEqual(trip);
 		expect(trip.scans[0]).toMatchObject({ code: "LABEL", at: req.shipped, location: "COLUMBUS, OH" });

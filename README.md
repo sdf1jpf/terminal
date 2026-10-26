@@ -347,6 +347,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
 | 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
 | 6 | SELLING | 1 Customer pricing, 2 Territories, 3 Salespeople, 4 Sales by territory, 5 Sales and commission by salesperson |
+| 7 | FREIGHT | 1 Trucks, 2 Drivers, 3 Load planning, 4 Dispatch board |
 | T, X | | Tutorial, log off |
 
 A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
@@ -697,6 +698,55 @@ The API: `GET /v1/shipments/{id}/tracking` (`POST` to ask the carrier
 first), `GET /v1/track/{number}` by shipment, invoice or tracking number, and
 `POST /v1/shipments/{id}/delivered` with `{"signed_by"}` for the truck.
 
+## Freight operations
+
+Freight to OH, IN, KY, MI, PA and WV goes on the company's own trucks
+(carrier `TRK`, chosen when the shipment is packed). Menu option **7 FREIGHT**
+runs that fleet (`worker/src/fleet.ts`, migration 0031).
+
+- **7.1 TRUCKS** (CUSF01) lists the trucks: capacity, the license class it
+  takes to drive (A for the tractor-trailer, B for the box trucks), odometer,
+  status and when the next service is due, every 15,000 miles or 90 days,
+  whichever comes first. `S` shows one (CUSF02), `U` or PF4 there changes it,
+  PF6 adds one, and `V` (or PF5 on CUSF02) records a service. A truck that is
+  due, in the shop or retired is not planned.
+- **7.2 DRIVERS** (CUSF03) lists the drivers with their license class and
+  expiry, and their hours on duty in the last 7 days against the 60 allowed.
+- **7.3 LOADS** (CUSF05) plans a day: PF6 takes the packed truck shipments
+  waiting and groups them into loads. It sweeps round the warehouse by
+  compass direction, splitting where the directions leave a gap, so a load
+  runs one road out; a load is no heavier than the biggest free truck and
+  fits in a day's hours of service (11 hours driving, 14 on duty), or, for a
+  stop too far for a day, as an overnight run. If there are more loads than
+  trucks, the neighbouring loads that merge for the fewest extra miles are
+  merged. Each load goes on the smallest truck it fits, with the driver with
+  the narrowest license that takes that truck who has the hours left this
+  week, and its stops are put in the order that drives the fewest miles.
+  Shipments that cannot go (too heavy for every truck, or no truck or driver
+  left) keep waiting, with the reason. PF9 submits `CUSLOAD` for manifests.
+- **CUSF06 LOAD** (`S` on a load, or `LOAD 7`) shows the crew, which can be
+  changed while it is planned, and the stops with their miles and when the
+  plan has the truck there. PF10 dispatches it: its shipments ship (an 856
+  goes to EDI customers) and are out for delivery on the truck, and shipping
+  one by hand is refused while it is on a planned load. When the truck is
+  back, type the miles (blank for the planned miles) and press PF10: the load
+  is complete and the truck's odometer goes up. PF9 cancels a planned load
+  and its shipments wait again.
+- **7.4 DISPATCH** (CUSF07) is the dispatch board: each truck's load, its
+  stops delivered (`*`), the next (`>`) and still to go (`.`), the next
+  stop's city and planned arrival (red when the truck is behind), and when
+  it is due back; then the trucks that are free, in the shop or due for
+  service.
+
+There is no map service: the cities the truck serves are in
+`worker/src/geo.ts`, and road miles are the great-circle distance times 1.2,
+at 50 mph, with 30 minutes at each stop. Planning, dispatch, a truck's return
+and services are logged on SYSLOG as `CUS19xx`.
+
+The API: `/v1/trucks`, `/v1/drivers`, `/v1/loads` (`POST /v1/loads/plan`,
+`POST /v1/loads/{id}/dispatch`, `POST /v1/loads/{id}/return`) and
+`GET /v1/dispatch`.
+
 ## Accounts receivable and the general ledger
 
 Menu option 4.1 opens the **GENERAL LEDGER** (CUSA01): the trial balance
@@ -827,6 +877,7 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSREORD` | Reorder: purchase orders to vendors for every product at or below its reorder point, sent as 850s. RC 0004 if a low product has no vendor. |
 | `VENDSIM` | EDI vendor simulator: STEP010 vendors confirm sent POs with 855s, STEP020 they ship confirmed ones with 856s. |
 | `CUSPICK` | Pick tickets for every shipment waiting in the warehouse, lines in bin order. |
+| `CUSLOAD` | STEP010 plans today's [company truck loads](#freight-operations), STEP020 prints a driver manifest for each load not dispatched yet. RC 0004 if any shipment was left waiting. |
 | `CUSTRIAL` | Journal the latest activity into the open period and print the trial balance. RC 0004 if the AR control account and the customer accounts disagree. |
 | `CUSCLOSE` | Month-end close: STEP010 journal, STEP020 trial balance, STEP030 close the period and open the next. |
 | `CUSDUNN` | Dunning letters for invoices more than 30 days old that have no [order lifecycle](#order-lifecycles); final notices put the account on hold. RC 0004 if any letters were printed. |

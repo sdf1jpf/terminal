@@ -7,6 +7,7 @@ import { newInvoices } from "./invoices";
 import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
 import { newTracking } from "./tracking";
+import { newLoads } from "./loads";
 import { newLedger } from "./ledger";
 import { find } from "./search";
 import { newVendHist } from "./vendhist";
@@ -44,6 +45,7 @@ const menus: Record<string, Menu> = {
 			{ key: "4", name: "ACCOUNTING", desc: "Ledger, close, dunning, credit", sub: "4" },
 			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, output, monitor, tables", sub: "5" },
 			{ key: "6", name: "SELLING", desc: "Pricing, territories, salespeople", sub: "6" },
+			{ key: "7", name: "FREIGHT", desc: "Trucks, drivers, loads, dispatch", sub: "7" },
 			{
 				key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys; HELP and a question", aliases: ["T", "HELP", "ASK"],
 				go: (ctx, m, _arg, rest) => (rest ? newAsk(ctx, m, rest) : { p: "help", back: m }),
@@ -152,6 +154,16 @@ const menus: Record<string, Menu> = {
 			{ key: "6", name: "TABLES", desc: "Carrier rates, tax codes, help text", aliases: ["SYSTABLES"], go: (_ctx, m) => ({ p: "tables", back: m }) },
 			{ key: "7", name: "ARCHIVE", desc: "Archived output (R2)", aliases: ["R2"], go: (_ctx, m, arg) => ({ p: "archive", back: m, filter: arg.toUpperCase() }) },
 			{ key: "8", name: "MAIL", desc: "Mail sent and received", aliases: ["EMAIL"], go: (_ctx, m, arg) => ({ p: "mail", back: m, ref: arg.toUpperCase() }) },
+		],
+	},
+	"7": {
+		map: "CUSM70",
+		title: "FREIGHT OPERATIONS MENU",
+		options: [
+			{ key: "1", name: "TRUCKS", desc: "Fleet and maintenance", aliases: ["FLEET"], go: (_ctx, m) => ({ p: "trucks", back: m }) },
+			{ key: "2", name: "DRIVERS", desc: "Drivers, licenses, hours", go: (_ctx, m) => ({ p: "drivers", back: m }) },
+			{ key: "3", name: "LOADS", desc: "Plan and dispatch loads", aliases: ["PLAN", "LOAD"], go: (_ctx, m, arg) => newLoads(m, arg) },
+			{ key: "4", name: "DISPATCH", desc: "Dispatch board", aliases: ["BOARD"], go: (_ctx, m, arg) => ({ p: "board", back: m, day: arg }) },
 		],
 	},
 };

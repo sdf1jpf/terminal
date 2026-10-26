@@ -189,6 +189,40 @@ export interface TrackingState {
 	errField?: string;
 	msg?: string;
 }
+export interface TrucksState { p: "trucks"; back: State; top?: number; errSel?: string; msg?: string }
+export interface DriversState { p: "drivers"; back: State; top?: number; errSel?: string; msg?: string }
+export interface FleetItemState {
+	p: "fleetitem";
+	kind: "T" | "D"; // a truck or a driver
+	mode: "inquiry" | "update" | "add";
+	back: State;
+	id?: string;
+	version?: number; // of the record being updated
+	vals?: Record<string, string>; // operator input kept across a failed edit
+	errField?: string;
+	msg?: string;
+}
+export interface LoadsState {
+	p: "loads";
+	back: State;
+	day?: string; // YYYY-MM-DD, blank for today
+	top?: number;
+	errSel?: string;
+	errField?: string;
+	msg?: string;
+}
+export interface LoadState {
+	p: "load";
+	back: State;
+	id: string; // LD00001
+	top?: number;
+	vals?: Record<string, string>;
+	errField?: string;
+	errSel?: string;
+	confirm?: boolean; // PF9 pressed once
+	msg?: string;
+}
+export interface BoardState { p: "board"; back: State; day?: string; errSel?: string; errField?: string; msg?: string }
 export interface LedgerState {
 	p: "ledger";
 	back: State;
@@ -374,6 +408,7 @@ export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState | TrackingState
+	| TrucksState | DriversState | FleetItemState | LoadsState | LoadState | BoardState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState
 	| PricingState | TerritoriesState | SalespeopleState | SalesRptState;

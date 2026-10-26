@@ -73,6 +73,19 @@
 //	POST   /v1/shipments/{id}/tracking   ask the carrier now, then the same
 //	POST   /v1/shipments/{id}/delivered  sign off a company truck delivery: {"signed_by"}
 //	GET    /v1/track/{number}       a shipment by its number, invoice or tracking number -> as /tracking
+//	GET    /v1/trucks               the company's trucks; POST adds one
+//	GET    /v1/trucks/{id}          PUT changes one ("version" must match)
+//	POST   /v1/trucks/{id}/serviced record a service: the next is due 15,000 miles or 90 days on
+//	GET    /v1/drivers              the company's drivers; POST adds one
+//	GET    /v1/drivers/{id}         with "duty_minutes" this week; PUT changes one ("version" must match)
+//	GET    /v1/loads?day=YYYY-MM-DD truck loads for a day (today by default) -> {"day", "loads", "waiting"}
+//	POST   /v1/loads/plan           plan a day's loads from the truck shipments waiting: {"day"} -> {"loads", "unplanned"}
+//	GET    /v1/loads/{id}           -> {"load", "stops", "truck", "driver"}
+//	PUT    /v1/loads/{id}           put a planned load on another truck or driver: {"truck_id", "driver_id"}
+//	DELETE /v1/loads/{id}           cancel a planned load; its shipments wait again
+//	POST   /v1/loads/{id}/dispatch  send it out: its shipments ship and are out for delivery
+//	POST   /v1/loads/{id}/return    the truck is back: {"miles"}, the planned miles if 0 or left out
+//	GET    /v1/dispatch?day=X       the dispatch board: each load, its next stop and when it is due back
 //	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
 //	GET    /v1/ledger/periods       accounting periods, newest first
 //	GET    /v1/ledger/accounts/{n}?period=X   an account's journal entries in a period
@@ -149,6 +162,10 @@ import {
 import { accountEntries, listPeriods, openPeriod, trialBalance } from "./ledger";
 import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
 import { confirmDelivery, findShipment, getTracking } from "./tracking";
+import {
+	assignLoad, board, cancelLoad, dayOf, dispatchLoad, dutyMinutes, freightDay, getDriver, getLoad, getTruck, listDrivers, listLoads, listTrucks,
+	parseDriver, parseTruck, planLoads, returnLoad, saveDriver, saveTruck, truckServiced, waitingShipments,
+} from "./fleet";
 import { config as screens, requestKeys, screen } from "./screens";
 import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
 import { buildStatements, invoicePdf, listingPdf, statementPdf } from "./documents";
@@ -519,6 +536,58 @@ app.get("/v1/track/:number", signedOn, async (c) => {
 	return json(200, await getTracking(c.env.DB, c.env.TABLES, shp.id));
 });
 
+const truckKeys = ["id", "name", "plate", "capacity_lb", "cdl_class", "odometer", "status", "service_miles", "service_due", "version"];
+const driverKeys = ["id", "name", "phone", "cdl_class", "cdl_expires", "status", "version"];
+const versionOf = (body: Record<string, unknown>) => {
+	const v = int(body, "version");
+	if (v < 1) throw new HttpError(422, "invalid", "send the version read", "version");
+	return v;
+};
+app.get("/v1/trucks", signedOn, async (c) => json(200, await listTrucks(c.env.DB)));
+app.post("/v1/trucks", signedOn, async (c) => json(201, await saveTruck(c.env.DB, c.get("user"), parseTruck(await readJSON(c.req.raw, truckKeys)), 0)));
+app.get("/v1/trucks/:id", signedOn, async (c) => json(200, await getTruck(c.env.DB, c.req.param("id"))));
+app.put("/v1/trucks/:id", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, truckKeys);
+	return json(200, await saveTruck(c.env.DB, c.get("user"), parseTruck({ ...body, id: c.req.param("id") }), versionOf(body)));
+});
+app.post("/v1/trucks/:id/serviced", signedOn, async (c) => json(200, await truckServiced(c.env.DB, c.get("user"), c.req.param("id"))));
+app.get("/v1/drivers", signedOn, async (c) => json(200, await listDrivers(c.env.DB)));
+app.post("/v1/drivers", signedOn, async (c) => json(201, await saveDriver(c.env.DB, c.get("user"), parseDriver(await readJSON(c.req.raw, driverKeys)), 0)));
+app.get("/v1/drivers/:id", signedOn, async (c) => {
+	const d = await getDriver(c.env.DB, c.req.param("id"));
+	return json(200, { ...d, duty_minutes: await dutyMinutes(c.env.DB, d.id, freightDay()) });
+});
+app.put("/v1/drivers/:id", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, driverKeys);
+	return json(200, await saveDriver(c.env.DB, c.get("user"), parseDriver({ ...body, id: c.req.param("id") }), versionOf(body)));
+});
+app.get("/v1/loads", signedOn, async (c) => {
+	const day = dayOf(c.req.query("day") ?? "");
+	return json(200, { day, loads: await listLoads(c.env.DB, day), waiting: await waitingShipments(c.env.DB) });
+});
+app.post("/v1/loads/plan", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["day"]);
+	return json(200, await planLoads(c.env.DB, c.get("user"), dayOf(str(body, "day"))));
+});
+app.get("/v1/loads/:id", signedOn, async (c) => json(200, await getLoad(c.env.DB, c.req.param("id"))));
+app.put("/v1/loads/:id", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["truck_id", "driver_id"]);
+	return json(200, await assignLoad(c.env.DB, c.get("user"), c.req.param("id"), str(body, "truck_id"), str(body, "driver_id")));
+});
+app.delete("/v1/loads/:id", signedOn, async (c) => {
+	await cancelLoad(c.env.DB, c.get("user"), c.req.param("id"));
+	return noContent();
+});
+app.post("/v1/loads/:id/dispatch", signedOn, async (c) => json(200, await dispatchLoad(c.env.DB, c.env.TABLES, c.get("user"), c.req.param("id"))));
+app.post("/v1/loads/:id/return", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["miles"]);
+	return json(200, await returnLoad(c.env.DB, c.get("user"), c.req.param("id"), int(body, "miles")));
+});
+app.get("/v1/dispatch", signedOn, async (c) => {
+	const day = dayOf(c.req.query("day") ?? "");
+	return json(200, { day, board: await board(c.env.DB, day) });
+});
+
 app.get("/v1/ledger", signedOn, async (c) => json(200, await trialBalance(c.env.DB, c.req.query("period") ?? "")));
 app.get("/v1/ledger/periods", signedOn, async (c) => json(200, await listPeriods(c.env.DB)));
 app.get("/v1/ledger/accounts/:account", signedOn, async (c) => {
@@ -691,6 +760,17 @@ for (const path of [
 	"/v1/shipments/:id/tracking",
 	"/v1/shipments/:id/delivered",
 	"/v1/track/:number",
+	"/v1/trucks",
+	"/v1/trucks/:id",
+	"/v1/trucks/:id/serviced",
+	"/v1/drivers",
+	"/v1/drivers/:id",
+	"/v1/loads",
+	"/v1/loads/plan",
+	"/v1/loads/:id",
+	"/v1/loads/:id/dispatch",
+	"/v1/loads/:id/return",
+	"/v1/dispatch",
 	"/v1/ledger",
 	"/v1/ledger/periods",
 	"/v1/ledger/accounts/:account",
