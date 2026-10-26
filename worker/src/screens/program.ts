@@ -220,6 +220,35 @@ export interface SpoolState {
 }
 export interface OutputState { p: "output"; back: State; id: string; top?: number; msg?: string }
 
+export interface MonitorState {
+	p: "monitor";
+	back: State;
+	minutes?: number; // the window shown; 15 by default
+	view?: "T" | "I"; // by transaction (the default) or by interval
+	top?: number;
+	msg?: string;
+}
+export interface TablesState { p: "tables"; back: State; names?: string[]; errSel?: string; msg?: string }
+export interface TableRowsState {
+	p: "tablerows";
+	back: State;
+	table: string;
+	keys?: string[]; // the rows shown, for the selection codes
+	top?: number;
+	confirm?: boolean; // PF9 was pressed once: press it again to reset the table
+	errSel?: string;
+	msg?: string;
+}
+export interface TableRowState {
+	p: "tablerow";
+	back: TableRowsState;
+	table: string;
+	key?: string; // the row changed; unset to add one
+	vals?: Record<string, string>; // operator input kept across a failed save
+	errField?: string;
+	msg?: string;
+}
+
 export interface SearchState {
 	p: "search";
 	back: State;
@@ -235,7 +264,8 @@ export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
-	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState;
+	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
+	| MonitorState | TablesState | TableRowsState | TableRowState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

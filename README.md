@@ -246,6 +246,12 @@ GET    /v1/spool/{id}           an output group and its lines
 GET    /v1/spool/{id}/print     paged for the printer, as text/plain
 POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 DELETE /v1/spool/{id}           purge it, and its job
+GET    /v1/tables               the system tables, with their row counts
+GET    /v1/tables/{t}           a table's columns and rows
+PUT    /v1/tables/{t}/{key}     add or change a row
+DELETE /v1/tables/{t}/{key}     delete a row
+DELETE /v1/tables/{t}           put a table back to its defaults
+GET    /v1/monitor?minutes=N    transaction statistics: 5, 15, 60, 240 or 1440 minutes
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -319,7 +325,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox |
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
-| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output |
+| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
 | T, X | | Tutorial, log off |
 
 A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
@@ -651,6 +657,46 @@ purge as `$HASP250`. Purging a job's output removes the job from the batch
 job list too. `PRT1` is simulated: `GET /v1/spool/{id}/print` returns the
 listing paged for it, 60 lines to a page with a heading and a form feed
 between pages.
+
+## Transaction monitor
+
+Every request the Worker answers is timed and written to
+[Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/)
+(dataset `customer_transactions`). A screen request counts as the transaction
+of the screen it sends back (`CUSM00`, `CUSO01`), an API call as its route
+(`GET /v1/customers/:id`).
+
+Menu option 5.5 (or `MONITOR`) opens the **TRANSACTION MONITOR** (CUSO03),
+like CICS statistics: the total, transactions per minute, average and
+maximum response time and abends (status 500 and up) for the window, then
+by transaction with count, rate, average, 95th percentile and maximum. PF6
+switches to the rate over time with a bar per interval, PF10 and PF11
+shorten and lengthen the window (5 minutes to 24 hours), and the screen
+refreshes every 30 seconds. `GET /v1/monitor` returns the same figures.
+
+Writing needs only the binding. Reading uses the Analytics Engine SQL API,
+which needs an API token with **Account → Account Analytics → Read**, set as
+a Worker secret: `cd worker && npx wrangler secret put AE_API_TOKEN`. Until
+it is set, the screen says so and `GET /v1/monitor` answers 503.
+
+## System tables
+
+Small reference tables live in [Workers KV](https://developers.cloudflare.com/kv/)
+(namespace `customer-api-tables`, binding `TABLES`) so every request can read
+them from the edge cache:
+
+| Table | What it holds |
+| --- | --- |
+| `CARRIER` | Carriers: priority, service states, weight, carton and order value limits, base and per-pound charge, transit days. Carriers are tried by priority and the first whose limits all hold takes the order; the defaults are the shipping desk's routing (truck in OH IN KY MI PA WV, UPS up to 149 lb, 70 lb a carton and $4,999, FedEx Freight otherwise). |
+| `TAXCODE` | Sales tax rate by ship-to state, and whether freight is taxed. |
+| `HELP` | PF1 help text by `panel.field` (`BROWSE.FILTER`) or field name. A row replaces the built-in help for that field, keeping its list of valid values, or adds help where there is none. |
+
+Menu option 5.6 (or `TABLES`) opens **SYSTEM TABLES** (CUSO04). `S` shows a
+table's rows (CUSO05), where `U` changes a row (CUSO06), `D` deletes one,
+PF5 adds one and PF9 twice puts the table back to its defaults. Changes are
+logged on SYSLOG (`CUS0801I`-`CUS0803I`). A table nobody has changed is not
+stored and reads as its defaults. KV is eventually consistent, so another
+location can see the old row for up to a minute.
 
 ## Printing a screen
 
