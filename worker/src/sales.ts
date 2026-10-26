@@ -403,11 +403,14 @@ export interface LinePricing {
 // pricingFor finds the agreement that prices a SKU for a customer: one for
 // the SKU, else its product line, else *.
 export async function pricingFor(db: D1Database, customerId: string, sku: string): Promise<LinePricing> {
-	const line = productLine(sku);
 	const { results } = await db.prepare(
 		"SELECT * FROM customer_pricing WHERE customer_id = ?1 AND item IN (?2, ?3, '*')",
-	).bind(customerId, sku, line).all<Pricing>();
-	const best = results.find((r) => r.item === sku) ?? results.find((r) => r.item === line) ?? results.find((r) => r.item === "*");
+	).bind(customerId, sku, productLine(sku)).all<Pricing>();
+	return agreementFrom(results, sku);
+}
+
+function agreementFrom(rows: Pricing[], sku: string): LinePricing {
+	const best = mostSpecific(rows, sku)[0];
 	if (!best) return { disc_pct10: 0, price: 0, rule: "" };
 	if (best.price > 0) return { disc_pct10: 0, price: best.price, rule: "CONTRACT" };
 	return { disc_pct10: best.disc_pct10, price: 0, rule: `${best.item === "*" ? "ALL" : best.item} ${pct(best.disc_pct10)}`.slice(0, 20) };
@@ -475,12 +478,15 @@ export async function deleteBreak(db: D1Database, item: string, minQty: number):
 
 // breakFor is the quantity break a line of qty of sku earns, if any.
 export async function breakFor(db: D1Database, sku: string, qty: number): Promise<QtyBreak | undefined> {
-	// The most specific item with breaks has the say, even when the line
-	// earns none of them.
 	const { results } = await db.prepare("SELECT * FROM qty_breaks WHERE item IN (?1, ?2, '*')")
 		.bind(sku, productLine(sku)).all<QtyBreak>();
-	return mostSpecific(results, sku).filter((b) => b.min_qty <= qty).sort((a, b) => b.min_qty - a.min_qty)[0];
+	return breakFrom(results, sku, qty);
 }
+
+// The most specific item with breaks has the say, even when the line earns
+// none of them.
+const breakFrom = (rows: QtyBreak[], sku: string, qty: number) =>
+	mostSpecific(rows, sku).filter((b) => b.min_qty <= qty).sort((a, b) => b.min_qty - a.min_qty)[0];
 
 export async function listPromotions(db: D1Database): Promise<Promotion[]> {
 	const { results } = await db.prepare("SELECT * FROM promotions ORDER BY starts DESC, id DESC").all<Promotion>();
@@ -548,35 +554,124 @@ export async function promotionFor(db: D1Database, sku: string, list: number, da
 	const { results } = await db.prepare(
 		"SELECT * FROM promotions WHERE item IN (?1, ?2, '*') AND starts <= ?3 AND ends >= ?3",
 	).bind(sku, productLine(sku), day).all<Promotion>();
-	return mostSpecific(results, sku).sort((a, b) => netPrice(list, a) - netPrice(list, b))[0];
+	return promotionFrom(results, sku, list);
 }
+
+const promotionFrom = (rows: Promotion[], sku: string, list: number) =>
+	mostSpecific(rows, sku).sort((a, b) => netPrice(list, a) - netPrice(list, b))[0];
 
 // The price of a line, as charged and recorded on it.
 export interface LinePrice {
 	unit_price: number;
 	disc_pct10: number; // the discount off list it comes to, in tenths
 	rule: string; // e.g. BRG 10% +QTY 5%; "" at list
+	promotion?: Promotion; // the promotion that set the price, if one did
+}
+
+// The rules that price a customer's lines on a day: its agreements, the
+// quantity breaks and the promotions running that day.
+interface PriceRules {
+	pricing: Pricing[];
+	breaks: QtyBreak[];
+	promotions: Promotion[];
 }
 
 // priceLine prices qty of sku at list for a customer on day: the lower of
 // the customer's own price (pricingFor) and any promotion, then less the
 // quantity break the line earns.
 export async function priceLine(db: D1Database, customerId: string, sku: string, qty: number, list: number, day = today()): Promise<LinePrice> {
-	const own = await pricingFor(db, customerId, sku);
+	const [pricing, breaks, promotions] = await Promise.all([
+		db.prepare("SELECT * FROM customer_pricing WHERE customer_id = ?1 AND item IN (?2, ?3, '*')").bind(customerId, sku, productLine(sku)).all<Pricing>(),
+		db.prepare("SELECT * FROM qty_breaks WHERE item IN (?1, ?2, '*')").bind(sku, productLine(sku)).all<QtyBreak>(),
+		db.prepare("SELECT * FROM promotions WHERE item IN (?1, ?2, '*') AND starts <= ?3 AND ends >= ?3").bind(sku, productLine(sku), day).all<Promotion>(),
+	]);
+	return priceWith({ pricing: pricing.results, breaks: breaks.results, promotions: promotions.results }, sku, qty, list);
+}
+
+function priceWith(r: PriceRules, sku: string, qty: number, list: number): LinePrice {
+	const own = agreementFrom(r.pricing, sku);
 	let unit = netPrice(list, own);
 	let rule = own.rule;
-	const promo = await promotionFor(db, sku, list, day);
+	let promotion: Promotion | undefined;
+	const promo = promotionFrom(r.promotions, sku, list);
 	if (promo && netPrice(list, promo) < unit) {
 		unit = netPrice(list, promo);
 		rule = `PROMO ${promo.id}`;
+		promotion = promo;
 	}
-	const brk = await breakFor(db, sku, qty);
+	const brk = breakFrom(r.breaks, sku, qty);
 	if (brk) {
 		unit = netPrice(unit, { disc_pct10: brk.disc_pct10, price: 0 });
 		rule = `${rule ? rule + " +" : ""}QTY ${pct(brk.disc_pct10)}`;
 	}
 	const disc = list > 0 ? Math.max(Math.round(((list - unit) * 1000) / list), 0) : 0;
-	return { unit_price: unit, disc_pct10: disc, rule: rule.slice(0, 24) };
+	return { unit_price: unit, disc_pct10: disc, rule: rule.slice(0, 24), ...(promotion ? { promotion } : {}) };
+}
+
+// ---- price lists ----
+
+// A customer's price list: what each active product costs it on a day,
+// one at a time and at each quantity break.
+export interface PriceListItem {
+	sku: string;
+	description: string;
+	list: number;
+	price: number; // for one
+	rule: string;
+	until: string; // the last day of the promotion that sets the price, or ""
+	breaks: { qty: number; price: number }[];
+}
+
+export interface PriceList {
+	customer: { id: string; name: string };
+	day: string; // YYYY-MM-DD the prices are good for
+	items: PriceListItem[];
+}
+
+export async function priceList(db: D1Database, customerId: string, day = today()): Promise<PriceList> {
+	const [cust, products, pricing, breaks, promotions] = await Promise.all([
+		db.prepare("SELECT id, name FROM customers WHERE id = ?").bind(customerId).first<{ id: string; name: string }>(),
+		db.prepare("SELECT sku, description, unit_price FROM products WHERE status = 'A' ORDER BY sku")
+			.all<{ sku: string; description: string; unit_price: number }>(),
+		listPricing(db, customerId),
+		listBreaks(db),
+		db.prepare("SELECT * FROM promotions WHERE starts <= ?1 AND ends >= ?1").bind(day).all<Promotion>(),
+	]);
+	if (!cust) throw new HttpError(404, "not_found", `customer ${customerId} not found`);
+	const rules = { pricing, breaks, promotions: promotions.results };
+	const items = products.results.map((p) => {
+		const one = priceWith(rules, p.sku, 1, p.unit_price);
+		return {
+			sku: p.sku, description: p.description, list: p.unit_price, price: one.unit_price, rule: one.rule,
+			until: one.promotion?.ends ?? "",
+			breaks: mostSpecific(breaks, p.sku).filter((b) => b.min_qty > 1)
+				.map((b) => ({ qty: b.min_qty, price: priceWith(rules, p.sku, b.min_qty, p.unit_price).unit_price })),
+		};
+	});
+	return { customer: cust, day, items };
+}
+
+// priceListLines prints a price list, 80 columns.
+export function priceListLines(pl: PriceList, company: string): string[] {
+	const $ = (n: number) => "$" + n.toLocaleString("en-US");
+	const lines = [
+		company,
+		`PRICE LIST FOR ${pl.customer.id} ${pl.customer.name}`,
+		`PRICES IN EFFECT ${pl.day}`,
+		"",
+		"SKU        DESCRIPTION               LIST  YOUR PRICE  BASIS",
+		"-".repeat(79),
+	];
+	for (const i of pl.items) {
+		const basis = i.until ? `${i.rule} TO ${i.until.slice(5)}` : i.rule;
+		lines.push(`${i.sku.padEnd(10)} ${i.description.slice(0, 22).padEnd(22)} ${$(i.list).padStart(7)} ${$(i.price).padStart(11)}  ${basis}`.slice(0, 79).trimEnd());
+		if (i.breaks.length) {
+			lines.push(`${"".padEnd(11)}BY QUANTITY: ${i.breaks.map((b) => `${b.qty}+ ${$(b.price)}`).join("  ")}`);
+		}
+	}
+	const off = pl.items.filter((i) => i.price < i.list).length;
+	lines.push("-".repeat(79), `${pl.items.length} PRODUCTS, ${off} BELOW LIST FOR YOU.`, "PRICES ARE EACH, BEFORE SALES TAX, AND MAY CHANGE WITHOUT NOTICE.");
+	return lines;
 }
 
 // ---- sales by territory and salesperson ----

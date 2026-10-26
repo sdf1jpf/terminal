@@ -568,9 +568,19 @@ and the rules in `worker/src/sales.ts`.
   scheduled for 06:00 UTC on the 1st, for the month just ended. Run by hand
   later in a month, it prints the month so far, filed separately.
 
+- **Price lists:** on 6.1, PF9 prints the customer's price list to the
+  spool: every active product at list and at its price, with the agreement
+  or promotion behind it (and the promotion's last day), and the price at
+  each quantity break. PF10 sends a customer that trades by EDI (one that
+  has sent an 850 we accepted) the same thing as an 832 price/sales catalog.
+  The `CUSPRICE` job, at 05:00 UTC on the 1st, files a price list (text and
+  PDF) in the archive under `prices/<day>/<customer>` for each customer with
+  pricing agreements or that trades by EDI, and sends each EDI customer its
+  832.
+
 The API has the same under `/v1/customers/{id}/sales`,
-`/v1/customers/{id}/pricing/{item}`, `/v1/territories`, `/v1/salespeople`
-and `/v1/sales`.
+`/v1/customers/{id}/pricing/{item}`, `/v1/customers/{id}/pricelist`
+(`?day=YYYY-MM-DD`), `/v1/territories`, `/v1/salespeople` and `/v1/sales`.
 
 ## Event history
 
@@ -601,6 +611,7 @@ end. Menu option 2.3 (`2.3 000105` for one customer) opens the **EDI MAILBOX**
 | 856 ship notice | out | Sent when an invoice that came from an 850 ships. |
 | 810 invoice | out | Sent when an invoice that came from an 850 is billed (PF10). |
 | 820 remittance | in | Marks each invoice it names paid, if the amounts agree. |
+| 832 price/sales catalog | out | The customer's price list: a `LIN` per product with its list price (`CTP` `CAT`), its price (`CON`, or `PRP` with the promotion's end in `DTM*036`) and its quantity prices. Sent by `CUSPRICE` each month and from 6.1 (PF10). |
 
 Any customer can trade: its interchange ID (ISA06) is its customer number,
 and ours is `CUSTAPI`. Interchanges arrive with `POST /v1/edi` (the raw X12

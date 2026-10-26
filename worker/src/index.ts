@@ -139,7 +139,7 @@ import { customerHistory, listTransactions, parsePosting, postTransaction, trans
 import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
 import {
-	assign, assignment, deletePricing, deleteTerritory, listPricing, listSalespeople, listTerritories, salesBy, saveSalesperson,
+	assign, assignment, deletePricing, deleteTerritory, listPricing, priceList, listSalespeople, listTerritories, salesBy, saveSalesperson,
 	saveTerritory, setPricing, setTaxExempt,
 } from "./sales";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
@@ -440,6 +440,12 @@ app.put("/v1/customers/:id/sales", signedOn, async (c) => {
 	if (body.tax_exempt !== undefined) await setTaxExempt(c.env.DB, c.get("user"), id, str(body, "tax_exempt"));
 	if (body.territory === undefined && body.salesperson === undefined) return json(200, await assignment(c.env.DB, id));
 	return json(200, await assign(c.env.DB, c.get("user"), id, { territory: str(body, "territory"), salesperson: str(body, "salesperson") }));
+});
+// A customer's price list as of today, or ?day=YYYY-MM-DD.
+app.get("/v1/customers/:id/pricelist", signedOn, async (c) => {
+	const day = c.req.query("day") ?? "";
+	if (day && !/^\d{4}-\d\d-\d\d$/.test(day)) throw new HttpError(422, "invalid", "day is YYYY-MM-DD", "day");
+	return json(200, await priceList(c.env.DB, c.req.param("id"), day || undefined));
 });
 app.put("/v1/customers/:id/pricing/:item", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["discount", "price"]);
@@ -817,6 +823,7 @@ for (const path of [
 	"/v1/monitor",
 	"/v1/customers/:id/sales",
 	"/v1/customers/:id/pricing/:item",
+	"/v1/customers/:id/pricelist",
 	"/v1/territories",
 	"/v1/territories/:code",
 	"/v1/salespeople",
