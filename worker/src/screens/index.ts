@@ -8,6 +8,7 @@ import { HttpError, int, str } from "../http";
 import { syslog } from "../syslog";
 import { activity, event } from "./activity";
 import { browse } from "./browse";
+import { chart } from "./charts";
 import { opconsole, schedule } from "./console";
 import { detail } from "./detail";
 import { fieldHelp } from "./fieldhelp";
@@ -31,7 +32,7 @@ export const requestKeys = [
 ] as const;
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
-	menu, browse, detail, report, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
+	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
 	pos, po, vendors, shipments, shipment, ledger, glaccount,
 	console: opconsole, schedule, spool, output,
 };

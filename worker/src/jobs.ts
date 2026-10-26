@@ -13,6 +13,7 @@ import type { Env } from "./index";
 import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
 import { outputLines, spoolStmts } from "./spool";
 import { logStmt } from "./syslog";
+import { agedAccounts } from "./reports";
 import { pickTickets } from "./shipping";
 import { closeStep, dunningLetters, journalStep, trialBalanceStep } from "./ledger";
 
@@ -285,42 +286,16 @@ function pad(s: string | number, n: number, left = false): string {
 	return left ? v.padStart(n) : v.padEnd(n);
 }
 
-// agedBalances ages each balance by its unpaid invoices: payments are
-// applied to the oldest invoices first, so the balance is made up of the
-// newest invoices. Any balance older than the posted activity (such as an
-// opening balance) counts as over 90 days.
+// agedBalances prints the aging of each balance (see agedAccounts).
 export async function agedBalances(db: D1Database): Promise<StepResult> {
-	const { results: custs } = await db.prepare(
-		"SELECT id, name, balance FROM customers WHERE balance > 0 ORDER BY id",
-	).all<Pick<Customer, "id" | "name" | "balance">>();
-	const { results: invoices } = await db.prepare(
-		"SELECT customer_id, amount, posted FROM transactions WHERE type = 'I' ORDER BY customer_id, seq DESC",
-	).all<{ customer_id: string; amount: number; posted: string }>();
-	const byCust = new Map<string, { amount: number; posted: string }[]>();
-	for (const inv of invoices) {
-		const list = byCust.get(inv.customer_id) ?? [];
-		list.push(inv);
-		byCust.set(inv.customer_id, list);
-	}
-
-	const now = Date.now();
+	const custs = await agedAccounts(db);
 	const totals = [0, 0, 0, 0];
 	const lines = [
 		"",
 		"CUST NO NAME                    CURRENT     31-60     61-90   OVER 90      TOTAL",
 		"------- -------------------- --------- --------- --------- --------- ----------",
 	];
-	for (const c of custs) {
-		const buckets = [0, 0, 0, 0];
-		let left = c.balance;
-		for (const inv of byCust.get(c.id) ?? []) {
-			if (left <= 0) break;
-			const amt = Math.min(inv.amount, left);
-			const days = (now - Date.parse(inv.posted)) / 86_400_000;
-			buckets[days <= 30 ? 0 : days <= 60 ? 1 : days <= 90 ? 2 : 3] += amt;
-			left -= amt;
-		}
-		buckets[3] += left;
+	for (const { buckets, ...c } of custs) {
 		buckets.forEach((b, i) => (totals[i] += b));
 		lines.push(
 			`${pad(c.id, 7)} ${pad(c.name, 20)} ` + buckets.map((b) => pad(b ? dollars(b) : "", 9, true)).join(" ") +

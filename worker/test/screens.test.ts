@@ -285,13 +285,111 @@ describe("customer screens", () => {
 
 	it("shows the credit report", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "4.2").send("ENTER");
+		await t.fill("option", "4.2.5").send("ENTER");
 		expect(t.scr.map).toBe("CUSR01");
 		expect(t.row(4)).toMatch(/CUSTOMERS ON FILE.*\d+/);
 		await t.send("PF5");
 		expect(t.message).toMatch(/^CUS0301I REPORT REFRESHED AT/);
 		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM42");
+		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSM40");
+	});
+});
+
+describe("reports and dashboard", () => {
+	async function billed(cust: string, sku: string, qty: number) {
+		const inv = await createInvoice(env.DB, "IBMUSER", cust, "");
+		await addLine(env.DB, inv.id, sku, qty);
+		await shipInvoice(env.DB, inv.id);
+		return billInvoice(env.DB, "IBMUSER", inv.id);
+	}
+	const screenText = (t: Terminal) => Array.from({ length: t.scr.rows }, (_, i) => t.row(i + 1)).join("\n");
+
+	it("opens the dashboard and drills into each report", async () => {
+		await billed("000123", "MTR-0500", 1);
+		const t = await Terminal.logon();
+		await t.fill("option", "4.2").send("ENTER");
+		expect(t.scr.map).toBe("CUSM42");
+		await t.fill("option", "1").send("ENTER");
+		expect(t.scr.map).toBe("CUSR05");
+		expect(t.row(1)).toContain("MANAGEMENT DASHBOARD");
+		expect(t.row(5)).toMatch(/THIS MONTH +\$[1-9][\d,]* +LAST MONTH/);
+		expect(screenText(t)).toMatch(/OUTSTANDING +\$[\d,]+ +OVER 60 DAYS/);
+		expect(screenText(t)).toMatch(/AT COST +\$[\d,]+ +TURNS\/YR +\d+\.\d/);
+		expect(t.row(t.scr.rows)).toContain("PF10=TURNS");
+
+		await t.send("PF4");
+		expect(t.scr.map).toBe("CUSR02");
+		await t.send("PF3");
+		await t.send("PF6");
+		expect(t.scr.map).toBe("CUSR03");
+		await t.send("PF3");
+		await t.send("PF10");
+		expect(t.scr.map).toBe("CUSR04");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSR05");
+		await t.send("PF8");
+		expect(t.message).toBe("CUS0000W PF8 IS NOT ACTIVE ON THIS SCREEN");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM42");
+	});
+
+	it("charts this month's sales and collections", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "sales").send("ENTER");
+		expect(t.scr.map).toBe("CUSR02");
+		expect(t.row(4)).toMatch(/^ ## INVOICED \$[\d,]+ +== COLLECTED \$[\d,]+ +NOV 2025 - OCT 2026/);
+		// The current month is the last column: its bar reaches the axis.
+		expect(t.row(15)).toMatch(/\|.*## +$/);
+		expect(t.row(16)).toMatch(/^ +\$0\+-{72}$/);
+		expect(t.row(19)).toMatch(/^ SALES .* \$[\d.]+K? *$/);
+		expect(t.row(21)).toMatch(/^ COUNT .* \d+ *$/);
+	});
+
+	it("ages receivables and scrolls the accounts", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "aging").send("ENTER");
+		expect(t.scr.map).toBe("CUSR03");
+		expect(t.row(4)).toMatch(/TOTAL RECEIVABLE +\$[\d,]+ +ACCOUNTS WITH A BALANCE +\d+/);
+		expect(t.row(6)).toMatch(/^   CURRENT +\$[\d,]+ +\d+% +#*\.* *$/);
+		expect(t.row(9)).toMatch(/^   OVER 90 /);
+		expect(t.row(11)).toContain("CUST NO NAME");
+		expect(t.row(3)).toMatch(/ROW 1 TO 10 OF \d+ *$/);
+		const first = t.row(13);
+		await t.send("PF8");
+		expect(t.row(3)).toMatch(/ROW 11 TO 20 OF/);
+		expect(t.row(13)).not.toBe(first);
+		await t.send("PF7");
+		await t.send("PF7");
+		expect(t.message).toBe("CUS0101W ALREADY AT TOP OF DATA");
+	});
+
+	it("shows inventory turns per product", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "turns").send("ENTER");
+		expect(t.scr.map).toBe("CUSR04");
+		expect(t.row(4)).toMatch(/INVENTORY AT COST +\$[\d,]+ +TURNS\/YR +\d+\.\d/);
+		expect(t.row(6)).toContain("ANNUALIZED FROM THE LAST 30 DAYS");
+		// The fastest turning product comes first, with the longest bar.
+		expect(t.row(10)).toMatch(/^ [A-Z]{3}-\d{4} .* +\d+\.\d +\d+ #{18} *$/);
+		const turns = [10, 11, 12, 13].map((r) => Number(t.row(r).slice(48, 55)));
+		expect(turns).toEqual([...turns].sort((a, b) => b - a));
+	});
+
+	it("prints every line of a report to the spool", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "4.2.3").send("ENTER");
+		await t.send("PF9");
+		const id = t.message.match(/^CUS0302I REPORT PRINTED TO THE SPOOL AS (TSU\d{5}) - SEE OPTION 5.4$/)![1];
+		const out = await env.DB.prepare("SELECT text FROM spool_lines WHERE spool_id = ? ORDER BY line").bind(id).all<{ text: string }>();
+		const lines = out.results.map((r) => r.text);
+		const accounts = Number(t.row(4).match(/ACCOUNTS WITH A BALANCE +(\d+)/)![1]);
+		expect(lines[0]).toMatch(/^ CUSR03 +RECEIVABLES AGING/);
+		expect(lines.filter((l) => /^ \d{6} /.test(l))).toHaveLength(accounts);
+		expect(lines.at(-1)).toMatch(/^ TOTALS /);
+		expect(lines.every((l) => l.length <= 80)).toBe(true);
+		await env.DB.prepare("DELETE FROM spool WHERE id = ?").bind(id).run();
 	});
 });
 
@@ -958,7 +1056,7 @@ describe("operator console", () => {
 describe("held output", () => {
 	it("prints a report to the spool, browses, prints and purges it", async () => {
 		const t = await Terminal.logon();
-		await t.fill("option", "4.2").send("ENTER");
+		await t.fill("option", "4.2.5").send("ENTER");
 		await t.send("PF9");
 		const id = t.message.match(/^CUS0302I REPORT PRINTED TO THE SPOOL AS (TSU\d{5}) - SEE OPTION 5.4$/)![1];
 

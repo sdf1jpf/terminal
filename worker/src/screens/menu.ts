@@ -1,4 +1,5 @@
 import { newActivity } from "./activity";
+import { newChart } from "./charts";
 import { newAdd, newInquiry } from "./detail";
 import { newEdi } from "./edi";
 import { newInvoices } from "./invoices";
@@ -23,7 +24,7 @@ interface Option {
 	go?: (ctx: Ctx, m: MenuState, arg: string) => Next | Promise<Next>;
 }
 
-interface Menu { map: string; title: string; options: Option[] }
+interface Menu { map: string; title: string; parent?: string; options: Option[] } // parent: the menu PF3 returns to, for a submenu of a submenu
 
 const menus: Record<string, Menu> = {
 	"": {
@@ -78,7 +79,19 @@ const menus: Record<string, Menu> = {
 				key: "1", name: "LEDGER", desc: "Trial balance, close, dunning", aliases: ["A", "ACCOUNTS"],
 				go: (_ctx, m, arg) => newLedger(m, arg),
 			},
-			{ key: "2", name: "REPORTS", desc: "Credit exposure summary", aliases: ["CREDIT"], go: (_ctx, m) => ({ p: "report", back: m }) },
+			{ key: "2", name: "REPORTS", desc: "Dashboard, sales, aging, turns", sub: "4.2" },
+		],
+	},
+	"4.2": {
+		map: "CUSM42",
+		title: "REPORTS MENU",
+		parent: "4",
+		options: [
+			{ key: "1", name: "DASHBOARD", desc: "Management dashboard", aliases: ["DASH"], go: (_ctx, m) => newChart("D", m) },
+			{ key: "2", name: "SALES", desc: "Sales by month", go: (_ctx, m) => newChart("S", m) },
+			{ key: "3", name: "AGING", desc: "Receivables aging buckets", go: (_ctx, m) => newChart("A", m) },
+			{ key: "4", name: "TURNS", desc: "Inventory turns by product", go: (_ctx, m) => newChart("T", m) },
+			{ key: "5", name: "CREDIT", desc: "Credit exposure summary", go: (_ctx, m) => ({ p: "report", back: m }) },
 		],
 	},
 	"5": {
@@ -161,7 +174,7 @@ export const menu: Program<MenuState> = {
 			case "ENTER":
 				break;
 			case pf(3):
-				if (m.sub) return { p: "menu" };
+				if (m.sub) return menus[m.sub]?.parent ? { p: "menu", sub: menus[m.sub].parent } : { p: "menu" };
 				return logoff(ctx);
 			case pf(4):
 				return { p: "browse", back: m };
