@@ -163,6 +163,9 @@ One-time setup:
 3. **Let the token create the batch job queue:** add **Account → Queues →
    Edit** to the same token, or create the queue once yourself (see
    [Batch jobs](#batch-jobs)).
+   Likewise for the HELP facility's index: add **Account → Vectorize →
+   Edit** and **Account → Workers AI → Read**, or create the index yourself
+   (see [Asking the system](#asking-the-system)).
 4. **Set up Cloudflare Access** as in [Who can log on](#who-can-log-on), and
    add the service token to GitHub as repository secrets
    `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
@@ -238,6 +241,9 @@ PUT    /v1/products/{sku}       update ("version" must match)
 POST   /v1/jobs                 submit a batch job: {"name":"CUSAGING"}
 GET    /v1/jobs                 recent jobs, newest first
 GET    /v1/jobs/{id}            a job and its output listing
+POST   /v1/jobs/{id}/explain    why it failed, from Workers AI → {"explanation"}
+POST   /v1/ask                  ask the HELP facility: {"question"} → {"answer","topics"}
+GET    /v1/search/natural?q=X   a search in plain English → {"filter","description","hits"}
 GET    /v1/syslog?before=N      the system log, newest first (&limit=, up to 500)
 GET    /v1/schedules            the job schedule, with each job's next run
 PUT    /v1/schedules/{job}      schedule a job: {"cron":"0 6 * * *","enabled":true}
@@ -270,8 +276,8 @@ header (from `cloudflared access token`) or a service token's
 ```
 
 The error codes are `unauthorized`, `not_found`, `conflict`
-(HTTP 409: someone else changed the record), `invalid` (HTTP 422) and
-`bad_request`.
+(HTTP 409: someone else changed the record), `invalid` (HTTP 422),
+`bad_request`, and `unavailable` (HTTP 503: Workers AI could not answer).
 
 ```sh
 API=https://customer-api.<you>.workers.dev
@@ -355,6 +361,47 @@ or number across customers, invoices, purchase orders, shipments, vendors and
 products, with an optional type (C, I, O, S, V or P) to narrow it. S beside a
 hit opens it, and PF3 comes back to the list. The API has the same search as
 `GET /v1/search?q=text&type=C,I`.
+
+## Asking the system
+
+The HELP facility runs on [Workers AI](https://developers.cloudflare.com/workers-ai/)
+and a [Vectorize](https://developers.cloudflare.com/vectorize/) index.
+
+- **HELP and a question** on any command line, such as
+  `HELP HOW DO I PUT A CUSTOMER ON HOLD`, opens **HELP - ASK THE SYSTEM**
+  (CUSH02) with the answer. PF5 on the tutorial opens it empty. The answer is
+  drawn from the system's own help topics, and the topics it used are listed
+  below it: `S` beside one goes to its screen. PF24 brings back earlier
+  questions.
+- **Plain-English search:** a search that matches no name or number and reads
+  like a sentence, such as `FIND CUSTOMERS IN OHIO OVER THEIR CREDIT LIMIT` or
+  `FIND OPEN INVOICES OVER 5000`, is turned into a filter on one type of
+  record, which the message line spells out. Start a search with `?` to
+  always search this way. Products are also found by meaning, so
+  `?PARTS FOR A CONVEYOR` can find chain and bearings whose descriptions
+  never say "conveyor".
+- **Abend analysis:** `E` beside a job on the batch jobs list, or PF6 on the
+  output of one that ended with an abend or a non-zero return code, opens
+  **ABEND ANALYSIS** (CUSJ03): what failed, the likely cause, and what to do.
+
+The help topics are built from the code: every menu option, every field's
+PF1 help, the PF keys, the job library, and a few pages on how invoices,
+shipping, EDI, purchasing and the close work (`worker/src/knowledge.ts`).
+The cron trigger embeds them and the product file into the `customer-help`
+index whenever they change. Until it has, help finds topics by matching
+words, and if Workers AI cannot be reached the screens say so and list the
+nearest topics.
+
+The deploy job creates the index the first time, which needs
+**Account → Vectorize → Edit** on the `CLOUDFLARE_API_TOKEN`. To create it
+yourself:
+
+```sh
+npx wrangler vectorize create customer-help --dimensions=768 --metric=cosine
+```
+
+The Worker tests stand in for Workers AI and Vectorize (`worker/test/ai.ts`),
+so they run without a Cloudflare login.
 
 ## Session
 
@@ -616,7 +663,8 @@ step is a durable workflow step that is retried if it fails. The job shows as
 In the terminal, menu option 5.1 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,
 like SDSF. PF5 refreshes the list, and `S` beside a job opens its output listing
-(CUSJ02), which PF7 and PF8 scroll.
+(CUSJ02), which PF7 and PF8 scroll. `E` beside a failed job, or PF6 on its
+output, explains the failure (see [Asking the system](#asking-the-system)).
 
 The deploy job creates the queue the first time, which needs
 **Account → Queues → Edit** on the `CLOUDFLARE_API_TOKEN`. You can also

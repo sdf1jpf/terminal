@@ -82,3 +82,116 @@ export async function search(db: D1Database, text: string, types: HitType[] = []
 		results[i].results.map((r) => ({ type, key: r.key, description: r.description, status: r.status })),
 	);
 }
+
+// Filter is a structured search, which ai.ts makes from plain English:
+// one type of record, with conditions on its fields.
+export interface Filter {
+	type: HitType;
+	text?: string; // in the name or description
+	state?: string; // customers and vendors
+	city?: string;
+	status?: string;
+	overLimit?: boolean; // customers: balance above the credit limit
+	lowStock?: boolean; // products: at or below the reorder point
+	min?: number; // dollars: customer balance, invoice or PO total, unit price
+	max?: number;
+	carrier?: string; // shipments
+	days?: number; // created in the last so many days: invoices, POs, shipments
+}
+
+// filterSearch finds the records that meet a filter. also adds records by
+// key whatever the text says: products ai.ts found by meaning.
+export async function filterSearch(db: D1Database, f: Filter, also: string[] = []): Promise<Hit[]> {
+	const where: string[] = [];
+	const args: unknown[] = [];
+	const cond = (sql: string, ...v: unknown[]) => {
+		where.push(sql);
+		args.push(...v);
+	};
+	const like = (s: string) => "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+	const since = f.days ? new Date(Date.now() - f.days * 86_400_000).toISOString() : "";
+	let sql: string;
+	let order: string;
+	let text: string[]; // the columns the text is looked for in
+	let key: string; // the key column, for also
+	let status = "status";
+	switch (f.type) {
+		case "C":
+			sql = `SELECT id AS key, name || ', ' || city || ' ' || state AS description, status FROM customers`;
+			order = "name, id";
+			text = ["name", "city", "phone"];
+			key = "id";
+			if (f.state) cond("state = ?", f.state);
+			if (f.city) cond("city LIKE ? ESCAPE '\\'", like(f.city));
+			if (f.overLimit) cond("balance > credit_limit");
+			if (f.min !== undefined) cond("balance >= ?", f.min);
+			if (f.max !== undefined) cond("balance <= ?", f.max);
+			break;
+		case "I":
+			sql = `SELECT i.id AS key, i.customer_id || ' ' || coalesce(c.name, '(DELETED)') || ' $' || i.total AS description,
+			   i.status AS status FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id`;
+			order = "i.id DESC";
+			text = ["c.name", "i.po_number"];
+			key = "i.id";
+			status = "i.status";
+			if (f.min !== undefined) cond("i.total >= ?", f.min);
+			if (f.max !== undefined) cond("i.total <= ?", f.max);
+			if (since) cond("i.created >= ?", since);
+			break;
+		case "O":
+			sql = `SELECT p.id AS key, p.vendor_id || ' ' || coalesce(v.name, '') || ' $' || p.total AS description, p.status AS status
+			   FROM purchase_orders p LEFT JOIN vendors v ON v.id = p.vendor_id`;
+			order = "p.id DESC";
+			text = ["v.name"];
+			key = "p.id";
+			status = "p.status";
+			if (f.min !== undefined) cond("p.total >= ?", f.min);
+			if (f.max !== undefined) cond("p.total <= ?", f.max);
+			if (since) cond("p.created >= ?", since);
+			break;
+		case "S":
+			sql = `SELECT s.id AS key, s.invoice_id || ' ' || coalesce(c.name, s.customer_id) ||
+			   CASE WHEN s.tracking = '' THEN '' ELSE ' ' || s.tracking END AS description, s.status AS status
+			   FROM shipments s LEFT JOIN customers c ON c.id = s.customer_id`;
+			order = "s.id DESC";
+			text = ["c.name", "s.tracking"];
+			key = "s.id";
+			status = "s.status";
+			if (f.carrier) cond("s.carrier = ?", f.carrier);
+			if (since) cond("s.created >= ?", since);
+			break;
+		case "V":
+			sql = `SELECT id AS key, name || ', ' || city || ' ' || state AS description, status FROM vendors`;
+			order = "id";
+			text = ["name", "city"];
+			key = "id";
+			if (f.state) cond("state = ?", f.state);
+			if (f.city) cond("city LIKE ? ESCAPE '\\'", like(f.city));
+			break;
+		case "P":
+			sql = `SELECT sku AS key, description, status FROM products`;
+			order = "sku";
+			text = ["sku", "description"];
+			key = "sku";
+			if (f.lowStock) cond("on_hand <= reorder_point");
+			if (f.min !== undefined) cond("unit_price >= ?", f.min);
+			if (f.max !== undefined) cond("unit_price <= ?", f.max);
+			break;
+	}
+	if (f.status) cond(`${status} = ?`, f.status);
+	// Every word of the text has to be there, in any of the text columns.
+	// Products found by meaning count whatever the words say.
+	const wordConds: string[] = [];
+	const wordArgs: unknown[] = [];
+	for (const w of (f.text ?? "").split(/\s+/).filter(Boolean)) {
+		wordConds.push("(" + text.map((c) => `${c} LIKE ? ESCAPE '\\'`).join(" OR ") + ")");
+		wordArgs.push(...text.map(() => like(w)));
+	}
+	const byKey = also.length > 0 ? `${key} IN (${also.map(() => "?").join(", ")})` : "";
+	if (wordConds.length > 0 && byKey) cond(`((${wordConds.join(" AND ")}) OR ${byKey})`, ...wordArgs, ...also);
+	else if (wordConds.length > 0) cond(wordConds.join(" AND "), ...wordArgs);
+	else if (byKey) cond(byKey, ...also);
+	const q = `${sql}${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY ${order} LIMIT ${MAX_PER_TYPE}`;
+	const { results } = await db.prepare(q).bind(...args).all<{ key: string; description: string; status: string }>();
+	return results.map((r) => ({ type: f.type, key: r.key, description: r.description, status: r.status }));
+}

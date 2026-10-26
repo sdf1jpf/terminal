@@ -6,6 +6,9 @@ export default defineConfig(async () => ({
 	plugins: [
 		cloudflareTest({
 			wrangler: { configPath: "./wrangler.jsonc" },
+			// Workers AI and Vectorize only run remotely; the tests stand in for
+			// them (test/ai.ts), so no Cloudflare login is needed.
+			remoteBindings: false,
 			miniflare: {
 				bindings: {
 					ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.test",
