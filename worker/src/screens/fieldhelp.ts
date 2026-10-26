@@ -3,13 +3,58 @@
 // name first ("browse.status"), then by field name alone. Selection fields
 // ("sel:000101", "sel0") share the "sel" entry for their panel, and invoice
 // line quantities ("qty:3") share the "qty" entry.
+//
+// A field with a fixed set of valid values lists them under the help, as
+// ISPF prompts do: S beside one puts it in the field.
 
+import { jobLibrary } from "../jobs";
+import { listVendors } from "../purchasing";
+import { carriers } from "../shipping";
+import { hitTypes } from "../search";
+import { menuValues } from "./menu";
+import type { Ctx } from "./screen";
 import type { State } from "./program";
+
+export interface Value {
+	code: string;
+	desc: string;
+}
 
 export interface FieldHelp {
 	title: string;
 	lines: string[];
+	values?: Value[] | ((ctx: Ctx, s: State) => Promise<Value[]>);
 }
+
+const v = (...pairs: [string, string][]): Value[] => pairs.map(([code, desc]) => ({ code, desc }));
+
+const customerStatus = v(
+	["A", "ACTIVE"],
+	["H", "ON HOLD: PAYMENTS ARE TAKEN, NEW INVOICES ARE REFUSED"],
+	["C", "CLOSED: PAYMENTS ARE TAKEN, NEW INVOICES ARE REFUSED"],
+);
+
+const states = v(
+	["AL", "ALABAMA"], ["AK", "ALASKA"], ["AZ", "ARIZONA"], ["AR", "ARKANSAS"], ["CA", "CALIFORNIA"],
+	["CO", "COLORADO"], ["CT", "CONNECTICUT"], ["DE", "DELAWARE"], ["DC", "DISTRICT OF COLUMBIA"],
+	["FL", "FLORIDA"], ["GA", "GEORGIA"], ["HI", "HAWAII"], ["ID", "IDAHO"], ["IL", "ILLINOIS"],
+	["IN", "INDIANA"], ["IA", "IOWA"], ["KS", "KANSAS"], ["KY", "KENTUCKY"], ["LA", "LOUISIANA"],
+	["ME", "MAINE"], ["MD", "MARYLAND"], ["MA", "MASSACHUSETTS"], ["MI", "MICHIGAN"], ["MN", "MINNESOTA"],
+	["MS", "MISSISSIPPI"], ["MO", "MISSOURI"], ["MT", "MONTANA"], ["NE", "NEBRASKA"], ["NV", "NEVADA"],
+	["NH", "NEW HAMPSHIRE"], ["NJ", "NEW JERSEY"], ["NM", "NEW MEXICO"], ["NY", "NEW YORK"],
+	["NC", "NORTH CAROLINA"], ["ND", "NORTH DAKOTA"], ["OH", "OHIO"], ["OK", "OKLAHOMA"], ["OR", "OREGON"],
+	["PA", "PENNSYLVANIA"], ["RI", "RHODE ISLAND"], ["SC", "SOUTH CAROLINA"], ["SD", "SOUTH DAKOTA"],
+	["TN", "TENNESSEE"], ["TX", "TEXAS"], ["UT", "UTAH"], ["VT", "VERMONT"], ["VA", "VIRGINIA"],
+	["WA", "WASHINGTON"], ["WV", "WEST VIRGINIA"], ["WI", "WISCONSIN"], ["WY", "WYOMING"],
+);
+
+const jobs = async (): Promise<Value[]> =>
+	Object.entries(jobLibrary).map(([code, j]) => ({ code, desc: j.title }));
+
+const vendors = async (ctx: Ctx): Promise<Value[]> =>
+	(await listVendors(ctx.db)).map((x) => ({ code: x.id, desc: `${x.name}, ${x.city} ${x.state}${x.status === "A" ? "" : " (INACTIVE)"}` }));
+
+const show = v(["S", "SHOW IT"]);
 
 const help: Record<string, FieldHelp> = {
 	"menu.option": {
@@ -21,8 +66,11 @@ const help: Record<string, FieldHelp> = {
 			"A fast path such as 1.2 or =1.2 goes straight to an option from any",
 			"menu, and a name such as INQUIRY, EDI or SYSLOG works anywhere too.",
 			"A second word is passed to the option: 1.2 105 shows customer 000105,",
-			"1.1 KEY browses the names that begin with KEY. =X logs off.",
+			"1.1 KEY browses the names that begin with KEY. =X logs off. FIND ACME",
+			"searches everything for ACME. PF24 (RETRIEVE) brings back the last",
+			"commands entered, newest first.",
 		],
+		values: async (_ctx, s) => menuValues(s),
 	},
 	"browse.filter": {
 		title: "NAME STARTS WITH",
@@ -38,24 +86,20 @@ const help: Record<string, FieldHelp> = {
 	"browse.state": {
 		title: "STATE",
 		lines: ["Lists only the customers in this state: a two letter code, such as OH."],
+		values: states,
 	},
 	"browse.status": {
 		title: "STATUS",
-		lines: [
-			"Lists only the customers with this status:",
-			"  A  active",
-			"  H  on hold: payments are taken, new invoices are refused",
-			"  C  closed",
-		],
+		lines: ["Lists only the customers with this status. Leave it blank to list them all."],
+		values: customerStatus,
 	},
 	"browse.sel": {
 		title: "SELECTION CODE",
-		lines: [
-			"Type a code beside a customer and press Enter:",
-			"  S  show the customer          U  update it",
-			"  D  delete it                  A  event history",
-			"  H  change history             I  invoices",
-		],
+		lines: ["Type a code beside a customer and press Enter."],
+		values: v(
+			["S", "SHOW THE CUSTOMER"], ["U", "UPDATE IT"], ["D", "DELETE IT"],
+			["A", "EVENT HISTORY"], ["H", "CHANGE HISTORY"], ["I", "INVOICES"],
+		),
 	},
 	id: {
 		title: "CUSTOMER NUMBER",
@@ -79,6 +123,7 @@ const help: Record<string, FieldHelp> = {
 	state: {
 		title: "STATE",
 		lines: ["The two letter state code, such as OH. Required."],
+		values: states,
 	},
 	zip: {
 		title: "ZIP CODE",
@@ -98,11 +143,8 @@ const help: Record<string, FieldHelp> = {
 	},
 	status: {
 		title: "STATUS",
-		lines: [
-			"  A  active",
-			"  H  on hold: payments are taken, new invoices are refused",
-			"  C  closed: payments are taken, new invoices are refused",
-		],
+		lines: ["Whether the customer may be sold to."],
+		values: customerStatus,
 	},
 	"activity.line": {
 		title: "SHOW LINE",
@@ -123,26 +165,15 @@ const help: Record<string, FieldHelp> = {
 	"edi.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside an interchange and press Enter to see its X12 segments."],
+		values: v(["S", "SHOW THE X12 SEGMENTS"]),
 	},
 	job: {
 		title: "SUBMIT JOB",
 		lines: [
-			"The name of a job to run in the background:",
-			"  CUSAGING  aged balances report",
-			"  CUSCRREV  credit review: lists accounts near their limit and puts",
-			"            active accounts over their limit on hold",
-			"  CUSSTMT   statements for open accounts with a balance",
-			"  EDISIM    EDI trading partners: customers' systems send purchase",
-			"            orders and pay the invoices we sent them",
-			"  CUSREORD  reorder: purchase orders to vendors for low stock",
-			"  VENDSIM   EDI vendors: confirm (855) and ship (856) our orders",
-			"  CUSPICK   pick tickets for shipments waiting in the warehouse",
-			"  CUSTRIAL  journal the latest activity and print the trial balance",
-			"  CUSCLOSE  month-end close: journal, trial balance, close the period",
-			"  CUSDUNN   dunning letters for invoices more than 30 days old",
-			"",
-			"Press PF5 to refresh the list as the job runs.",
+			"The name of a job from the job library to run in the background. Press",
+			"PF5 to refresh the list as the job runs.",
 		],
+		values: jobs,
 	},
 	"products.filter": {
 		title: "SKU STARTS WITH",
@@ -150,7 +181,8 @@ const help: Record<string, FieldHelp> = {
 	},
 	"products.sel": {
 		title: "SELECTION CODE",
-		lines: ["Type a code beside a product and press Enter:", "  S  show the product           U  update it"],
+		lines: ["Type a code beside a product and press Enter."],
+		values: v(["S", "SHOW THE PRODUCT"], ["U", "UPDATE IT"]),
 	},
 	sku: {
 		title: "SKU",
@@ -181,7 +213,8 @@ const help: Record<string, FieldHelp> = {
 	},
 	"product.status": {
 		title: "STATUS",
-		lines: ["  A  active", "  D  discontinued: kept on file, but cannot be sold"],
+		lines: ["Whether the product may be sold."],
+		values: v(["A", "ACTIVE"], ["D", "DISCONTINUED: KEPT ON FILE, BUT CANNOT BE SOLD"]),
 	},
 	"invoices.cust": {
 		title: "CUSTOMER NUMBER",
@@ -192,11 +225,8 @@ const help: Record<string, FieldHelp> = {
 	},
 	"invoices.sel": {
 		title: "SELECTION CODE",
-		lines: [
-			"Type a code beside an invoice and press Enter:",
-			"  S  show the invoice",
-			"  P  mark a billed invoice paid: posts a payment for its total",
-		],
+		lines: ["Type a code beside an invoice and press Enter."],
+		values: v(["S", "SHOW THE INVOICE"], ["P", "MARK A BILLED INVOICE PAID: POSTS A PAYMENT FOR ITS TOTAL"]),
 	},
 	"invoice.sku": {
 		title: "ADD LINE: SKU",
@@ -220,6 +250,7 @@ const help: Record<string, FieldHelp> = {
 	"invoice.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type D beside a line and press Enter to remove it and return its stock."],
+		values: v(["D", "REMOVE THE LINE"]),
 	},
 	"skusearch.q": {
 		title: "SKU OR DESCRIPTION",
@@ -235,6 +266,7 @@ const help: Record<string, FieldHelp> = {
 			"Type S beside a product and press Enter to take its SKU back to the",
 			"invoice's add line, then enter a quantity and press Enter to add it.",
 		],
+		values: v(["S", "ADD TO THE INVOICE"]),
 	},
 	po: {
 		title: "PO NUMBER",
@@ -247,6 +279,7 @@ const help: Record<string, FieldHelp> = {
 			"Purchase orders for the product go to this vendor. Leave it blank if",
 			"the product is not bought in: the reorder job (CUSREORD) then skips it.",
 		],
+		values: vendors,
 	},
 	cost: {
 		title: "UNIT COST",
@@ -259,14 +292,12 @@ const help: Record<string, FieldHelp> = {
 			"V00001 (V1 will do). PF5 opens a new purchase order for the vendor in",
 			"this field, and PF4 lists the vendors.",
 		],
+		values: vendors,
 	},
 	"pos.sel": {
 		title: "SELECTION CODE",
-		lines: [
-			"Type a code beside a purchase order and press Enter:",
-			"  S  show the purchase order",
-			"  R  receive everything still due on a sent order into stock",
-		],
+		lines: ["Type a code beside a purchase order and press Enter."],
+		values: v(["S", "SHOW THE PURCHASE ORDER"], ["R", "RECEIVE EVERYTHING STILL DUE ON A SENT ORDER INTO STOCK"]),
 	},
 	"po.sku": {
 		title: "ADD LINE: SKU",
@@ -282,6 +313,7 @@ const help: Record<string, FieldHelp> = {
 	"po.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type D beside a line and press Enter to remove it from the order."],
+		values: v(["D", "REMOVE THE LINE"]),
 	},
 	"po.rcv": {
 		title: "QUANTITY RECEIVED",
@@ -293,17 +325,17 @@ const help: Record<string, FieldHelp> = {
 	},
 	"shipments.status": {
 		title: "STATUS",
-		lines: [
-			"Lists only the shipments in this status:",
-			"  P  picking: released to the warehouse, pick ticket printed",
-			"  K  packed: cartons and weight recorded",
-			"  S  shipped: gone with a carrier",
-			"Leave it blank to list them all.",
-		],
+		lines: ["Lists only the shipments in this status. Leave it blank to list them all."],
+		values: v(
+			["P", "PICKING: RELEASED TO THE WAREHOUSE, PICK TICKET PRINTED"],
+			["K", "PACKED: CARTONS AND WEIGHT RECORDED"],
+			["S", "SHIPPED: GONE WITH A CARRIER"],
+		),
 	},
 	"shipments.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a shipment and press Enter to see its pick ticket."],
+		values: v(["S", "SHOW THE PICK TICKET"]),
 	},
 	cartons: {
 		title: "CARTONS",
@@ -316,11 +348,12 @@ const help: Record<string, FieldHelp> = {
 	carrier: {
 		title: "CARRIER",
 		lines: [
-			"Who takes the shipment: UPS, FDX (FedEx Freight) or TRK (our own",
-			"truck). PF10 ships it, gives it a tracking number and, if the customer",
-			"ordered by EDI, sends its system an 856 ship notice. The invoice can",
-			"be billed once it has shipped: PF11 here, or PF10 on the invoice.",
+			"Who takes the shipment. PF10 ships it, gives it a tracking number and,",
+			"if the customer ordered by EDI, sends its system an 856 ship notice.",
+			"The invoice can be billed once it has shipped: PF11 here, or PF10 on",
+			"the invoice.",
 		],
+		values: async () => Object.entries(carriers).map(([code, desc]) => ({ code, desc })),
 	},
 	"ledger.period": {
 		title: "PERIOD",
@@ -336,24 +369,27 @@ const help: Record<string, FieldHelp> = {
 	"ledger.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside an account and press Enter to list its entries in the period."],
+		values: v(["S", "LIST THE ENTRIES"]),
 	},
 	"vendors.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a vendor and press Enter to list its purchase orders."],
+		values: v(["S", "LIST ITS PURCHASE ORDERS"]),
 	},
 	"console.cmd": {
 		title: "OPERATOR COMMAND",
 		lines: [
 			"An operator command. It goes in the log with its response, for every",
-			"console to see.",
-			"",
-			"  D T            display the time, local and UTC",
-			"  D J            display the jobs that are queued or executing",
-			"  D SCHED        display the job schedule",
-			"  S jobname      submit a job, such as S CUSAGING",
-			"  H jobname      hold a job's schedule; A jobname releases it",
-			"  SCHED          open the job schedule (PF6)",
+			"console to see. S jobname submits a job, such as S CUSAGING, H jobname",
+			"holds its schedule and A jobname releases it. PF24 (RETRIEVE) brings",
+			"back the last commands entered.",
 		],
+		values: v(
+			["D T", "DISPLAY THE TIME, LOCAL AND UTC"],
+			["D J", "DISPLAY THE JOBS THAT ARE QUEUED OR EXECUTING"],
+			["D SCHED", "DISPLAY THE JOB SCHEDULE"],
+			["SCHED", "OPEN THE JOB SCHEDULE (PF6)"],
+		),
 	},
 	"schedule.job": {
 		title: "JOB NAME",
@@ -361,6 +397,7 @@ const help: Record<string, FieldHelp> = {
 			"A job from the job library to schedule. With a cron, Enter adds it to the",
 			"schedule, or changes its cron if it is already there.",
 		],
+		values: jobs,
 	},
 	"schedule.cron": {
 		title: "CRON EXPRESSION (UTC)",
@@ -379,10 +416,13 @@ const help: Record<string, FieldHelp> = {
 	},
 	"schedule.sel": {
 		title: "SELECTION CODE",
-		lines: [
-			"H holds a schedule so the scheduler skips it, and R releases it again.",
-			"S submits the job now, without changing the schedule. D deletes it.",
-		],
+		lines: ["Type a code beside a scheduled job and press Enter."],
+		values: v(
+			["H", "HOLD THE SCHEDULE: THE SCHEDULER SKIPS IT"],
+			["R", "RELEASE IT AGAIN"],
+			["S", "SUBMIT THE JOB NOW, WITHOUT CHANGING THE SCHEDULE"],
+			["D", "DELETE THE SCHEDULE"],
+		),
 	},
 	"spool.filter": {
 		title: "JOBNAME STARTS WITH",
@@ -390,16 +430,49 @@ const help: Record<string, FieldHelp> = {
 	},
 	"spool.sel": {
 		title: "SELECTION CODE",
-		lines: [
-			"S browses the output. O prints it on PRT1: it stays on the spool, so",
-			"O again prints another copy. P purges it, and a job's entry with it.",
-		],
+		lines: ["Type a code beside an output group and press Enter."],
+		values: v(
+			["S", "BROWSE THE OUTPUT"],
+			["O", "PRINT IT ON PRT1; IT STAYS ON THE SPOOL FOR ANOTHER COPY"],
+			["P", "PURGE IT, AND THE JOB'S ENTRY WITH IT"],
+		),
 	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],
+		values: v(["S", "VIEW THE OUTPUT"]),
+	},
+	"search.q": {
+		title: "SEARCH FOR",
+		lines: [
+			"A name or number to look for. Customers are found by number, name,",
+			"city or phone; invoices by number, the customer's PO number, or the",
+			"customer's number or name; purchase orders by number or vendor;",
+			"shipments by number, invoice or tracking number; vendors by number,",
+			"name or city; products by SKU, description or vendor.",
+			"",
+			"Any part will do: GEAR finds BLUE GEAR CO, and 105 finds customer",
+			"000105 with its invoices and shipments. FIND ACME on any command",
+			"line searches straight away.",
+		],
+	},
+	"search.type": {
+		title: "TYPE",
+		lines: ["Lists only this type of record. Leave it blank to search them all."],
+		values: async () => Object.entries(hitTypes).map(([code, desc]) => ({ code, desc })),
+	},
+	"search.sel": {
+		title: "SELECTION CODE",
+		lines: ["Type S beside a record and press Enter to show it. PF3 there comes back here."],
+		values: show,
 	},
 };
+
+// fieldValues returns the valid values for a field, or none.
+export async function fieldValues(ctx: Ctx, fh: FieldHelp, s: State): Promise<Value[]> {
+	if (!fh.values) return [];
+	return Array.isArray(fh.values) ? fh.values : fh.values(ctx, s);
+}
 
 // fieldHelp returns the help for the field the cursor was in, if any.
 export function fieldHelp(s: State, field: string): FieldHelp | undefined {

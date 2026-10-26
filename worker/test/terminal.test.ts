@@ -23,6 +23,16 @@ const response = {
 };
 
 describe("browser terminal", () => {
+	it("presets the modified tag when the host asks", () => {
+		const res = structuredClone(response);
+		res.screen.fields.push({ row: 7, col: 12, name: "status", length: 1, value: "H", modified: true } as never);
+		const { scr } = decodeScreen(res) as { scr: Screen };
+		expect(scr.modifiedFields()).toEqual({ status: "H" });
+		const body = encodeRequest({ aid: "ENTER", scr, state: "abc", system: "SYS1" });
+		expect(body.modified).toEqual(["status"]);
+		expect(body.system).toBe("SYS1");
+	});
+
 	it("lays out fields BMS style", () => {
 		const { state, scr } = decodeScreen(response) as { state: string; scr: Screen };
 		expect(state).toBe("abc");

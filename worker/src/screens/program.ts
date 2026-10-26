@@ -40,7 +40,15 @@ export interface ChartState {
 	top?: number;
 	msg?: string;
 }
-export interface HelpState { p: "help"; back: State; field?: string } // field: help for that field
+export interface HelpState {
+	p: "help";
+	back: State;
+	field?: string; // help for that field
+	vals?: Record<string, string>; // what the operator had typed on the screen, put back on return
+	top?: number; // the first value shown, when the field has a list of them
+	errSel?: string;
+	msg?: string;
+}
 export interface ActivityState {
 	p: "activity";
 	back: State;
@@ -204,11 +212,22 @@ export interface SpoolState {
 }
 export interface OutputState { p: "output"; back: State; id: string; top?: number; msg?: string }
 
+export interface SearchState {
+	p: "search";
+	back: State;
+	q?: string; // what to look for
+	type?: string; // only this type of record; "" for all
+	top?: number;
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
-	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState;
+	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -227,6 +246,28 @@ export type Next = State | Logoff;
 export interface Program<S extends State> {
 	render(ctx: Ctx, s: S): Promise<Screen>;
 	handle(ctx: Ctx, s: S, input: Input): Promise<Next>;
+}
+
+// Fill puts values in a panel's input fields the next time it is drawn,
+// with their modified data tags set as if the operator had typed them:
+// what was typed before PF1, a value picked from a prompt list, or a
+// retrieved command. It travels on the state for one screen only.
+export interface Fill {
+	fields: Record<string, string>;
+	cursor?: string; // the field to put the cursor in
+}
+
+export function withFill<S extends State>(s: S, fill: Fill): S {
+	(s as S & { fill?: Fill }).fill = fill;
+	return s;
+}
+
+// takeFill removes the fill from a state and returns it.
+export function takeFill(s: State): Fill | undefined {
+	const st = s as State & { fill?: Fill };
+	const fill = st.fill;
+	delete st.fill;
+	return fill;
 }
 
 export function pf(n: number): string {

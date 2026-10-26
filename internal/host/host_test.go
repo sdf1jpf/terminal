@@ -242,3 +242,22 @@ func TestBuildCursor(t *testing.T) {
 		t.Fatalf("cursor at %d,%d", r, c)
 	}
 }
+
+func TestBuildPresetsModifiedTag(t *testing.T) {
+	in := &api.Screen{Rows: 24, Cols: 80, Fields: []api.Field{
+		{Row: 3, Col: 5, Name: "a", Length: 2, Value: "S", Modified: true},
+		{Row: 4, Col: 5, Name: "b", Length: 2, Value: "X"},
+	}}
+	if m := build(in).Modified(); !m["a"] || m["b"] {
+		t.Fatalf("modified tags: %v", m)
+	}
+}
+
+func TestTimeoutOnLogonScreenStaysThere(t *testing.T) {
+	f := &fakeAPI{}
+	s := NewSession(&Config{SystemName: "SYS1", Backend: f}, "TERM0001")
+	scr := s.Submit(t3.AIDTimeout, s.Start())
+	if len(f.reqs) != 0 || !strings.Contains(scr.Row(scr.Rows()), "ENTER=LOGON") {
+		t.Fatal("a timeout before logon should do nothing")
+	}
+}

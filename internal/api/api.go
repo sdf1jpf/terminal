@@ -29,7 +29,8 @@ type LogonResponse struct {
 const ScreenVersion = 1
 
 // ScreenRequest is sent when an AID key is pressed, or with AID "START"
-// for the first screen and "REDRAW" for a new window size.
+// for the first screen, "REDRAW" for a new window size and "TIMEOUT" when
+// the terminal has been left idle too long.
 type ScreenRequest struct {
 	V        int               `json:"v"`
 	AID      string            `json:"aid"`
@@ -81,6 +82,10 @@ type Field struct {
 	Hidden    bool   `json:"hidden"`
 	Numeric   bool   `json:"numeric"`
 	Mixed     bool   `json:"mixed"`
+	// Modified starts the field with its modified data tag set, so it is
+	// sent back as typed: input kept across help, a picked value, or a
+	// retrieved command.
+	Modified bool `json:"modified"`
 }
 
 // Cursor is a position, 1-based, and the input field it is in, if any.

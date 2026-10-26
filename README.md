@@ -181,6 +181,7 @@ approval before each deploy, add required reviewers to that environment
 | `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
 | `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
 | `-print-dir DIR` | Where Ctrl+P saves screens (default `~/terminal-prints`) |
+| `-idle 30m` | Log off after this long without a key pressed (`0` never) |
 
 ## Mac app launcher
 
@@ -212,7 +213,7 @@ again when you resize it, keeping what you typed.
 Keys are the same as the Go client's (see [Keyboard](#keyboard)), with
 Shift+Enter for New Line. Browsers keep some function keys for themselves
 (F11 and F12 usually), so the key bar under the screen has Enter, Clear,
-Reset, PA1, PA2 and PF1 to PF12 as buttons. The page lives in `worker/public/`
+Reset, PA1, PA2, PF1 to PF12 and RETRV (PF24) as buttons. The page lives in `worker/public/`
 and is plain HTML, CSS and JavaScript with no build step.
 
 ## The API
@@ -334,7 +335,27 @@ together: fill in any of the fields and press Enter. Clear empties them all.
 The API takes the same search as `GET /v1/customers?prefix=&city=&state=&status=`.
 
 PF1 with the cursor in an input field explains that field (CUSH01). PF1
-again, or PF1 anywhere else, shows the keyboard tutorial. PF3 goes back.
+again, or PF1 anywhere else, shows the keyboard tutorial. PF3 goes back, and
+whatever you had typed on the screen is still there.
+
+Fields with a fixed set of values list them under the help, the way ISPF
+prompts do: status codes, selection codes, states, carriers, job names,
+vendors, the options on a menu. Type S beside one and press Enter to go back
+with it in the field.
+
+**Search** (option 1.5, or `FIND text` on any command line) looks for a name
+or number across customers, invoices, purchase orders, shipments, vendors and
+products, with an optional type (C, I, O, S, V or P) to narrow it. S beside a
+hit opens it, and PF3 comes back to the list. The API has the same search as
+`GET /v1/search?q=text&type=C,I`.
+
+## Session
+
+The status line shows the system name and the time next to the terminal name.
+On the menus and the operator console, PF24 (Shift+F12, Esc then Up, or the
+RETRV button in the browser) is RETRIEVE: it brings back the last command
+you entered, and pressing it again goes further back. A terminal left without
+a key pressed for 30 minutes logs itself off, as TSO does with an S522.
 
 ## Products and stock
 
@@ -624,6 +645,7 @@ line shows `PRINTED`. Files go to `~/terminal-prints` (change it with
 | F1-F12, Shift+F1-F12 | PF1-PF12, PF13-PF24 |
 | PgUp / PgDn | PF7 / PF8 |
 | Esc, then 1-9, 0, -, = | PF1-PF9, PF10, PF11, PF12 (for when macOS keeps the F keys) |
+| Shift+F12, or Esc then Up | PF24, RETRIEVE the last command |
 | Ctrl+L | CLEAR |
 | Alt+1 / Alt+2 / Alt+3 | PA1 / PA2 / PA3 |
 | Tab / Shift+Tab | Next / previous field |
