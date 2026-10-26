@@ -8,6 +8,7 @@ import { HttpError, int, str } from "../http";
 import { syslog } from "../syslog";
 import { activity, event } from "./activity";
 import { archdoc, archive } from "./archive";
+import { mail, mailmsg } from "./mail";
 import { ask } from "./ask";
 import { browse } from "./browse";
 import { chart } from "./charts";
@@ -42,7 +43,7 @@ export const requestKeys = [
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
 	pos, po, vendors, vendhist, shipments, shipment, ledger, glaccount,
-	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc,
+	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc, mail, mailmsg,
 };
 
 // Panels with a command line, by the name of its field. What is entered

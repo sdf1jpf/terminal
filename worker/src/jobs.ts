@@ -17,6 +17,7 @@ import { agedAccounts } from "./reports";
 import { pickTickets } from "./shipping";
 import { closeStep, dunningLetters, journalStep, lastClosed, trialBalance, trialBalanceReport, trialBalanceStep } from "./ledger";
 import { archiveSpool, putArchive, RETENTION_DAYS } from "./archive";
+import { mailStep } from "./mail";
 import { buildStatements, listingPdf, statementLines, statementPdf } from "./documents";
 
 export interface Job {
@@ -47,7 +48,7 @@ export interface StepResult {
 interface JobDef {
 	title: string;
 	short: string; // for the submit panel's job list
-	steps: { name: string; run: (db: D1Database, job: Job, archive: R2Bucket) => Promise<StepResult> }[];
+	steps: { name: string; run: (db: D1Database, job: Job, env: Env) => Promise<StepResult> }[];
 }
 
 // The job library. Names are eight characters, as on the real thing.
@@ -68,7 +69,10 @@ export const jobLibrary: Record<string, JobDef> = {
 	CUSSTMT: {
 		title: "CUSTOMER STATEMENTS",
 		short: "STATEMENTS",
-		steps: [{ name: "STEP010", run: statements }],
+		steps: [
+			{ name: "STEP010", run: statements },
+			{ name: "STEP020", run: mailStep("S") },
+		],
 	},
 	EDISIM: {
 		title: "EDI TRADING PARTNER SIMULATOR",
@@ -109,7 +113,10 @@ export const jobLibrary: Record<string, JobDef> = {
 	CUSDUNN: {
 		title: "DUNNING LETTERS FOR OVERDUE INVOICES",
 		short: "DUNNING",
-		steps: [{ name: "STEP010", run: dunningLetters }],
+		steps: [
+			{ name: "STEP010", run: (db, job, env) => dunningLetters(db, job, env.ARCHIVE) },
+			{ name: "STEP020", run: mailStep("D") },
+		],
 	},
 	CUSARCH: {
 		title: "ARCHIVE OLD SPOOL OUTPUT TO R2",
@@ -222,7 +229,7 @@ export class JobRunner extends WorkflowEntrypoint<Env, JobMessage> {
 				const result = await step.do(
 					s.name,
 					{ retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" },
-					() => s.run(db, job, this.env.ARCHIVE),
+					() => s.run(db, job, this.env),
 				);
 				results.push({ name: s.name, result });
 			} catch (e) {
@@ -373,13 +380,13 @@ export async function holdOverLimit(db: D1Database, job: Job): Promise<StepResul
 // statements prints a statement for each open account with a balance,
 // with its activity from the last 30 days, and files a PDF of each in the
 // archive.
-export async function statements(db: D1Database, job: Job, archive: R2Bucket): Promise<StepResult> {
+export async function statements(db: D1Database, job: Job, env: Env): Promise<StepResult> {
 	const list = await buildStatements(db);
 	const lines: string[] = [];
 	for (const st of list) {
 		const mine = statementLines(st);
 		lines.push(...mine);
-		await putArchive(db, archive, {
+		await putArchive(db, env.ARCHIVE, {
 			key: `statements/${st.asOf.slice(0, 7)}/${st.customer.id}`, kind: "S", ref: st.customer.id, name: job.name,
 			title: `STATEMENT ${st.customer.name}`.slice(0, 60), owner: job.submitted_by, created: st.asOf, archived_by: job.name,
 		}, mine, statementPdf(st));
@@ -390,8 +397,8 @@ export async function statements(db: D1Database, job: Job, archive: R2Bucket): P
 
 // archiveOutput is CUSARCH's step: output more than a week old moves off
 // the spool into the archive.
-export async function archiveOutput(db: D1Database, job: Job, archive: R2Bucket): Promise<StepResult> {
-	const done = await archiveSpool(db, archive, job.name);
+export async function archiveOutput(db: D1Database, job: Job, env: Env): Promise<StepResult> {
+	const done = await archiveSpool(db, env.ARCHIVE, job.name);
 	const lines = ["", `OUTPUT ON THE SPOOL MORE THAN ${RETENTION_DAYS} DAYS, MOVED TO THE ARCHIVE:`, ""];
 	for (const e of done) lines.push(`  ${pad(e.name, 8)} ${pad(e.ref, 8)} ${pad(e.lines, 6, true)} LINES  ${e.created.slice(0, 10)}  ${e.key}`);
 	if (done.length === 0) lines.push("  NONE");
@@ -401,7 +408,7 @@ export async function archiveOutput(db: D1Database, job: Job, archive: R2Bucket)
 
 // monthEndArchive is CUSCLOSE's last step: the closed period's trial
 // balance and the aged balances as of the close go to the archive.
-export async function monthEndArchive(db: D1Database, job: Job, archive: R2Bucket): Promise<StepResult> {
+export async function monthEndArchive(db: D1Database, job: Job, env: Env): Promise<StepResult> {
 	const closed = await lastClosed(db);
 	if (!closed) return { rc: 4, lines: ["", "NO CLOSED PERIOD TO ARCHIVE"] };
 	const p = closed.period;
@@ -412,7 +419,7 @@ export async function monthEndArchive(db: D1Database, job: Job, archive: R2Bucke
 	const lines = ["", `MONTH-END REPORTS FOR ${p} FILED IN THE ARCHIVE:`, ""];
 	for (const r of reports) {
 		const o = { id: r.id, name: job.name, title: r.title };
-		const e = await putArchive(db, archive, {
+		const e = await putArchive(db, env.ARCHIVE, {
 			key: `month-end/${p}/${r.id}`, kind: "M", ref: p, name: job.name, title: r.title, owner: job.submitted_by,
 			created: new Date().toISOString(), archived_by: job.name,
 		}, r.lines, listingPdf(o, r.lines));

@@ -1235,6 +1235,27 @@ describe("archive screens", () => {
 		expect(t.scr.map).toBe("CUSQ03");
 	});
 
+	it("mails an archived document and shows it in the mail log", async () => {
+		const id = await spoolReport(env.DB, "IBMUSER", "CUSR01", "MAIL ME", ["LINE"]);
+		await env.DB.prepare("UPDATE spool SET created = '2026-02-15T00:00:00Z' WHERE id = ?").bind(id).run();
+		await archiveSpool(env.DB, env.ARCHIVE, "CUSARCH");
+		const t = await Terminal.logon();
+		await t.fill("option", `5.7 ${id}`).send("ENTER");
+		await t.fill("sel0", "m").send("ENTER");
+		expect(t.message).toBe(`CUS1520I 2026-02-${id}.PDF MAILED TO JUSTIN.FRANK@ME.COM`);
+		await t.fill("sel0", "m").send("ENTER");
+		expect(t.message).toBe(`CUS1526W 2026-02-${id} WAS MAILED BEFORE - SEE OPTION 5.8`);
+		await t.send("PF3");
+		await t.fill("option", `mail ${id}`).send("ENTER");
+		expect(t.scr.map).toBe("CUSQ05");
+		expect(t.row(8)).toMatch(new RegExp(`OUT SENT +${id} LISTING ${id} - MAIL ME`));
+		await t.fill("sel0", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSQ06");
+		expect(t.row(11)).toContain(`spool/2026-02/${id}.pdf`);
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSQ05");
+	});
+
 	it("sends invoice and statement PDFs from their screens", async () => {
 		const c = (await env.DB.prepare("SELECT id FROM customers WHERE status = 'A' ORDER BY id LIMIT 1").first<{ id: string }>())!.id;
 		const t = await Terminal.logon();

@@ -259,6 +259,8 @@ GET    /v1/customers/{id}/statement   a 30-day statement, as a PDF
 GET    /v1/archive?name=X&kind=K      archived output and documents
 GET    /v1/archive/{key}        one entry; {key}.pdf and {key}.txt are its files
 POST   /v1/archive/restore      put an archived listing back on the spool: {"key"}
+GET    /v1/mail?ref=X           the mail log: statements and letters sent, vendor mail received
+GET    /v1/mail/{seq}
 GET    /v1/tables               the system tables, with their row counts
 GET    /v1/tables/{t}           a table's columns and rows
 PUT    /v1/tables/{t}/{key}     add or change a row
@@ -813,6 +815,32 @@ PF5 adds one and PF9 twice puts the table back to its defaults. Changes are
 logged on SYSLOG (`CUS0801I`-`CUS0803I`). A table nobody has changed is not
 stored and reads as its defaults. KV is eventually consistent, so another
 location can see the old row for up to a minute.
+
+## Email
+
+Mail goes through Cloudflare Email Routing on **parkerfrank.com**. The demo's
+customers aren't real, so every outbound message goes to one verified
+address (`MAIL_TO` in `worker/wrangler.jsonc`, and the `send_email` binding's
+`destination_address`) and its subject names the customer it is for.
+
+- **CUSSTMT** STEP020 mails each statement it filed as a PDF. A statement is
+  filed once per customer per month, and each one is mailed once, so customers
+  get one statement a month however often the job runs.
+- **CUSDUNN** STEP020 mails each new dunning letter.
+- `M` beside an entry on ARCHIVE (5.7) mails that PDF.
+
+Mail sent to the domain and routed to the Worker (an Email Routing rule such
+as `po@parkerfrank.com` -> Worker `customer-api`) is read as a vendor's reply.
+A subject like `PO00012 CONFIRMED SHIP 2026-11-05` confirms the purchase order
+the way an 855 would, and `PO00012 SHIPPED` puts it in transit the way an 856
+would. Anything else is bounced with the reason.
+
+Option 5.8 **MAIL LOG** (CUSQ05) lists everything sent and received; `S` shows
+one message (CUSQ06). The API is `GET /v1/mail?ref=` and `GET /v1/mail/{seq}`.
+
+Setup, once, in the Cloudflare dashboard: enable Email Routing on
+parkerfrank.com, verify the `MAIL_TO` address under Destination addresses, and
+add the routing rule for inbound vendor mail.
 
 ## Printing a screen
 

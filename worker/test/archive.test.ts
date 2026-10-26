@@ -185,6 +185,13 @@ describe("archive", () => {
 		expect(stmts.length).toBeGreaterThan(0);
 		expect(stmts[0].key).toMatch(/^statements\/\d{4}-\d\d\/\d{6}$/);
 		checkPdf((await call("GET", `/v1/archive/${stmts[0].key}.pdf`)).body);
+		// Each statement is mailed, once a month.
+		expect(job.output.join("\n")).toMatch(new RegExp(`${stmts.length} MAILED TO JUSTIN.FRANK@ME.COM, 0 FAILED`));
+		const mail = (await call("GET", `/v1/mail?ref=${stmts[0].ref}`)).body;
+		expect(mail[0]).toMatchObject({ direction: "O", status: "SENT", archive_key: stmts[0].key });
+		expect((await call("GET", `/v1/mail/${mail[0].seq}`)).body.seq).toBe(mail[0].seq);
+		job = await run("CUSSTMT", await next());
+		expect(job.output.join("\n")).toContain("NOTHING NEW TO MAIL");
 
 		job = await run("CUSCLOSE", await next());
 		expect(job.job.rc).not.toBe("ABEND");

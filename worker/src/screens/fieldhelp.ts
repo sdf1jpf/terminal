@@ -490,6 +490,7 @@ const help: Record<string, FieldHelp> = {
 		values: v(
 			["S", "BROWSE IT"],
 			["D", "SEND ITS PDF TO YOUR TERMINAL"],
+			["M", "MAIL ITS PDF (ONCE; THE MAIL LOG IS OPTION 5.8)"],
 			["R", "RESTORE A LISTING TO THE SPOOL, HELD, UNDER ITS ORIGINAL ID"],
 		),
 	},

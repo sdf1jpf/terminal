@@ -19,6 +19,10 @@
   // The archive: old spool output, statements, dunning letters and month-end
   // reports, as text and PDF files (see src/archive.ts).
   "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "customer-archive" }],
+  // Mail, through Email Routing on parkerfrank.com: statements and dunning
+  // letters, all to one verified address (see src/mail.ts). Inbound mail to
+  // the domain is routed to this Worker's email handler by a routing rule.
+  "send_email": [{ "name": "MAIL", "destination_address": "justin.frank@me.com" }],
   // Batch jobs: POST /v1/jobs puts a job on this queue, and the consumer
   // starts a JobRunner workflow for it (see src/jobs.ts).
   "queues": {
@@ -52,6 +56,8 @@
   "vars": {
     "ACCESS_TEAM_DOMAIN": "parkerfrank.cloudflareaccess.com",
     "ACCESS_AUD": "c457acd9b4bf7e5a727c091d870ae26ae95747d77cd47c44a55a21ba54997073",
-    "CF_ACCOUNT_ID": "d64e67ce2f5262eef1178cd4d08c5380"
+    "CF_ACCOUNT_ID": "d64e67ce2f5262eef1178cd4d08c5380",
+    "MAIL_FROM": "billing@parkerfrank.com",
+    "MAIL_TO": "justin.frank@me.com"
   }
 }
