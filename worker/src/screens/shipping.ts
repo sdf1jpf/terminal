@@ -248,7 +248,7 @@ export const shipment: Program<ShipmentState> = {
 				if (status === "P") {
 					const n = (k: "cartons" | "weight") => (/^\d+$/.test(s.vals![k]) ? Number(s.vals![k]) : NaN);
 					return act(s, async () => {
-						const x = await pack(ctx.db, s.id, n("cartons"), n("weight"));
+						const x = await pack(ctx.db, ctx.tables, s.id, n("cartons"), n("weight"));
 						s.vals = undefined;
 						s.msg = `CUS0807I ${s.id} PACKED: ${x.cartons} CARTONS, ${x.weight} LB - ROUTED ${x.carrier} - PF10 SHIPS IT`;
 						return s;

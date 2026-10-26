@@ -43,8 +43,9 @@ const usStates = /^[A-Z]{2}$/;
 
 // The carrier routing guide: carriers are tried by priority and the first
 // whose limits all hold wins. A limit of 0 is no limit. The defaults give
-// the shipping desk's rules: the company truck in its area, UPS for small
-// orders, FedEx Freight for the rest.
+// the shipping desk's rules: UPS ground by default; freight (150 lb or more,
+// a carton over 70 lb or an order of $5000 or more) on the company truck in
+// its area, and FedEx Freight for the rest.
 const carrier: Table = {
 	title: "CARRIER RATES AND ROUTING",
 	desc: "Carriers, their rates and the orders they take",
@@ -63,13 +64,13 @@ const carrier: Table = {
 		{ name: "transit_days", label: "TRANSIT DAYS", kind: "int", len: 2, min: 0, max: 99 },
 	],
 	defaults: {
-		TRK: {
-			name: "COMPANY TRUCK", priority: 1, service_states: "OH IN KY MI PA WV", min_weight_lb: 0, max_weight_lb: 0,
-			max_carton_lb: 0, min_value: 0, max_value: 0, base_charge: 45, per_lb: 0.1, transit_days: 2,
-		},
 		UPS: {
-			name: "UPS GROUND", priority: 2, service_states: "", min_weight_lb: 0, max_weight_lb: 149,
+			name: "UPS GROUND", priority: 1, service_states: "", min_weight_lb: 0, max_weight_lb: 149,
 			max_carton_lb: 70, min_value: 0, max_value: 4999, base_charge: 12.5, per_lb: 0.85, transit_days: 4,
+		},
+		TRK: {
+			name: "COMPANY TRUCK", priority: 2, service_states: "OH IN KY MI PA WV", min_weight_lb: 0, max_weight_lb: 0,
+			max_carton_lb: 0, min_value: 0, max_value: 0, base_charge: 45, per_lb: 0.1, transit_days: 2,
 		},
 		FDX: {
 			name: "FEDEX FREIGHT", priority: 3, service_states: "", min_weight_lb: 0, max_weight_lb: 0,

@@ -4,7 +4,7 @@
 // Releasing an open invoice to the warehouse opens a shipment in PICKING
 // (P) and freezes the invoice's lines: its pick ticket lists them by bin.
 // Packing it (K) records the cartons and weight, and the system chooses the
-// carrier from the ship-to, weight and value (routeFor). Shipping it (S)
+// carrier from the ship-to, weight and value by the CARRIER table (routeFor). Shipping it (S)
 // records the tracking number. A customer that ordered by EDI is sent an
 // 856 ship notice. Only a shipped invoice can be billed (invoices.ts).
 // Cancelling a shipment that has not shipped puts the invoice back to work.
@@ -13,6 +13,7 @@ import { fromEDIOrder, party, send, ymd, type Interchange } from "./edi";
 import { HttpError } from "./http";
 import { addressOf, cityLine, getInvoice, type Invoice, type InvoiceLine } from "./invoices";
 import type { StepResult } from "./jobs";
+import { carrierRates, chooseCarrier, type Carrier, type Order } from "./systables";
 
 export interface Shipment {
 	id: string;
@@ -35,28 +36,32 @@ export const shipStatusNames: Record<string, string> = { P: "PICKING", K: "PACKE
 
 export const carriers: Record<string, string> = { UPS: "UPS GROUND", FDX: "FEDEX FREIGHT", TRK: "COMPANY TRUCK" };
 
-// The routing guide. The company truck delivers from the warehouse to the
-// states around it, whatever the size. Elsewhere, anything heavy or bulky
-// goes LTL freight, and so does a valuable order, for its full liability
-// cover; the rest goes UPS ground.
-export const WAREHOUSE_STATE = "OH";
-export const TRUCK_STATES = ["OH", "IN", "KY", "MI", "PA", "WV"];
-export const FREIGHT_WEIGHT = 150; // pounds in all
-export const FREIGHT_CARTON = 70; // pounds in one carton
-export const FREIGHT_VALUE = 5000; // dollars
-
 export interface Route {
 	carrier: string;
 	reason: string;
 }
 
-// routeFor chooses the carrier for a shipment.
-export function routeFor(shipTo: { state: string }, cartons: number, weight: number, value: number): Route {
-	if (TRUCK_STATES.includes(shipTo.state)) return { carrier: "TRK", reason: `${shipTo.state} IS IN THE TRUCK AREA` };
-	if (weight >= FREIGHT_WEIGHT) return { carrier: "FDX", reason: `${weight} LB IS ${FREIGHT_WEIGHT} LB OR MORE` };
-	if (weight / cartons > FREIGHT_CARTON) return { carrier: "FDX", reason: `CARTONS OVER ${FREIGHT_CARTON} LB` };
-	if (value >= FREIGHT_VALUE) return { carrier: "FDX", reason: `VALUE $${value} NEEDS FULL COVER` };
-	return { carrier: "UPS", reason: `${weight} LB TO ${shipTo.state}, OUTSIDE THE TRUCK AREA` };
+// routeFor chooses a shipment's carrier from the CARRIER system table
+// (systables.ts): the first carrier, by priority, whose service area and
+// limits take it. The reason says why each carrier ahead of it was passed
+// over, and that the ship-to is in the chosen carrier's area if it has one.
+export function routeFor(table: Carrier[], shipTo: { state: string }, cartons: number, weight: number, value: number): Route {
+	const order = { state: shipTo.state.toUpperCase(), weight, maxCarton: Math.ceil(weight / cartons), value };
+	const c = chooseCarrier(table, order);
+	if (!c) throw bad("weight", "no carrier in the CARRIER table takes this shipment - check the table");
+	const why = table.slice(0, table.indexOf(c)).map((x) => passedOver(x, order));
+	why.push(c.service_states.length > 0 ? `${order.state} IS IN THE ${c.code} AREA` : why.length === 0 ? `WITHIN ${c.code} LIMITS` : "");
+	return { carrier: c.code, reason: why.filter(Boolean).join("; ") };
+}
+
+// passedOver says why a carrier did not take an order.
+function passedOver(c: Carrier, o: Order): string {
+	if (c.service_states.length > 0 && !c.service_states.includes(o.state)) return `${o.state} OUTSIDE ${c.code} AREA`;
+	if (o.weight < c.min_weight_lb) return `${o.weight} LB UNDER ${c.code} ${c.min_weight_lb} LB`;
+	if (c.max_weight_lb > 0 && o.weight > c.max_weight_lb) return `${o.weight} LB OVER ${c.code} ${c.max_weight_lb} LB`;
+	if (c.max_carton_lb > 0 && o.maxCarton > c.max_carton_lb) return `${o.maxCarton} LB CARTON OVER ${c.code} ${c.max_carton_lb} LB`;
+	if (o.value < c.min_value) return `$${o.value} UNDER ${c.code} $${c.min_value}`;
+	return `$${o.value} OVER ${c.code} $${c.max_value}`;
 }
 
 const bad = (field: string, message: string) => new HttpError(422, "invalid", message, field);
@@ -119,12 +124,13 @@ async function why(db: D1Database, id: string, want: string, doing: string): Pro
 	throw bad("status", `shipment ${id} is ${shipStatusNames[shipment.status].toLowerCase()} - it cannot be ${doing}`);
 }
 
-// pack records a picked shipment's cartons and weight, and routes it.
-export async function pack(db: D1Database, id: string, cartons: number, weight: number): Promise<Shipment> {
+// pack records a picked shipment's cartons and weight, and routes it by
+// the CARRIER table in tables.
+export async function pack(db: D1Database, tables: KVNamespace, id: string, cartons: number, weight: number): Promise<Shipment> {
 	if (!Number.isInteger(cartons) || cartons < 1 || cartons > 999) throw bad("cartons", "cartons must be a whole number from 1 to 999");
 	if (!Number.isInteger(weight) || weight < 1 || weight > 99_999) throw bad("weight", "weight must be whole pounds from 1 to 99999");
 	const { shipment, invoice } = await getShipment(db, id);
-	const r = routeFor(addressOf(invoice, "ship"), cartons, weight, invoice.total);
+	const r = routeFor(await carrierRates(tables), addressOf(invoice, "ship"), cartons, weight, invoice.total);
 	const row = await db.prepare(
 		`UPDATE shipments SET status = 'K', cartons = ?2, weight = ?3, packed = ?4, carrier = ?5, route = ?6
 		 WHERE id = ?1 AND status = 'P' RETURNING *`,

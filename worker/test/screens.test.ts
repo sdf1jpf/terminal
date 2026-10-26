@@ -779,7 +779,7 @@ describe("invoice screens", () => {
 		await t.fill("weight", "35").send("PF10");
 		expect(t.message).toMatch(/^CUS0807I SHP\d{5} PACKED: 2 CARTONS, 35 LB - ROUTED UPS - PF10 SHIPS IT$/);
 		expect(t.field("carrier")).toBeUndefined();
-		expect(t.row(9)).toContain("SHIPS VIA UPS GROUND - 35 LB TO TX, OUTSIDE THE TRUCK AREA");
+		expect(t.row(9)).toContain("SHIPS VIA UPS GROUND - WITHIN UPS LIMITS");
 		await t.send("PF10");
 		expect(t.message).toMatch(/^CUS0808I SHP\d{5} SHIPPED VIA UPS 1Z\w+ - PF11 BILLS IT$/);
 		await t.send("PF4");
