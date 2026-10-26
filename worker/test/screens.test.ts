@@ -414,7 +414,7 @@ describe("activity and history screens", () => {
 		await t.send("ENTER");
 		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* PAYMENT  ${inv.id} +-\\$124 IBMUSER`));
 		expect(t.row(12)).toMatch(new RegExp(`^ +2 .* BILLED   ${inv.id} +\\$124 IBMUSER`));
-		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* SHIPPED  ${shipment.id} TRK PRO`));
+		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* SHIPPED  ${shipment.id} UPS 1Z`));
 		expect(t.row(14)).toMatch(new RegExp(`^ +4 .* RELEASED ${shipment.id} ${inv.id} +IBMUSER`));
 		expect(t.row(15)).toMatch(new RegExp(`^ +5 .* OPENED   ${inv.id} PO AUDIT-1`));
 
@@ -437,7 +437,7 @@ describe("activity and history screens", () => {
 
 		await t.fill("line", "3").send("ENTER");
 		expect(t.row(6)).toContain("SHIPPED");
-		expect(t.row(10)).toMatch(/CARRIER .* TRK +PRO\d+ +1 CTN 10 LB/);
+		expect(t.row(10)).toMatch(/CARRIER .* UPS +1Z\w+ +1 CTN 10 LB/);
 		await t.send("PF6");
 		expect(t.scr.map).toBe("CUSS02");
 		await t.send("PF3");
@@ -777,10 +777,10 @@ describe("invoice screens", () => {
 		expect(t.message).toBe("CUS0811E WEIGHT MUST BE WHOLE POUNDS FROM 1 TO 99999");
 		expect(t.scr.cursor).toEqual({ field: "weight" });
 		await t.fill("weight", "35").send("PF10");
-		expect(t.message).toMatch(/^CUS0807I SHP\d{5} PACKED: 2 CARTONS, 35 LB/);
-		await t.fill("carrier", "dhl").send("PF10");
-		expect(t.message).toBe("CUS0812E CARRIER MUST BE ONE OF UPS, FDX, TRK");
-		await t.fill("carrier", "ups").send("PF10");
+		expect(t.message).toMatch(/^CUS0807I SHP\d{5} PACKED: 2 CARTONS, 35 LB - ROUTED UPS - PF10 SHIPS IT$/);
+		expect(t.field("carrier")).toBeUndefined();
+		expect(t.row(9)).toContain("SHIPS VIA UPS GROUND - 35 LB TO TX, OUTSIDE THE TRUCK AREA");
+		await t.send("PF10");
 		expect(t.message).toMatch(/^CUS0808I SHP\d{5} SHIPPED VIA UPS 1Z\w+ - PF11 BILLS IT$/);
 		await t.send("PF4");
 		expect(t.scr.map).toBe("CUSI02");

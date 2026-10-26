@@ -172,7 +172,7 @@ export interface ShipmentState {
 	back: State;
 	id: string;
 	top?: number;
-	vals?: Record<string, string>; // cartons, weight and carrier, kept across a failed step
+	vals?: Record<string, string>; // cartons and weight, kept across a failed step
 	confirm?: boolean; // PF9 was pressed once: press it again to cancel the shipment
 	errField?: string;
 	msg?: string;

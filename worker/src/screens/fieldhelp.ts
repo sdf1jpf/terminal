@@ -9,7 +9,6 @@
 
 import { jobLibrary } from "../jobs";
 import { listVendors } from "../purchasing";
-import { carriers } from "../shipping";
 import { hitTypes } from "../search";
 import { menuValues } from "./menu";
 import type { Ctx } from "./screen";
@@ -343,17 +342,14 @@ const help: Record<string, FieldHelp> = {
 	},
 	weight: {
 		title: "WEIGHT",
-		lines: ["The shipment's total weight in whole pounds, 1 to 99999."],
-	},
-	carrier: {
-		title: "CARRIER",
 		lines: [
-			"Who takes the shipment. PF10 ships it, gives it a tracking number and,",
-			"if the customer ordered by EDI, sends its system an 856 ship notice.",
-			"The invoice can be billed once it has shipped: PF11 here, or PF10 on",
-			"the invoice.",
+			"The shipment's total weight in whole pounds, 1 to 99999.",
+			"",
+			"Packing it chooses the carrier: our own truck (TRK) to the states",
+			"around the warehouse, FedEx Freight (FDX) elsewhere for 150 lb or",
+			"more, a carton over 70 lb or an order of $5000 or more, and UPS",
+			"ground for the rest. PF10 then ships it.",
 		],
-		values: async () => Object.entries(carriers).map(([code, desc]) => ({ code, desc })),
 	},
 	"ledger.period": {
 		title: "PERIOD",
