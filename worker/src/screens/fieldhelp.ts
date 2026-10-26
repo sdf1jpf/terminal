@@ -379,6 +379,23 @@ const help: Record<string, FieldHelp> = {
 		],
 		values: v(["S", "LIST ITS PURCHASE ORDERS"], ["H", "EVENT HISTORY"]),
 	},
+	"ediex.sel": {
+		title: "SELECTION CODE",
+		lines: [
+			"A customer's 850 line is held here when its product is missing, not on",
+			"file or discontinued. The rest of the order is on the invoice, which",
+			"cannot go to the warehouse until every held line is done.",
+		],
+		values: v(["F", "FIND A PRODUCT FOR THE LINE"], ["D", "DROP THE LINE FROM THE ORDER"], ["R", "REJECT THE WHOLE ORDER (ENTER TWICE): CANCELS THE INVOICE"]),
+	},
+	"ediex.sku": {
+		title: "NEW SKU",
+		lines: [
+			"The product to send instead, such as BRG-6204. Press Enter to add it to",
+			"the invoice for the quantity the customer ordered, at its current price.",
+			"F beside the line searches for one.",
+		],
+	},
 	"timeline.id": {
 		title: "ORDER NUMBER",
 		lines: [

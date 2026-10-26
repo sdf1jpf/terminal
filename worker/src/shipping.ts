@@ -75,7 +75,8 @@ export function binFor(sku: string): string {
 	return `${"ABCDEF"[h % 6]}-${String(1 + ((h >>> 3) % 24)).padStart(2, "0")}-${1 + ((h >>> 8) % 4)}`;
 }
 
-// release opens a shipment for an open invoice with at least one line.
+// release opens a shipment for an open invoice with at least one line and
+// no EDI lines held for correction (ediexceptions.ts).
 export async function release(db: D1Database, user: string, invoiceId: string): Promise<Shipment> {
 	const [, inserted] = await db.batch<Shipment>([
 		db.prepare("UPDATE counters SET value = value + 1 WHERE name = 'shipment_id'"),
@@ -85,6 +86,7 @@ export async function release(db: D1Database, user: string, invoiceId: string): 
 			 FROM counters c, invoices i
 			 WHERE c.name = 'shipment_id' AND i.id = ?1 AND i.status = 'O'
 			   AND EXISTS (SELECT 1 FROM invoice_lines WHERE invoice_id = ?1)
+			   AND NOT EXISTS (SELECT 1 FROM edi_exceptions WHERE invoice_id = ?1 AND status = 'O')
 			 ON CONFLICT (invoice_id) DO NOTHING
 			 RETURNING *`,
 		).bind(invoiceId, now(), user),
@@ -94,6 +96,8 @@ export async function release(db: D1Database, user: string, invoiceId: string): 
 	const shp = await shipmentFor(db, invoiceId);
 	if (shp) throw bad("sku", `invoice ${invoiceId} is already released on ${shp.id}`);
 	if (invoice.status !== "O") throw bad("sku", `invoice ${invoiceId} is already billed`);
+	const held = await db.prepare("SELECT COUNT(*) AS n FROM edi_exceptions WHERE invoice_id = ? AND status = 'O'").bind(invoiceId).first<{ n: number }>();
+	if (held!.n > 0) throw bad("sku", `invoice ${invoiceId} has ${held!.n} EDI line(s) held for correction - see option 2.5`);
 	if (lines.length === 0) throw bad("sku", "add at least one line before releasing it to the warehouse");
 	throw new HttpError(409, "conflict", "record was changed by another user");
 }

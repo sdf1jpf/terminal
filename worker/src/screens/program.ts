@@ -123,7 +123,8 @@ export interface InvAddrState {
 }
 export interface SkuSearchState {
 	p: "skusearch";
-	back: InvoiceState;
+	back: InvoiceState | EdiExState; // the invoice to add to, or the held EDI lines
+	seq?: number; // with EdiExState: the held line the product is for
 	q: string; // matched against SKU and description
 	top?: number;
 	errSel?: string;
@@ -189,6 +190,15 @@ export interface LedgerState {
 	msg?: string;
 }
 export interface GLAccountState { p: "glaccount"; back: State; account: string; period: string; top?: number; msg?: string }
+export interface EdiExState {
+	p: "ediex";
+	back: State;
+	top?: number;
+	vals?: Record<string, string>; // new SKUs typed or picked, by "sku:<seq>"
+	confirm?: number; // R was entered once on this exception: enter it again to reject the order
+	errSel?: string;
+	msg?: string;
+}
 export interface TimelineState {
 	p: "timeline";
 	back: State;
@@ -318,7 +328,7 @@ export interface AskState {
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
-	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | ShipmentsState | ShipmentState
+	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState;
 

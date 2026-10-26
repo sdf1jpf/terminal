@@ -1,4 +1,5 @@
 import { getInterchange, listInterchanges, typeNames, type Interchange } from "../edi";
+import { listExceptions } from "../ediexceptions";
 import { submitJob } from "../jobs";
 import { padID } from "./detail";
 import { vendorID } from "./purchasing";
@@ -48,6 +49,8 @@ export const edi: Program<EdiState> = {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
 		scr.text(5, 2, "SELECT: S=SHOW   CUSTOMERS 850 IN 810 OUT 820 IN  VENDORS 850 OUT 855 856 IN", { color: "blue" });
+		const held = (await listExceptions(ctx.db).catch(() => [])).length;
+		if (held) scr.text(6, 2, `${held} 850 LINE${held === 1 ? "" : "S"} HELD FOR CORRECTION - OPTION 2.5 (EXCEPTIONS)`, { color: "yellow", bright: true });
 		scr.text(7, 2, "S " + listLine("ID", "DIR", "TYPE", "PARTNER", "STATUS", "REFERENCE", "RECEIVED/SENT"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		const shown = list.slice(top, top + rows);

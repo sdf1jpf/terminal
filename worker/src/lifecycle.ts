@@ -2,6 +2,7 @@
 // OrderLifecycle workflow, named after the invoice:
 //
 //	opened (on a screen, by REST, or by a customer's 850)
+//	  -> waits for an operator to correct any 850 lines held as EDI exceptions
 //	  -> released to the warehouse -> picked and packed -> shipped (856 for EDI orders)
 //	  -> billed when it ships (810 for EDI orders)
 //	  -> waits for payment (by hand, or a customer's 820)
@@ -199,6 +200,17 @@ export async function lookAtInvoice(db: D1Database, id: string, now = Date.now()
 		rec(`EDI ${e.type}`, e.id, e.created, `${e.id} ${ediNames[e.type]} ${e.direction === "O" ? "SENT" : "RECEIVED"}`, null, e.created_by);
 	}
 
+	// Lines of its 850 held for an operator, and what became of them.
+	const { results: held } = await db.prepare("SELECT * FROM edi_exceptions WHERE invoice_id = ? ORDER BY seq").bind(id)
+		.all<{ seq: number; po_line: string; sku: string; problem: string; status: string; corrected_sku: string; created: string; resolved: string; resolved_by: string }>();
+	for (const x of held) {
+		const what = `PO1 LINE ${x.po_line} ${x.sku || "(NO SKU)"}`;
+		rec("EDI HELD", String(x.seq), x.created, `${what}: ${x.problem}`, null, "EDI");
+		if (x.status === "C") rec("CORRECTED", String(x.seq), x.resolved, `${what} TO ${x.corrected_sku}`, null, x.resolved_by);
+		if (x.status === "D") rec("DROPPED", String(x.seq), x.resolved, `${what} LEFT OFF THE ORDER`, null, x.resolved_by);
+	}
+	const open = held.filter((x) => x.status === "O").length;
+
 	const { results: txns } = await db.prepare(
 		"SELECT type, posted_by FROM transactions WHERE reference = ? AND type IN ('I', 'P')",
 	).bind(id).all<{ type: string; posted_by: string }>();
@@ -223,7 +235,9 @@ export async function lookAtInvoice(db: D1Database, id: string, now = Date.now()
 			if (inv.cust_status === "A") look = flow({ bill: true }, "BILLING ON SHIPMENT", now);
 			else look = flow({ wait: IDLE }, `BILLING HELD - CUSTOMER ${inv.cust_status === "H" ? "ON HOLD" : "NOT ACTIVE"}`, null);
 		} else {
-			const next = !shp
+			const next = !shp && open > 0
+				? `CORRECTION OF ${open} HELD EDI LINE${open === 1 ? "" : "S"} - OPTION 2.5`
+				: !shp
 				? "RELEASE TO THE WAREHOUSE"
 				: shp.status === "P" ? `PICK AND PACK ${shp.id}` : `SHIP ${shp.id} VIA ${shp.carrier}`;
 			look = flow({ wait: IDLE }, next, null);

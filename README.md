@@ -513,7 +513,7 @@ end. Menu option 2.3 (`2.3 000105` for one customer) opens the **EDI MAILBOX**
 
 | Set | Direction | What happens |
 | --- | --- | --- |
-| 850 purchase order | in | Opens an invoice for the sender and adds its lines, taking the stock. If any line can't be filled, the whole order is rejected and the stock returned. |
+| 850 purchase order | in | Opens an invoice for the sender and adds its lines, taking the stock. A line for a product we don't carry is held for an operator (see below). If any other line can't be filled, such as for want of stock, the whole order is rejected and the stock returned. |
 | 997 acknowledgment | out | Sent for every inbound interchange from a known customer: accepted, or rejected with the reason kept on the mailbox. |
 | 856 ship notice | out | Sent when an invoice that came from an 850 ships. |
 | 810 invoice | out | Sent when an invoice that came from an 850 is billed (PF10). |
@@ -524,9 +524,29 @@ and ours is `CUSTAPI`. Interchanges arrive with `POST /v1/edi` (the raw X12
 as the body), wait on the `customer-jobs` queue and are processed by its
 consumer. PF6 on the mailbox submits the **EDISIM** job, which plays the
 customers' side: up to three customers send purchase orders (now and then
-for a product we don't carry, which is rejected), and each customer pays
+for a product we don't carry, which is held), and each customer pays
 the billed invoices we sent it an 810 for. EDI traffic also shows in the
 customer's event history.
+
+### EDI exceptions
+
+An 850 line whose product is missing, not on file or discontinued no longer
+rejects the order. The rest of the order becomes an invoice and the line
+waits on **EDI EXCEPTIONS** (CUSE03, menu option 2.5; the mailbox shows how
+many are waiting). For each held line, either:
+
+- type a SKU under `NEW SKU` and press Enter, which adds that product to the
+  invoice for the quantity ordered, at its current price; `F` beside the
+  line finds one with the product search (CUSI03);
+- `D` drops the line from the order; or
+- `R`, entered twice, rejects the whole order: the invoice is cancelled,
+  its stock returned, and the 850 marked rejected on the mailbox.
+
+The invoice can't be released to the warehouse while any of its lines are
+held, and its [lifecycle](#order-lifecycles) waits for them, then carries on.
+The held lines and what became of them show on its timeline. Over REST:
+`GET /v1/edi/exceptions`, and `POST /v1/edi/exceptions/{n}/correct`
+(`{"sku"}`), `/drop` and `/reject`.
 
 ## Purchasing
 

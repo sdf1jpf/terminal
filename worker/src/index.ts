@@ -37,6 +37,10 @@
 //	GET    /v1/edi?partner=X        EDI mailbox, newest first (without the raw X12)
 //	POST   /v1/edi                  receive an X12 interchange (the body, as text)
 //	GET    /v1/edi/{id}             one interchange with its raw X12
+//	GET    /v1/edi/exceptions?all=1 850 lines held for correction (open ones by default)
+//	POST   /v1/edi/exceptions/{n}/correct   put this product on the order instead: {"sku"}
+//	POST   /v1/edi/exceptions/{n}/drop      leave the line off the order
+//	POST   /v1/edi/exceptions/{n}/reject    reject the whole order, cancelling its invoice
 //	GET    /v1/vendors              vendors, with their open PO and product counts
 //	GET    /v1/vendors/{id}
 //	GET    /v1/purchase-orders?vendor=X   purchase orders, newest first
@@ -111,6 +115,7 @@ import {
 import { bill, getInterchange, listInterchanges, receive } from "./edi";
 import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs";
 import { getFlow, pendingSignals, timeline, workflowStatus, type OrderParams } from "./lifecycle";
+import { correctException, dropException, listExceptions, rejectOrder } from "./ediexceptions";
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
 import { recent } from "./syslog";
@@ -366,6 +371,18 @@ app.post("/v1/edi", signedOn, async (c) => {
 	await c.env.JOBS.send({ id: filed.id, kind: "edi" } satisfies JobMessage);
 	return json(202, filed);
 });
+app.get("/v1/edi/exceptions", signedOn, async (c) => json(200, await listExceptions(c.env.DB, c.req.query("all") === "1")));
+const exceptionSeq = (c: { req: { param: (k: string) => string } }) => {
+	const n = Number(c.req.param("seq"));
+	if (!Number.isInteger(n) || n < 1) throw new HttpError(404, "not_found", "EDI exception not found");
+	return n;
+};
+app.post("/v1/edi/exceptions/:seq/correct", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["sku"]);
+	return json(200, await correctException(c.env.DB, c.get("user"), exceptionSeq(c), str(body, "sku")));
+});
+app.post("/v1/edi/exceptions/:seq/drop", signedOn, async (c) => json(200, await dropException(c.env.DB, c.get("user"), exceptionSeq(c))));
+app.post("/v1/edi/exceptions/:seq/reject", signedOn, async (c) => json(200, await rejectOrder(c.env.DB, c.get("user"), exceptionSeq(c))));
 app.get("/v1/edi/:id", signedOn, async (c) => json(200, await getInterchange(c.env.DB, c.req.param("id"))));
 
 app.get("/v1/vendors", signedOn, async (c) => json(200, await listVendors(c.env.DB)));
@@ -572,6 +589,10 @@ for (const path of [
 	"/v1/invoices/:id/pay",
 	"/v1/invoices/:id/timeline",
 	"/v1/edi",
+	"/v1/edi/exceptions",
+	"/v1/edi/exceptions/:seq/correct",
+	"/v1/edi/exceptions/:seq/drop",
+	"/v1/edi/exceptions/:seq/reject",
 	"/v1/edi/:id",
 	"/v1/vendors",
 	"/v1/vendors/:id",

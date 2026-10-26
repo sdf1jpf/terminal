@@ -15,7 +15,7 @@ function eventLine(n: string, date: string, time: string, event: string, detail:
 
 const colors: Record<string, Color> = {
 	OPENED: "white", RELEASED: "turquoise", UNRELEASED: "yellow", PACKED: "turquoise", SHIPPED: "green", BILLED: "white",
-	PAID: "green", CANCELLED: "pink", REMINDER: "yellow", "SECOND NOTICE": "yellow", "FINAL NOTICE": "red", "ON HOLD": "red",
+	PAID: "green", CANCELLED: "pink", "EDI HELD": "yellow", CORRECTED: "green", DROPPED: "yellow", REMINDER: "yellow", "SECOND NOTICE": "yellow", "FINAL NOTICE": "red", "ON HOLD": "red",
 };
 
 // orderRef reads a typed order number: INV00042, or just 42.
