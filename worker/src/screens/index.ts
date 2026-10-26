@@ -18,6 +18,7 @@ import { invaddr, invoice, invoices } from "./invoices";
 import { joblog, jobs } from "./jobs";
 import { product, products } from "./products";
 import { po, pos, vendors } from "./purchasing";
+import { vendhist } from "./vendhist";
 import { shipment, shipments } from "./shipping";
 import { glaccount, ledger } from "./ledger";
 import { menu } from "./menu";
@@ -36,7 +37,7 @@ export const requestKeys = [
 
 const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
-	pos, po, vendors, shipments, shipment, ledger, glaccount,
+	pos, po, vendors, vendhist, shipments, shipment, ledger, glaccount,
 	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow,
 };
 

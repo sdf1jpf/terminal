@@ -187,6 +187,15 @@ export interface LedgerState {
 	msg?: string;
 }
 export interface GLAccountState { p: "glaccount"; back: State; account: string; period: string; top?: number; msg?: string }
+export interface VendHistState {
+	p: "vendhist";
+	back: State;
+	vendor?: string;
+	po?: string; // only this purchase order's events; "" for all the vendor's
+	top?: number;
+	errField?: string;
+	msg?: string;
+}
 export interface VendorsState { p: "vendors"; back: State; top?: number; errSel?: string; msg?: string }
 
 export interface ConsoleState {
@@ -263,7 +272,7 @@ export interface SearchState {
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
-	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
+	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState;
 

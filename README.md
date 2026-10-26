@@ -469,6 +469,12 @@ which also shows how many are on order.
   press Enter, or PF11 (or `R` on the list) to receive everything still due.
   Each receipt is kept for the ledger. The PO is `RECEIVED` once every line
   is in.
+- **History:** **VENDOR HISTORY** (CUSV04) numbers a vendor's events, newest
+  first: POs opened, sent and received in full, each receipt at cost, and
+  the EDI interchanges with its system. Fill in `PURCHASE ORDER` to see one
+  PO's events. Type a line number to open that PO or interchange. You can
+  open the history from option 3.4 (`3.4 V00002 PO00003`), with `H` beside a
+  vendor, or with PF5 on a PO.
 
 PF6 on the list submits **CUSREORD**, which orders every active product at
 or below its reorder point back up to twice that point, counting what is

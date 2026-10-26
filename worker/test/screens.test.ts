@@ -1036,6 +1036,33 @@ describe("purchasing screens", () => {
 		const after = (await env.DB.prepare("SELECT on_hand FROM products WHERE sku = 'STL-A36'").first<{ on_hand: number }>())!.on_hand;
 		expect(after).toBe(before + 6);
 
+		// PF5 shows the PO's history, newest first; a line opens what it concerns.
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSV04");
+		expect(t.field("vendor")?.value).toBe("V00004");
+		expect(t.field("po")?.value).toBe(id);
+		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* RECEIVED ${id} IN FULL`));
+		expect(t.row(12)).toMatch(new RegExp(`^ +2 .* RECEIPT  ${id} 4 STL-A36 +\\$984 IBMUSER`));
+		expect(t.row(13)).toMatch(new RegExp(`^ +3 .* RECEIPT  ${id} 2 STL-A36 +\\$492 IBMUSER`));
+		expect(t.row(14)).toMatch(new RegExp(`^ +4 .* EDI OUT  850 SENT ${id}`));
+		expect(t.row(15)).toMatch(new RegExp(`^ +5 .* SENT     ${id} +\\$1,476`));
+		expect(t.row(16)).toMatch(new RegExp(`^ +6 .* OPENED   ${id} `));
+		await t.fill("line", "9").send("ENTER");
+		expect(t.message).toBe("CUS0246E LINE MUST BE 1 TO 6");
+		await t.fill("line", "4").send("ENTER");
+		expect(t.scr.map).toBe("CUSE02");
+		await t.send("PF3");
+		await t.fill("line", "2").send("ENTER");
+		expect(t.scr.map).toBe("CUSV02");
+		await t.send("PF5");
+		expect(t.scr.map).toBe("CUSV04");
+		await t.fill("po", "").send("ENTER");
+		expect(t.field("po")?.value ?? "").toBe("");
+		await t.fill("po", "99999").send("ENTER");
+		expect(t.message).toBe("CUS0722E PO99999 IS NOT A PURCHASE ORDER FROM V00004");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSV02");
+
 		await t.send("PF3");
 		expect(t.scr.map).toBe("CUSV01");
 		expect(t.row(9)).toContain(`${id} V00004 RECEIVED`);
@@ -1044,6 +1071,25 @@ describe("purchasing screens", () => {
 		await t.fill("sel:V00001", "s").send("ENTER");
 		expect(t.scr.map).toBe("CUSV01");
 		expect(t.field("vendor")?.value).toBe("V00001");
+	});
+
+	it("shows a vendor's history from the vendor list and the menu", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "3.3").send("ENTER");
+		await t.fill("sel:V00003", "h").send("ENTER");
+		expect(t.scr.map).toBe("CUSV04");
+		expect(t.row(4)).toContain("ALLIED FLUID POWER");
+		expect(t.field("po")?.value ?? "").toBe("");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSV03");
+		await t.send("PF3");
+		await t.send("PF3");
+		await t.fill("option", "3.4 9").send("ENTER");
+		expect(t.scr.map).toBe("CUSV04");
+		expect(t.message).toBe("CUS0701E VENDOR V00009 NOT FOUND");
+		expect(t.scr.cursor).toEqual({ field: "vendor" });
+		await t.fill("vendor", "2").send("ENTER");
+		expect(t.row(4)).toContain("GREAT LAKES BEARING CO");
 	});
 
 	it("shows the vendor, cost and stock on order on the product", async () => {
