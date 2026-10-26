@@ -14,6 +14,7 @@ import { newVendHist } from "./vendhist";
 import { newTimeline } from "./timeline";
 import { newEdiEx } from "./ediex";
 import { newPricing, thisMonth } from "./sales";
+import { startTran } from "./cics";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program, type State } from "./program";
 
@@ -21,7 +22,8 @@ import { pf, type MenuState, type Next, type Program, type State } from "./progr
 // An option is picked by its key on the menu shown, by a fast path from
 // the primary menu such as 1.2 or =1.2, or by its name (or an alias) from
 // any menu. A second word is passed to the option, so 1.2 000105 jumps
-// straight to that customer.
+// straight to that customer. A CICS transaction ID such as CINQ works from
+// any menu too, and CLEAR blanks the screen for one (screens/cics.ts).
 
 interface Option {
 	key: string;
@@ -152,10 +154,11 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "CONSOLE", desc: "Operator console, SYSLOG", aliases: ["O", "OPERATOR", "LOG", "SYSLOG"], go: (_ctx, m) => ({ p: "console", back: m }) },
 			{ key: "3", name: "SCHEDULE", desc: "Job schedule", go: (_ctx, m) => ({ p: "schedule", back: m }) },
 			{ key: "4", name: "HELD", desc: "Held output, reprint", aliases: ["H", "SPOOL", "OUTPUT"], go: (_ctx, m, arg) => ({ p: "spool", back: m, filter: arg }) },
-			{ key: "5", name: "MONITOR", desc: "Transaction rates, response times", aliases: ["STATS", "CEMT"], go: (_ctx, m) => ({ p: "monitor", back: m }) },
+			{ key: "5", name: "MONITOR", desc: "Transaction rates, response times", aliases: ["STATS"], go: (_ctx, m) => ({ p: "monitor", back: m }) },
 			{ key: "6", name: "TABLES", desc: "Carrier rates, tax codes, help text", aliases: ["SYSTABLES"], go: (_ctx, m) => ({ p: "tables", back: m }) },
 			{ key: "7", name: "ARCHIVE", desc: "Archived output (R2)", aliases: ["R2"], go: (_ctx, m, arg) => ({ p: "archive", back: m, filter: arg.toUpperCase() }) },
 			{ key: "8", name: "MAIL", desc: "Mail sent and received", aliases: ["EMAIL"], go: (_ctx, m, arg) => ({ p: "mail", back: m, ref: arg.toUpperCase() }) },
+			{ key: "9", name: "CICS", desc: "Transactions: CEMT, CEDF, CEBR", go: () => ({ p: "cics" }) },
 		],
 	},
 	"7": {
@@ -263,9 +266,10 @@ export const menu: Program<MenuState> = {
 			case pf(4):
 				return { p: "browse", back: m };
 			case pf(12):
-			case "CLEAR":
 				m.option = "";
 				return m;
+			case "CLEAR":
+				return { p: "cics" };
 			default:
 				m.msg = invalidKey(input.aid);
 				return m;
@@ -286,29 +290,46 @@ export const menu: Program<MenuState> = {
 		if (cmd === "") return { p: "menu" };
 
 		const path = cmd.split(".");
-		let opt = path.length === 1 ? mn.options.find((o) => o.key === cmd) ?? byName(cmd) : undefined;
-		for (let i = 0; i < path.length && path.length > 1; i++) {
-			opt = mn.options.find((o) => o.key === path[i]);
-			if (!opt || i === path.length - 1) break;
-			if (!opt.sub) {
-				opt = undefined; // the path goes on past an option
-				break;
-			}
-			mn = menus[opt.sub];
-		}
-		if (opt?.sub) return { p: "menu", sub: opt.sub };
-		if (opt?.go) {
-			// The option returns to the menu it is on, which a fast path or a
-			// name may have skipped past.
-			const home = menuOf(opt);
-			const back: MenuState = home === (m.sub ?? "") ? m : home ? { p: "menu", sub: home } : { p: "menu" };
-			return opt.go(ctx, back, arg, words.slice(1).join(" "));
+		const opt = path.length === 1 ? mn.options.find((o) => o.key === cmd) ?? byName(cmd) : walk(mn, path);
+		if (opt) return run(ctx, opt, m, arg, words.slice(1).join(" "));
+		if (cmd === words[0]) {
+			const tran = await startTran(ctx, cmd, words.slice(1).join(" "), m);
+			if (tran) return tran;
 		}
 		m.option = words.join(" ");
 		m.msg = "ISPD117E INVALID OPTION " + words[0];
 		return m;
 	},
 };
+
+// walk follows a dotted path such as 1.2 from mn to the option at its end.
+function walk(mn: Menu, path: string[]): Option | undefined {
+	for (let i = 0; i < path.length; i++) {
+		const opt = mn.options.find((o) => o.key === path[i]);
+		if (!opt || i === path.length - 1) return opt;
+		if (!opt.sub || !menus[opt.sub]) return undefined; // the path goes on past an option
+		mn = menus[opt.sub];
+	}
+	return undefined;
+}
+
+function run(ctx: Ctx, opt: Option, m: MenuState, arg: string, rest: string): Next | Promise<Next> {
+	if (opt.sub) return { p: "menu", sub: opt.sub };
+	// The option returns to the menu it is on, which a fast path or a name
+	// may have skipped past.
+	const home = menuOf(opt);
+	const back: MenuState = home === (m.sub ?? "") ? m : home ? { p: "menu", sub: home } : { p: "menu" };
+	return opt.go!(ctx, back, arg, rest);
+}
+
+// fastPath starts the option at a fast path from the primary menu, such as
+// 1.2, with rest as what was typed after it. "" is the primary menu.
+export function fastPath(ctx: Ctx, path: string, rest: string): Next | Promise<Next> | undefined {
+	if (path === "") return { p: "menu" };
+	const opt = walk(menus[""], path.split("."));
+	if (!opt) return undefined;
+	return run(ctx, opt, { p: "menu" }, rest.split(/\s+/)[0] ?? "", rest);
+}
 
 // menuOf is the key of the menu an option is on.
 function menuOf(opt: Option): string {

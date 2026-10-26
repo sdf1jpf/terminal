@@ -119,6 +119,16 @@ const concepts: Topic[] = [
 		go: "=5.1",
 	},
 	{
+		id: "concept:cics",
+		title: "CICS TRANSACTIONS, CEMT AND CEDF",
+		text: "Every screen runs as a four-character CICS transaction. Press CLEAR on a menu (or option 5.9) and type an ID " +
+			"such as CINQ 000105, ORDR or MENU; the IDs work on any menu too. CEMT I TRAN lists transactions with their uses " +
+			"and abends, and CEMT S TRAN(ORDR) DIS disables one (overtype Ena or Dis to change it). CEDF stops each screen step " +
+			"to show the EIB and commarea; CEDF OFF ends it. CEBR browses temporary storage queues: CSMT is the abend log. A " +
+			"failed program abends with a code such as ASRA; PF6 on the abend screen explains it. CESF signs off.",
+		go: "=5.9",
+	},
+	{
 		id: "concept:console",
 		title: "THE OPERATOR CONSOLE",
 		text: "The operator console (option 5.2) shows the system log as it happens: logons, jobs starting and ending, abends, " +

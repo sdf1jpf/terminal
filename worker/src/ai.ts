@@ -212,6 +212,16 @@ export async function explainJob(env: AiEnv, job: Job, output: string[]): Promis
 	return plain(reply as string);
 }
 
+const tranAbendPrompt = `You are a CICS systems programmer on an IBM mainframe customer information system. An online transaction ended with an abend. You are given the transaction, the abend code, the panel it was on and the error the program raised.
+
+Explain to the operator, in at most 8 short lines of plain text with no markdown: what the abend code means, the likely cause from the error, and what to do next (try again, report it, or check the data named). Use only what you are given; if the cause is not clear, say what to check.`;
+
+// explainAbend explains why an online transaction abended.
+export async function explainAbend(env: AiEnv, a: { tran: string; desc: string; code: string; panel: string; text: string }): Promise<string> {
+	const reply = await chat(env, tranAbendPrompt, `TRANSACTION: ${a.tran} (${a.desc})\nABEND CODE: ${a.code}\nPANEL: ${a.panel}\nERROR: ${a.text}`);
+	return plain(reply as string);
+}
+
 // --- Searching in plain English ---
 
 const searchPrompt = `You turn an operator's plain-English search of a customer information system into a JSON filter. Record types:
