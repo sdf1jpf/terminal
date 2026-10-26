@@ -1,4 +1,5 @@
 import { env, exports } from "cloudflare:workers";
+import { dropException, listExceptions } from "../src/ediexceptions";
 import { describe, expect, it } from "vitest";
 import {
 	bill, EdiError, getInterchange, interchange, listInterchanges, parse, partnerPO, partnerRemittance, partnersOrder, partnersPay,
@@ -122,9 +123,10 @@ describe("EDI with customers' systems", () => {
 		const gloves = await onHand("SAF-GLV");
 		const po = await deliver(partnerPO("000111", 201, "K-77", [
 			{ sku: "SAF-GLV", qty: 3, price: 52 },
-			{ sku: "XYZ-9999", qty: 1, price: 1 },
+			{ sku: "BRG-6204", qty: 99_999, price: 1 },
 		]));
-		expect(po).toMatchObject({ status: "REJECTED", note: "PO1 LINE 2: PRODUCT XYZ-9999 IS NOT ON FILE", reference: "PO K-77" });
+		expect(po).toMatchObject({ status: "REJECTED", reference: "PO K-77" });
+		expect(po.note).toMatch(/^PO1 LINE 2: ONLY \d+ OF BRG-6204 ON HAND$/);
 		expect(await onHand("SAF-GLV")).toBe(gloves);
 		expect(await db.prepare("SELECT 1 FROM invoices WHERE po_number = 'K-77'").first()).toBeNull();
 
@@ -158,6 +160,8 @@ describe("EDI with customers' systems", () => {
 		expect(orders.lines.at(-1)).toMatch(/^3 ORDERS SENT, \d REJECTED$/);
 		const accepted = (await listInterchanges(db)).filter((x) => x.type === "850" && x.status === "ACCEPTED" && x.created_by === "EDISIM");
 		expect(accepted.length).toBeGreaterThan(0);
+		// The simulator sometimes orders a product we do not carry: drop it.
+		for (const x of await listExceptions(db)) await dropException(db, "IBMUSER", x.seq);
 		for (const x of accepted) {
 			await shipInvoice(db, x.reference.split(" ")[2]);
 			await bill(db, "IBMUSER", x.reference.split(" ")[2]);

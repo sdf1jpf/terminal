@@ -10,6 +10,7 @@ import { newLedger } from "./ledger";
 import { find } from "./search";
 import { newVendHist } from "./vendhist";
 import { newTimeline } from "./timeline";
+import { newEdiEx } from "./ediex";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program, type State } from "./program";
 
@@ -72,6 +73,7 @@ const menus: Record<string, Menu> = {
 			{ key: "2", name: "SHIPPING", desc: "Pick, pack and ship", aliases: ["S", "SHIPMENTS"], go: (_ctx, m, arg) => newShipments(m, arg) },
 			{ key: "3", name: "EDI", desc: "EDI mailbox", aliases: ["E"], go: (_ctx, m, arg) => newEdi(m, arg) },
 			{ key: "4", name: "TIMELINE", desc: "Order lifecycle timeline", aliases: ["TL", "LIFECYCLE"], go: (_ctx, m, arg) => newTimeline(m, arg) },
+			{ key: "5", name: "EXCEPTIONS", desc: "EDI lines held to correct", aliases: ["EX", "EDIEX"], go: (_ctx, m) => newEdiEx(m) },
 		],
 	},
 	"3": {

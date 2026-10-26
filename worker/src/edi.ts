@@ -5,7 +5,9 @@
 // ACCEPTED or REJECTED and answers with a 997 functional acknowledgment.
 //
 //	850 purchase order  in   opens an invoice for the sender and adds its lines,
-//	                         taking the stock; any bad line rejects the whole PO
+//	                         taking the stock; a line for a product we do not
+//	                         carry is held for an operator (ediexceptions.ts),
+//	                         and any other bad line rejects the whole PO
 //	997 acknowledgment  out  for every inbound interchange we can trace to a customer
 //	856 ship notice     out  sent when an invoice that came from an 850 ships
 //	810 invoice         out  sent when an invoice that came from an 850 is billed
@@ -30,6 +32,7 @@ import {
 import type { Transaction } from "./activity";
 import type { StepResult } from "./jobs";
 import { vendorDocument } from "./purchasing";
+import { holdLines, type EdiException } from "./ediexceptions";
 
 export const OUR_ID = "CUSTAPI";
 
@@ -215,7 +218,7 @@ export async function processInterchange(db: D1Database, id: string): Promise<In
 		if (parsed.receiver !== OUR_ID) throw new EdiError(`interchange is addressed to ${parsed.receiver}, not ${OUR_ID}`);
 		if (!claimed.partner) throw new EdiError(`sender ${parsed.sender || "(blank)"} is not a trading partner`);
 		if (isVendorID(claimed.partner)) reference = await vendorDocument(db, claimed.partner, parsed.type, parsed.body);
-		else if (parsed.type === "850") reference = await purchaseOrder(db, claimed.partner, parsed.body);
+		else if (parsed.type === "850") ({ reference, note } = await purchaseOrder(db, claimed, parsed.body));
 		else if (parsed.type === "820") reference = await remittance(db, claimed.partner, parsed.body);
 		else throw new EdiError(`transaction set ${parsed.type || "(blank)"} is not accepted`);
 	} catch (e) {
@@ -248,10 +251,15 @@ async function acknowledge(db: D1Database, inbound: Interchange, p: Parsed | und
 
 const seg = (body: string[][], id: string) => body.filter((s) => s[0] === id);
 
-// purchaseOrder opens an invoice for an 850 and adds its lines. If any line
-// cannot be filled, the invoice is cancelled, returning the stock, and the
-// whole order is rejected. It returns "PO <po> <invoice>".
-async function purchaseOrder(db: D1Database, partner: string, body: string[][]): Promise<string> {
+// purchaseOrder opens an invoice for an 850 and adds its lines. A line
+// whose product is missing, not on file or discontinued is held as an EDI
+// exception for an operator to correct or drop (ediexceptions.ts); the
+// invoice cannot go to the warehouse until none are open. Any other line
+// that cannot be filled, say for want of stock, cancels the invoice,
+// returning the stock, and rejects the whole order. It returns the
+// reference "PO <po> <invoice>" and a note saying how many lines are held.
+async function purchaseOrder(db: D1Database, inbound: Interchange, body: string[][]): Promise<{ reference: string; note: string }> {
+	const partner = inbound.partner;
 	const beg = seg(body, "BEG")[0];
 	const po = (beg?.[3] ?? "").trim().toUpperCase();
 	if (!po) throw new EdiError("BEG03 purchase order number is missing");
@@ -262,6 +270,7 @@ async function purchaseOrder(db: D1Database, partner: string, body: string[][]):
 
 	const shipTo = partyAddress(body, "ST");
 	const inv = await createInvoice(db, "EDI", partner, po);
+	const held: Omit<EdiException, "seq" | "edi_id" | "invoice_id" | "customer_id" | "po_number" | "status" | "corrected_sku" | "line" | "created" | "resolved" | "resolved_by">[] = [];
 	try {
 		if (shipTo) {
 			try {
@@ -274,10 +283,15 @@ async function purchaseOrder(db: D1Database, partner: string, body: string[][]):
 		for (const l of lines) {
 			const n = l[1] || "?";
 			const qty = Number(l[2]);
+			if (!Number.isInteger(qty) || qty < 1 || qty > 99_999) throw new EdiError(`PO1 line ${n}: quantity must be a whole number from 1 to 99999`);
 			const sku = productID(l);
-			if (!sku) throw new EdiError(`PO1 line ${n}: no VP or BP product ID`);
+			const problem = await skuProblem(db, sku);
+			if (problem) {
+				held.push({ po_line: n, sku, quantity: qty, unit_price: Math.round(Number(l[4]) || 0), problem });
+				continue;
+			}
 			try {
-				await addLine(db, inv.id, sku, Number.isInteger(qty) ? qty : NaN);
+				await addLine(db, inv.id, sku, qty);
 			} catch (e) {
 				if (e instanceof HttpError) throw new EdiError(`PO1 line ${n}: ${e.message}`);
 				throw e;
@@ -288,7 +302,19 @@ async function purchaseOrder(db: D1Database, partner: string, body: string[][]):
 		if (e instanceof EdiError) e.reference = `PO ${po}`;
 		throw e;
 	}
-	return `PO ${po} ${inv.id}`;
+	if (held.length > 0) await holdLines(db, inbound, inv, held);
+	return {
+		reference: `PO ${po} ${inv.id}`,
+		note: held.length === 0 ? "" : `${held.length} LINE${held.length === 1 ? "" : "S"} HELD FOR CORRECTION - OPTION 2.5`,
+	};
+}
+
+// skuProblem says what is wrong with an 850 line's product, if anything.
+async function skuProblem(db: D1Database, sku: string): Promise<string> {
+	if (!sku) return "NO VP OR BP PRODUCT ID";
+	const p = await db.prepare("SELECT status FROM products WHERE sku = ?").bind(sku).first<{ status: string }>();
+	if (!p) return "PRODUCT NOT ON FILE";
+	return p.status === "A" ? "" : "PRODUCT DISCONTINUED";
 }
 
 // partyAddress reads a party's name and address from its N1 loop: N1 with

@@ -1,6 +1,6 @@
 import { lowStock, searchProducts, type Product } from "../products";
 import { header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, type Color, type Ctx } from "./screen";
-import { fail, pf, type InvoiceState, type Program, type SkuSearchState } from "./program";
+import { fail, pf, type EdiExState, type InvoiceState, type Program, type SkuSearchState } from "./program";
 
 // CUSI03 PRODUCT SEARCH finds a product to put on an invoice by SKU or
 // description. Picking one with S carries its SKU back to the invoice's
@@ -21,8 +21,8 @@ function stockColor(p: Product): Color {
 // searchText is what to look for, from a typed SKU such as "GLV?" or "*BOLT".
 export const searchText = (sku: string) => sku.replace(/[?*]/g, "").trim().toUpperCase();
 
-export function newSkuSearch(back: InvoiceState, q: string, msg?: string): SkuSearchState {
-	return { p: "skusearch", back, q: searchText(q), msg };
+export function newSkuSearch(back: InvoiceState | EdiExState, q: string, msg?: string, seq?: number): SkuSearchState {
+	return { p: "skusearch", back, q: searchText(q), msg, ...(seq === undefined ? {} : { seq }) };
 }
 
 export const skusearch: Program<SkuSearchState> = {
@@ -44,7 +44,7 @@ export const skusearch: Program<SkuSearchState> = {
 		if (list.length > 0) {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(5, 2, `SELECT: S=ADD TO INVOICE ${s.back.id}`, { color: "blue" });
+		scr.text(5, 2, s.back.p === "ediex" ? "SELECT: S=USE FOR THE HELD EDI LINE" : `SELECT: S=ADD TO INVOICE ${s.back.id}`, { color: "blue" });
 		scr.text(7, 2, "S " + listLine("SKU", "DESCRIPTION", "PRICE", "ON HAND"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		const shown = list.slice(top, top + rows);
@@ -80,6 +80,12 @@ export const skusearch: Program<SkuSearchState> = {
 						s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
 						s.errSel = sku;
 						return s;
+					}
+					if (s.back.p === "ediex") {
+						const ex = s.back;
+						ex.vals = { ...ex.vals, [`sku:${s.seq}`]: sku };
+						ex.msg = `CUS0544I ${sku} SELECTED - PRESS ENTER TO PUT IT ON THE ORDER`;
+						return ex;
 					}
 					const inv = s.back;
 					inv.vals = { sku, qty: inv.vals?.qty ?? "" };
