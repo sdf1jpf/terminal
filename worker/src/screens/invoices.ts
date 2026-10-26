@@ -2,7 +2,7 @@ import { getCustomer } from "../data";
 import type { Customer } from "../customer";
 import {
 	addLine, addressOf, cancelInvoice, changeLine, cityLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice,
-	setAddress, setPO, statusNames, type Address, type AddressKind, type Invoice, type InvoiceLine,
+	salesTax, setAddress, setPO, statusNames, taxOn, type Address, type AddressKind, type Invoice, type InvoiceLine,
 } from "../invoices";
 import { bill } from "../edi";
 import { release, shipmentFor, shipStatusNames, type Shipment } from "../shipping";
@@ -261,6 +261,14 @@ export const invoice: Program<InvoiceState> = {
 			} else if (shp) {
 				scr.text(8, 4, shipLine(shp), { color: shp.status === "S" ? "green" : "yellow", bright: true });
 			}
+			// Sales tax is charged on billing; until then it is an estimate.
+			if (inv.tax_note) {
+				scr.text(9, 4, `SALES TAX ${inv.tax_note}  ${money(inv.tax)} ON ${money(inv.subtotal)}`, { color: "green" });
+			} else if (inv.status === "O" && c) {
+				const tax = await salesTax(ctx.tables, inv.ship_state, c.tax_exempt ?? "");
+				const est = tax.rate > 0 ? `EST TAX ${tax.note} ${money(taxOn(inv.subtotal, tax.rate))}` : tax.note;
+				scr.text(open ? 8 : 9, open ? 53 : 4, est.slice(0, open ? scr.cols - 54 : 60), { color: "green" });
+			}
 
 			const rows = lineRows(ctx);
 			const top = Math.min(s.top ?? 0, Math.max(lines.length - rows, 0));
@@ -360,7 +368,7 @@ export const invoice: Program<InvoiceState> = {
 				});
 			case pf(10):
 				return act(s, async () => {
-					const { invoice: inv, edi } = await bill(ctx.db, ctx.user, s.id);
+					const { invoice: inv, edi } = await bill(ctx.db, ctx.tables, ctx.user, s.id);
 					s.msg = `CUS0507I INVOICE ${s.id} BILLED, ${money(inv.total)} POSTED TO ${inv.customer_id}${edi ? ` - 810 ${edi.id} SENT` : ""}`;
 					return s;
 				});

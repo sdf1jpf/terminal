@@ -13,7 +13,7 @@ async function sale(cust: string, sku: string, qty: number) {
 	const inv = await createInvoice(db, "IBMUSER", cust);
 	await addLine(db, inv.id, sku, qty);
 	await shipInvoice(db, inv.id);
-	return (await billInvoice(db, "IBMUSER", inv.id)).invoice;
+	return (await billInvoice(db, env.TABLES, "IBMUSER", inv.id)).invoice;
 }
 
 describe("general ledger", () => {
@@ -127,8 +127,8 @@ describe("dunning", () => {
 		const run = await dunningLetters(db, { name: "CUSDUNN" });
 		expect(run.rc).toBe(4);
 		expect(run.lines.some((l) => l.includes("FINAL NOTICE"))).toBe(true);
-		expect(run.lines.find((l) => l.trim().startsWith(young.id))).toMatch(/ 15 +\$52$/);
-		expect(run.lines.find((l) => l.trim().startsWith(old.id))).toMatch(/ 70 +\$88$/);
+		expect(run.lines.find((l) => l.trim().startsWith(young.id))).toMatch(/ 15 +\$55$/); // $52 and 6.25% Illinois tax
+		expect(run.lines.find((l) => l.trim().startsWith(old.id))).toMatch(/ 70 +\$94$/);
 		expect(run.lines.at(-1)).toMatch(/1 ACCOUNTS PLACED ON HOLD$/);
 		const cust = await db.prepare("SELECT status FROM customers WHERE id = '000121'").first<{ status: string }>();
 		expect(cust?.status).toBe("H");
@@ -138,7 +138,7 @@ describe("dunning", () => {
 
 		const events = await customerEvents(db, "000121");
 		const dunned = events.filter((e) => e.event === "DUNNING").map((e) => e.text);
-		expect(dunned).toEqual(expect.arrayContaining([`REMINDER ${young.id} $52`, `FINAL NOTICE ${old.id} $88`]));
+		expect(dunned).toEqual(expect.arrayContaining([`REMINDER ${young.id} $55`, `FINAL NOTICE ${old.id} $94`]));
 		expect(events.some((e) => e.kind === "A" && e.by === "CUSDUNN" && e.text === "STATUS A > H")).toBe(true);
 	});
 });

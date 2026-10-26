@@ -42,7 +42,7 @@
 //	POST   /v1/edi/exceptions/{n}/drop      leave the line off the order
 //	POST   /v1/edi/exceptions/{n}/reject    reject the whole order, cancelling its invoice
 //	GET    /v1/customers/{id}/sales   who sells to it and its pricing: -> {"assignment", "pricing"}
-//	PUT    /v1/customers/{id}/sales   assign it: {"territory", "salesperson"} ("" for its state's)
+//	PUT    /v1/customers/{id}/sales   assign it: {"territory", "salesperson"} ("" for its state's), "tax_exempt" (a certificate, "" when taxable)
 //	PUT    /v1/customers/{id}/pricing/{item}   a SKU, product line or *: {"discount"} (a percentage) or {"price"}
 //	DELETE /v1/customers/{id}/pricing/{item}
 //	GET    /v1/territories          sales territories, with their states
@@ -140,7 +140,7 @@ import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
 import {
 	assign, assignment, deletePricing, deleteTerritory, listPricing, listSalespeople, listTerritories, salesBy, saveSalesperson,
-	saveTerritory, setPricing,
+	saveTerritory, setPricing, setTaxExempt,
 } from "./sales";
 import { createCustomer, deleteCustomer, getCustomer, listCustomers, notFound, updateCustomer } from "./data";
 import { errorResponse, HttpError, int, json, noContent, readJSON, str } from "./http";
@@ -372,7 +372,7 @@ app.get("/v1/invoices/:id/pdf", signedOn, async (c) => {
 	const { invoice, lines } = await getInvoice(c.env.DB, c.req.param("id").toUpperCase());
 	return pdfResponse(invoicePdf(invoice, lines, await getCustomer(c.env.DB, invoice.customer_id)), `${invoice.id}.pdf`);
 });
-app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
+app.post("/v1/invoices/:id/bill", signedOn, async (c) => json(200, await bill(c.env.DB, c.env.TABLES, c.get("user"), c.req.param("id").toUpperCase())));
 app.post("/v1/invoices/:id/pay", signedOn, async (c) => json(200, await payInvoice(c.env.DB, c.get("user"), c.req.param("id").toUpperCase())));
 // orderTimeline is an order's lifecycle: its flow, workflow status,
 // undelivered changes and timeline.
@@ -435,8 +435,11 @@ app.get("/v1/customers/:id/sales", signedOn, async (c) => {
 	return json(200, { assignment: await assignment(c.env.DB, id), pricing: await listPricing(c.env.DB, id) });
 });
 app.put("/v1/customers/:id/sales", signedOn, async (c) => {
-	const body = await readJSON(c.req.raw, ["territory", "salesperson"]);
-	return json(200, await assign(c.env.DB, c.get("user"), c.req.param("id"), { territory: str(body, "territory"), salesperson: str(body, "salesperson") }));
+	const body = await readJSON(c.req.raw, ["territory", "salesperson", "tax_exempt"]);
+	const id = c.req.param("id");
+	if (body.tax_exempt !== undefined) await setTaxExempt(c.env.DB, c.get("user"), id, str(body, "tax_exempt"));
+	if (body.territory === undefined && body.salesperson === undefined) return json(200, await assignment(c.env.DB, id));
+	return json(200, await assign(c.env.DB, c.get("user"), id, { territory: str(body, "territory"), salesperson: str(body, "salesperson") }));
 });
 app.put("/v1/customers/:id/pricing/:item", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["discount", "price"]);

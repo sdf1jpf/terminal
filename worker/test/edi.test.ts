@@ -67,18 +67,21 @@ describe("EDI with customers' systems", () => {
 		expect(shipped.edi).toMatchObject({ direction: "O", type: "856", partner: "000109", reference: `${shipped.shipment.id} ${id}` });
 		expect(shipped.edi!.raw).toContain(`PRF*4500017*****${id}~`);
 		expect(shipped.edi!.raw).toContain("SN1**50*EA~");
-		const billed = await bill(db, "IBMUSER", id);
+		const billed = await bill(db, env.TABLES, "IBMUSER", id);
 		expect(billed.edi).toMatchObject({ direction: "O", type: "810", partner: "000109", status: "SENT", reference: id });
 		const x810 = parse(billed.edi!.raw);
 		expect(x810.body.find((s) => s[0] === "BIG")?.[2]).toBe(id);
 		expect(x810.body.filter((s) => s[0] === "IT1")).toHaveLength(2);
-		expect(x810.body.find((s) => s[0] === "TDS")?.[1]).toBe("55400");
+		// $554 and Indiana's 7% sales tax.
+		expect(billed.invoice).toMatchObject({ subtotal: 554, tax: 39, total: 593, tax_note: "IN 7%" });
+		expect(x810.body.find((s) => s[0] === "TDS")?.[1]).toBe("59300");
+		expect(x810.body.find((s) => s[0] === "TXI")).toEqual(["TXI", "ST", "39", "7"]);
 
 		const short = await deliver(partnerRemittance("000109", 102, [{ id, total: 500 }]));
-		expect(short).toMatchObject({ status: "REJECTED", note: `INVOICE ${id} IS FOR 554, REMITTANCE SAYS 500` });
+		expect(short).toMatchObject({ status: "REJECTED", note: `INVOICE ${id} IS FOR 593, REMITTANCE SAYS 500` });
 		expect(await ack(short.id)).toMatch(/AK5\*R\*5~/);
 
-		const paid = await deliver(partnerRemittance("000109", 103, [{ id, total: 554 }]));
+		const paid = await deliver(partnerRemittance("000109", 103, [{ id, total: 593 }]));
 		expect(paid).toMatchObject({ status: "ACCEPTED", reference: id });
 		expect((await getInvoice(db, id)).invoice.status).toBe("P");
 
@@ -105,7 +108,7 @@ describe("EDI with customers' systems", () => {
 
 		const shipped = await shipInvoice(db, id);
 		expect(shipped.edi!.raw).toContain("N1*ST*JUNIPER LAB 2~\nN3*9 RESEARCH BLVD~\nN4*ROUND ROCK*TX*78681~");
-		const billed = await bill(db, "IBMUSER", id);
+		const billed = await bill(db, env.TABLES, "IBMUSER", id);
 		expect(billed.edi!.raw).toContain("N1*BT*JUNIPER SOFTWARE LABS*92*000110~\nN3*2400 CAMPUS DR~\nN4*AUSTIN*TX*78701~");
 		expect(billed.edi!.raw).toContain("N1*ST*JUNIPER LAB 2~");
 
@@ -164,7 +167,7 @@ describe("EDI with customers' systems", () => {
 		for (const x of await listExceptions(db)) await dropException(db, "IBMUSER", x.seq);
 		for (const x of accepted) {
 			await shipInvoice(db, x.reference.split(" ")[2]);
-			await bill(db, "IBMUSER", x.reference.split(" ")[2]);
+			await bill(db, env.TABLES, "IBMUSER", x.reference.split(" ")[2]);
 		}
 
 		const pay = await partnersPay(db, job);

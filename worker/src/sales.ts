@@ -267,6 +267,26 @@ export async function customerCounts(db: D1Database): Promise<{ territory: Map<s
 	return { territory, salesperson };
 }
 
+// setTaxExempt records a customer's sales tax exemption certificate, or
+// with a blank makes it taxable again. Invoices billed from then on are
+// taxed accordingly (invoices.ts billInvoice).
+export async function setTaxExempt(db: D1Database, user: string, customerId: string, cert: string): Promise<string> {
+	cert = cert.trim().toUpperCase();
+	if (cert.length > 15) throw bad("exempt", "the exemption certificate number is limited to 15 characters");
+	if (cert && !/^[A-Z0-9-]+$/.test(cert)) throw bad("exempt", "the certificate number is letters, digits and dashes");
+	const before = await db.prepare("SELECT tax_exempt FROM customers WHERE id = ?").bind(customerId).first<{ tax_exempt: string }>();
+	if (!before) throw new HttpError(404, "not_found", "record not found");
+	if (before.tax_exempt === cert) return cert;
+	const ts = now();
+	await db.batch([
+		db.prepare("UPDATE customers SET tax_exempt = ?2, updated = ?3, updated_by = ?4 WHERE id = ?1").bind(customerId, cert, ts, user),
+		db.prepare(
+			"INSERT INTO audit (customer_id, action, field, old_value, new_value, at, by) VALUES (?, 'CHANGE', 'TAX EXEMPT', ?, ?, ?, ?)",
+		).bind(customerId, before.tax_exempt, cert, ts, user),
+	]);
+	return cert;
+}
+
 // ---- pricing ----
 
 export async function listPricing(db: D1Database, customerId: string): Promise<Pricing[]> {
@@ -539,12 +559,12 @@ export interface SalesRow {
 }
 
 // salesBy totals the invoices billed in a month (YYYY-MM, UTC) by the
-// territory or the salesperson recorded on them. Commission is the
-// salesperson's rate on net sales.
+// territory or the salesperson recorded on them. Net sales leave out sales
+// tax. Commission is the salesperson's rate on net sales.
 export async function salesBy(db: D1Database, by: "T" | "S", month: string): Promise<SalesRow[]> {
 	const col = by === "T" ? "territory" : "salesperson";
 	const { results } = await db.prepare(
-		`SELECT i.${col} AS key, COUNT(*) AS invoices, SUM(i.total) AS net,
+		`SELECT i.${col} AS key, COUNT(*) AS invoices, SUM(i.subtotal) AS net,
 		        SUM((SELECT COALESCE(SUM(l.quantity * l.list_price), 0) FROM invoice_lines l WHERE l.invoice_id = i.id)) AS list
 		 FROM invoices i WHERE i.status IN ('B', 'P') AND substr(i.billed, 1, 7) = ?1
 		 GROUP BY i.${col} ORDER BY i.${col}`,

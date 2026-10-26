@@ -6,6 +6,7 @@
 // open period, each source row once:
 //
 //	invoice posted (transactions I)   Dr 1200 AR          Cr 4000 SALES
+//	                                                      Cr 2200 SALES TAX PAYABLE (its tax)
 //	payment posted (transactions P)   Dr 1000 CASH        Cr 1200 AR
 //	cost of a billed invoice          Dr 5000 COGS        Cr 1300 INVENTORY
 //	goods received (receipts)         Dr 1300 INVENTORY   Cr 2000 AP
@@ -104,6 +105,9 @@ export async function listAccounts(db: D1Database): Promise<Account[]> {
 const invoiceCost = `(SELECT COALESCE(SUM(l.quantity * p.unit_cost), 0) FROM invoice_lines l JOIN products p ON p.sku = l.sku
                       WHERE l.invoice_id = t.reference)`;
 
+// The sales tax on the invoice a transaction posted.
+const invoiceTax = "COALESCE((SELECT tax FROM invoices WHERE id = t.reference), 0)";
+
 // adjustMemo describes a stock adjustment: ADJUST BRG-6204 +5 or -5, and
 // AT $7 when the unit cost changed.
 const adjustMemo = `'ADJUST ' || sku || CASE WHEN quantity > 0 THEN ' +' || quantity WHEN quantity < 0 THEN ' ' || quantity ELSE '' END
@@ -122,8 +126,23 @@ export async function journal(db: D1Database, by: string): Promise<{ period: str
 			 ON CONFLICT (source, account) DO NOTHING`,
 		).bind(period, ts, by));
 
+	const side = (account: string, col: "debit" | "credit", amount: string, source: string, ref: string, memo: string, from: string) => [
+		db.prepare(
+			`INSERT INTO gl_entries (period, account, debit, credit, source, reference, memo, posted, posted_by)
+			 SELECT ?1, '${account}', ${col === "debit" ? amount : 0}, ${col === "credit" ? amount : 0}, ${source}, ${ref}, ${memo}, ?2, ?3
+			 ${from}
+			 ON CONFLICT (source, account) DO NOTHING`,
+		).bind(period, ts, by),
+	];
+
 	const stmts = [
-		...pair("1200", "4000", "amount", "'T:' || seq", "customer_id", "'INVOICE ' || reference", "FROM transactions t WHERE type = 'I'"),
+		// An invoice's sales tax is owed to the state, not earned.
+		...pair("1200", "4000", "amount", "'T:' || seq", "customer_id", "'INVOICE ' || reference", "FROM transactions t WHERE type = 'I'")
+			.slice(0, 1),
+		...side("4000", "credit", `amount - ${invoiceTax}`, "'T:' || seq", "customer_id", "'INVOICE ' || reference",
+			`FROM transactions t WHERE type = 'I' AND amount - ${invoiceTax} <> 0`),
+		...side("2200", "credit", invoiceTax, "'T:' || seq", "customer_id", "'TAX ON ' || reference",
+			`FROM transactions t WHERE type = 'I' AND ${invoiceTax} > 0`),
 		...pair("1000", "1200", "amount", "'T:' || seq", "customer_id", "'PAYMENT ' || reference", "FROM transactions t WHERE type = 'P'"),
 		...pair("5000", "1300", invoiceCost, "'C:' || seq", "reference", "'COST OF ' || reference",
 			`FROM transactions t WHERE type = 'I' AND reference GLOB 'INV[0-9]*' AND ${invoiceCost} > 0`),

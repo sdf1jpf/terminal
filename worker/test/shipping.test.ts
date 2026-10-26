@@ -42,7 +42,7 @@ describe("shipping", () => {
 		expect(edi).toBeUndefined(); // not an EDI order
 		expect((await refused(() => cancelShipment(db, again.id))).message).toMatch(/is shipped - it cannot be cancelled/);
 
-		expect((await billInvoice(db, "IBMUSER", inv.id)).invoice.status).toBe("B");
+		expect((await billInvoice(db, env.TABLES, "IBMUSER", inv.id)).invoice.status).toBe("B");
 		expect((await listShipments(db, "S")).map((x) => x.id)).toContain(again.id);
 	});
 

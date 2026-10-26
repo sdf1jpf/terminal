@@ -48,7 +48,7 @@ async function billedInvoice(customer = "000101") {
 	const inv = await createInvoice(env.DB, "IBMUSER", customer, "PO-PDF-1");
 	await addLine(env.DB, inv.id, "BLT-0516", 3);
 	await shipInvoice(env.DB, inv.id);
-	await billInvoice(env.DB, "IBMUSER", inv.id);
+	await billInvoice(env.DB, env.TABLES, "IBMUSER", inv.id);
 	return inv.id;
 }
 

@@ -3,7 +3,7 @@ import type { Customer } from "../customer";
 import { spoolReport } from "../spool";
 import {
 	assign, assignment, customerCounts, deleteBreak, deletePricing, deletePromotion, deleteTerritory, listBreaks, listPricing,
-	listPromotions, listSalespeople, listTerritories, pct, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setPricing,
+	listPromotions, listSalespeople, listTerritories, pct, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setPricing, setTaxExempt,
 	terms, today, type Assignment, type Pricing, type Promotion, type QtyBreak, type SalesRow,
 } from "../sales";
 import { padID } from "./detail";
@@ -84,6 +84,9 @@ export const pricing: Program<PricingState> = {
 			scr.text(6, 25, `${who.salesperson} ${who.salesperson_name}`.trim() + (who.salesperson_assigned ? " - ASSIGNED" : " - TERRITORY'S"),
 				{ color: "green" });
 
+			label(scr, 7, 4, "TAX EXEMPT ===>");
+			scr.input(7, 20, 15, "exempt", s.vals?.exempt ?? cust.tax_exempt ?? "", { bright: s.errField === "exempt" });
+			scr.text(7, 37, cust.tax_exempt ? "CERTIFICATE ON FILE - NOT TAXED" : "TAXABLE - ENTER A CERTIFICATE TO EXEMPT", { color: "green" });
 			label(scr, 8, 4, "ADD:  ITEM ===>");
 			scr.input(8, 20, 10, "item", s.vals?.item ?? "", { bright: s.errField === "item" });
 			label(scr, 8, 32, "DISC % ===>");
@@ -163,6 +166,7 @@ async function applyPricing(ctx: Ctx, s: PricingState, f: Record<string, string>
 		return s;
 	}
 	const vals = { terr: (f.terr ?? "").trim().toUpperCase(), rep: (f.rep ?? "").trim().toUpperCase(),
+		exempt: (f.exempt ?? "").trim().toUpperCase(),
 		item: (f.item ?? "").trim().toUpperCase(), disc: (f.disc ?? "").trim(), price: (f.price ?? "").trim() };
 	s.vals = vals;
 	try {
@@ -184,6 +188,10 @@ async function applyPricing(ctx: Ctx, s: PricingState, f: Record<string, string>
 		if (vals.terr !== (c.territory ?? "") || vals.rep !== (c.salesperson ?? "")) {
 			const who = await assign(ctx.db, ctx.user, cust, { territory: vals.terr, salesperson: vals.rep });
 			done.push(`SOLD BY ${who.territory || "NO TERRITORY"}/${who.salesperson || "HOUSE"}`);
+		}
+		if (vals.exempt !== (c.tax_exempt ?? "")) {
+			await setTaxExempt(ctx.db, ctx.user, cust, vals.exempt);
+			done.push(vals.exempt ? `TAX EXEMPT ${vals.exempt}` : "TAXABLE");
 		}
 		if (vals.item || vals.disc || vals.price) {
 			const p = await setPricing(ctx.db, ctx.user, cust, vals);
