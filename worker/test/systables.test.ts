@@ -1,3 +1,4 @@
+import { tso } from "../src/sessions";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { record, stats } from "../src/monitor";
@@ -122,16 +123,19 @@ describe("system tables", () => {
 
 	it("routes orders like the shipping desk by default", async () => {
 		const carriers = await carrierRates(env.TABLES);
-		expect(carriers.map((c) => c.code)).toEqual(["TRK", "UPS", "FDX"]);
+		expect(carriers.map((c) => c.code)).toEqual(["UPS", "TRK", "FDX"]);
 		const pick = (state: string, weight: number, maxCarton: number, value: number) =>
 			chooseCarrier(carriers, { state, weight, maxCarton, value })?.code;
+		expect(pick("OH", 40, 20, 300)).toBe("UPS");
 		expect(pick("OH", 900, 200, 20000)).toBe("TRK");
+		expect(pick("PA", 100, 71, 300)).toBe("TRK");
 		expect(pick("NY", 40, 20, 300)).toBe("UPS");
+		expect(pick("NY", 149, 70, 4999)).toBe("UPS");
+		expect(pick("NY", 10, 5, 5000)).toBe("FDX");
+		expect(pick("KY", 10, 5, 5000)).toBe("TRK");
 		expect(pick("NY", 150, 20, 300)).toBe("FDX");
 		expect(pick("NY", 100, 71, 300)).toBe("FDX");
-		expect(pick("NY", 100, 70, 5000)).toBe("FDX");
-		expect(pick("NY", 149, 70, 4999)).toBe("UPS");
-		expect(freight(carriers[1], 10)).toBe(21);
+		expect(freight(carriers[0], 10)).toBe(21);
 	});
 });
 
@@ -256,8 +260,8 @@ describe("transaction monitor", () => {
 		});
 
 		it("draws the monitor screen", async () => {
-			const ctx = { env: aeEnv, db: env.DB, tables: env.TABLES, jobs: env.JOBS, user: "IBMUSER", rows: 24, cols: 80,
-				system: "TEST", terminal: "TERM0001", host: "api.test", tzOffset: 0 } satisfies Ctx;
+			const ctx = { env: aeEnv, db: env.DB, tables: env.TABLES, jobs: env.JOBS, tso: tso(env), user: "IBMUSER", sid: "", rows: 24, cols: 80,
+				system: "TEST", terminal: "TERM0001", host: "api.test", tzOffset: 0, live: false } satisfies Ctx;
 			const s = { p: "monitor" as const, back: { p: "menu" as const } };
 			let scr = await monitor.render(ctx, s);
 			const text = (sc: typeof scr) => sc.fields.map((f) => f.text ?? "").join("\n");

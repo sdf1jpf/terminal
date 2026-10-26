@@ -224,6 +224,7 @@ and is plain HTML, CSS and JavaScript with no build step.
 ```
 GET    /v1/health
 POST   /v1/session              logon → {"userid"}
+GET    /v1/live                 WebSocket: pushes that tell a terminal to redraw
 GET    /v1/customers?prefix=K   list, ordered by name
 POST   /v1/customers            create
 GET    /v1/customers/{id}
@@ -410,6 +411,22 @@ RETRV button in the browser) is RETRIEVE: it brings back the last command
 you entered, and pressing it again goes further back. A terminal left without
 a key pressed for 30 minutes logs itself off, as TSO does with an S522.
 
+Each logon is a TSO session (TSU00042), kept by a
+[Durable Object](https://developers.cloudflare.com/durable-objects/)
+(`worker/src/sessions.ts`) along with the records it holds:
+
+- **Record locking.** While you are changing or deleting a customer, or
+  changing a product, the record is yours. Anyone else who tries, or you on
+  another terminal, gets `CUS1201E RECORD IN USE BY IBMUSER ON TERM0001`.
+  Leaving the screen, logging off or timing out lets it go, and so does a
+  session that has not been seen for 30 minutes. The REST API refuses to
+  change a locked record with `423 Locked`.
+- **SEND.** Type TSO's SEND on any command line: `SEND 'LUNCH AT NOON?'
+  USER(JFRANK)`, several users as `USER(A,B)`, everyone signed on as
+  `USER(*)`, `LOGON` to keep it for someone who is not on yet, or no `USER`
+  to tell the operator (it goes in SYSLOG). It shows on their message line
+  with your userid, at once if their terminal is idle.
+
 ## Products and stock
 
 Menu option 3.1 opens the **PRODUCT LIST** (CUSP01): the product file with
@@ -542,15 +559,14 @@ opens **SHIPMENT** (CUSS02): its pick ticket, with each line's bin, in bin
 order.
 
 - **Pack:** type the cartons and weight and press PF10 (`PACKED`). The
-  system then picks the carrier from the invoice's ship-to, the weight and
-  the order's value, and the screen shows which one and why:
-  - `TRK` (company truck) when the ship-to is in the truck area: the
-    warehouse's state (OH) and IN, KY, MI, PA, WV.
-  - `FDX` (FedEx Freight) elsewhere for 150 lb or more, any carton over
-    70 lb, or an order of $5,000 or more.
-  - `UPS` ground for everything else.
-
-  The rules are `routeFor` in `worker/src/shipping.ts`.
+  system then picks the carrier from the invoice's ship-to, the weight, the
+  heaviest carton and the order's value, using the **CARRIER** system table
+  (option 5.6). It takes the first carrier, by priority, whose service area
+  and limits fit, and the screen shows which one and why. The default table:
+  - `UPS` ground by default: up to 149 lb, 70 lb a carton and $4,999.
+  - `TRK` (company truck) for freight beyond that when the ship-to is in
+    the truck area: the warehouse's state (OH) and IN, KY, MI, PA, WV.
+  - `FDX` (FedEx Freight) for everything else.
 - **Ship:** press PF10 (`SHIPPED`, with a tracking number). A customer that
   ordered by EDI is sent an **856 ship notice** with the cartons, carrier,
   tracking number and lines.
@@ -661,10 +677,12 @@ Menu option 5.2 opens the **OPERATOR CONSOLE** (CUSO01), which shows SYSLOG,
 the system log: jobs being submitted, starting and ending (`$HASP100`,
 `$HASP373`, `$HASP395`), abends, the scheduler releasing jobs, logons and
 logoffs, and operator commands with their responses. While it shows the end
-of the log, the screen asks the terminal to redraw it every 5 seconds (the
-`refresh` key in the [screen protocol](docs/screen-protocol.md)), so new
-lines appear as they are written. The terminal waits while you are typing a
-command. PF7 scrolls back and holds the display; PF8 back to the end, or PF5,
+of the log it is live: the terminals keep a WebSocket open to `GET /v1/live`,
+and a watcher in the TSO Durable Object tells them within a second when the
+log moves, so new lines appear as they are written. A terminal without the
+connection redraws every 5 seconds instead (the `refresh` key in the
+[screen protocol](docs/screen-protocol.md)). Either way it waits while you
+are typing a command. PF7 scrolls back and holds the display; PF8 back to the end, or PF5,
 follows it again.
 
 Commands go in the log with their responses, for every console to see:
@@ -676,6 +694,9 @@ Commands go in the log with their responses, for every console to see:
 | `D SCHED` | Display the job schedule |
 | `S jobname` | Submit a job |
 | `H jobname`, `A jobname` | Hold or release a job's schedule |
+| `D TS` | Display the TSO users: session, terminal, screen and idle time |
+| `D GRS` | Display the records locked for update, and by whom |
+| `SEND 'text' USER(id)` | Send a message (see [Session](#session)) |
 
 PF6 opens the **JOB SCHEDULE** (CUSO02). A Worker
 [cron trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
@@ -741,7 +762,7 @@ them from the edge cache:
 
 | Table | What it holds |
 | --- | --- |
-| `CARRIER` | Carriers: priority, service states, weight, carton and order value limits, base and per-pound charge, transit days. Carriers are tried by priority and the first whose limits all hold takes the order; the defaults are the shipping desk's routing (truck in OH IN KY MI PA WV, UPS up to 149 lb, 70 lb a carton and $4,999, FedEx Freight otherwise). |
+| `CARRIER` | Carriers: priority, service states, weight, carton and order value limits, base and per-pound charge, transit days. Carriers are tried by priority and the first whose limits all hold takes the order; the defaults are the shipping desk's routing (UPS up to 149 lb, 70 lb a carton and $4,999; freight beyond that on the truck in OH IN KY MI PA WV, FedEx Freight otherwise). |
 | `TAXCODE` | Sales tax rate by ship-to state, and whether freight is taxed. |
 | `HELP` | PF1 help text by `panel.field` (`BROWSE.FILTER`) or field name. A row replaces the built-in help for that field, keeping its list of valid values, or adds help where there is none. |
 

@@ -89,3 +89,11 @@ type Host interface {
 	// returns the next screen. Returning a nil screen ends the session.
 	Submit(aid AID, s *Screen) *Screen
 }
+
+// Pusher is a Host that can say when the screen should be drawn again
+// without waiting for its refresh timer: a live screen's data changed, or
+// a message came. The terminal redraws on each value, unless the operator
+// is busy, as it does for a refresh.
+type Pusher interface {
+	Pushes() <-chan struct{}
+}

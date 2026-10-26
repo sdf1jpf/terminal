@@ -56,6 +56,9 @@ type redrawReply struct{ scr *Screen }
 // be drawn again.
 type refreshTick struct{ gen int }
 
+// pushed comes when a Pusher host asks for a redraw.
+type pushed struct{}
+
 // clockTick comes on the minute, to move the clock in the status line.
 type clockTick struct{}
 
@@ -80,7 +83,7 @@ func New(host Host, opts Options) *Terminal {
 	}
 }
 
-func (t *Terminal) Init() tea.Cmd { return batch(t.clock(), t.idle()) }
+func (t *Terminal) Init() tea.Cmd { return batch(t.clock(), t.idle(), t.awaitPush()) }
 
 func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -104,6 +107,8 @@ func (t *Terminal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return t, batch(t.fit(), t.schedule())
 	case refreshTick:
 		return t, t.refresh(msg)
+	case pushed:
+		return t, batch(t.redrawIdle(), t.awaitPush())
 	case clockTick:
 		return t, t.clock()
 	case idleTick:
@@ -332,9 +337,33 @@ func (t *Terminal) refresh(msg refreshTick) tea.Cmd {
 	if t.lock != LockNone || len(t.scr.Modified()) > 0 {
 		return t.tick()
 	}
+	return t.redrawIdle()
+}
+
+// redrawIdle asks the host for the screen again, unless the operator is
+// busy: then the next key, or the refresh timer, brings the news.
+func (t *Terminal) redrawIdle() tea.Cmd {
+	if t.lock != LockNone || len(t.scr.Modified()) > 0 {
+		return nil
+	}
 	t.lock = LockWait
 	host, rows, cols := t.host, t.scr.Rows(), t.scr.Cols()
 	return func() tea.Msg { return redrawReply{scr: host.Redraw(rows, cols)} }
+}
+
+// awaitPush waits for the host to ask for a redraw, if it can.
+func (t *Terminal) awaitPush() tea.Cmd {
+	p, ok := t.host.(Pusher)
+	if !ok {
+		return nil
+	}
+	ch := p.Pushes()
+	return func() tea.Msg {
+		if _, ok := <-ch; !ok {
+			return nil
+		}
+		return pushed{}
+	}
 }
 
 // clock waits for the next minute, when the status line's clock changes.

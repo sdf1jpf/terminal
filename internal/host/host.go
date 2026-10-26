@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sdf1jpf/terminal/internal/api"
@@ -22,6 +23,21 @@ type Backend interface {
 	Logoff(ctx context.Context) error
 	Screen(ctx context.Context, req api.ScreenRequest) (api.ScreenResponse, error)
 }
+
+// Listener is a Backend that can push: see api.Client.Listen.
+type Listener interface {
+	Listen(ctx context.Context, opened func(), on func(event string)) error
+}
+
+// liveFallback is how often a live screen is still redrawn while pushes
+// are arriving, in case one is missed.
+const liveFallback = time.Minute
+
+// reconnect bounds the wait before listening again after the connection drops.
+const (
+	reconnectMin = time.Second
+	reconnectMax = time.Minute
+)
 
 type Config struct {
 	SystemName string // e.g. "SYS1"
@@ -38,11 +54,21 @@ type Session struct {
 	state string // the commarea from the last screen
 
 	rows, cols int // size of the terminal's presentation space
+
+	push   chan struct{} // tells the terminal to redraw; see Pushes
+	mu     sync.Mutex    // guards the fields below, shared with the listener
+	live   string        // what the current screen shows that pushes announce
+	listen bool          // connected to GET /v1/live
+	stop   context.CancelFunc
 }
 
 func NewSession(cfg *Config, lu string) *Session {
-	return &Session{cfg: cfg, lu: lu, logon: &logon{}, rows: t3.MinRows, cols: t3.MinCols}
+	return &Session{cfg: cfg, lu: lu, logon: &logon{}, rows: t3.MinRows, cols: t3.MinCols, push: make(chan struct{}, 1)}
 }
+
+// Pushes implements tn3270.Pusher: a value comes when the host has said
+// the screen should be redrawn.
+func (s *Session) Pushes() <-chan struct{} { return s.push }
 
 func (s *Session) Start() *t3.Screen { return s.logon.Render(s) }
 
@@ -58,7 +84,7 @@ func (s *Session) Redraw(rows, cols int) *t3.Screen {
 		return nil
 	}
 	s.state = resp.State
-	return build(resp.Screen)
+	return s.show(resp.Screen)
 }
 
 func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
@@ -82,7 +108,7 @@ func (s *Session) Submit(aid t3.AID, scr *t3.Screen) *t3.Screen {
 		return withMessage(scr, "CUS0299E NO SCREEN IN THE HOST'S REPLY")
 	}
 	s.state = resp.State
-	return build(resp.Screen)
+	return s.show(resp.Screen)
 }
 
 // start fetches the application's first screen after logon.
@@ -100,10 +126,11 @@ func (s *Session) start() *t3.Screen {
 		return s.toLogon(s.fail(err))
 	}
 	s.state = resp.State
-	return build(resp.Screen)
+	return s.show(resp.Screen)
 }
 
 func (s *Session) toLogon(msg string) *t3.Screen {
+	s.stopListening()
 	s.user, s.state = "", ""
 	s.logon = &logon{msg: msg}
 	return s.logon.Render(s)
@@ -117,6 +144,9 @@ func (s *Session) request(aid string, scr *t3.Screen) api.ScreenRequest {
 		AID: aid, State: s.state, Fields: map[string]string{}, Modified: []string{},
 		Rows: s.rows, Cols: s.cols, Terminal: s.lu, System: s.cfg.SystemName, TZOffset: off / 60,
 	}
+	s.mu.Lock()
+	req.Live = s.listen
+	s.mu.Unlock()
 	if scr != nil {
 		req.Fields = scr.Fields()
 		for name := range scr.Modified() {
@@ -126,6 +156,83 @@ func (s *Session) request(aid string, scr *t3.Screen) api.ScreenRequest {
 		req.Cursor = api.Cursor{Row: row, Col: col, Field: scr.FieldName(scr.Cursor())}
 	}
 	return req
+}
+
+// show builds a screen from the application and notes what pushes it
+// listens for. While pushes arrive, its refresh timer is only a fallback.
+func (s *Session) show(in *api.Screen) *t3.Screen {
+	scr := build(in)
+	s.mu.Lock()
+	s.live = in.Live
+	listening := s.listen
+	s.mu.Unlock()
+	if in.Live != "" && listening && in.Refresh > 0 {
+		scr.SetRefresh(max(time.Duration(in.Refresh)*time.Second, liveFallback))
+	}
+	s.startListening()
+	return scr
+}
+
+// startListening connects to GET /v1/live, if the backend can, and keeps
+// reconnecting until the session logs off.
+func (s *Session) startListening() {
+	l, ok := s.api().(Listener)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !ok || s.stop != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.stop = cancel
+	go func() {
+		wait := reconnectMin
+		for ctx.Err() == nil {
+			err := l.Listen(ctx, func() {
+				wait = reconnectMin
+				s.setListening(true)
+			}, s.event)
+			s.setListening(false)
+			if errors.Is(err, api.ErrUnauthorized) {
+				return
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(wait):
+			}
+			wait = min(wait*2, reconnectMax)
+		}
+	}()
+}
+
+func (s *Session) stopListening() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stop != nil {
+		s.stop()
+		s.stop = nil
+	}
+	s.listen, s.live = false, ""
+}
+
+func (s *Session) setListening(on bool) {
+	s.mu.Lock()
+	s.listen = on
+	s.mu.Unlock()
+}
+
+// event passes a push on to the terminal when it concerns the screen: a
+// message is for any screen, anything else only for a screen live on it.
+func (s *Session) event(name string) {
+	s.mu.Lock()
+	live := s.live
+	s.mu.Unlock()
+	if name != "message" && name != live {
+		return
+	}
+	select {
+	case s.push <- struct{}{}:
+	default: // one is already waiting
+	}
 }
 
 func (s *Session) api() Backend { return s.cfg.Backend }

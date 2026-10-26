@@ -4,6 +4,7 @@
 //	GET    /v1/health
 //	POST   /v1/session              logon: -> {"userid"}
 //	POST   /v1/screen               the terminal's screens; see docs/screen-protocol.md
+//	GET    /v1/live                 WebSocket: events that tell a terminal to redraw its screen
 //	GET    /v1/customers?prefix=X   list, ordered by name; also &city=, &state=, &status=
 //	POST   /v1/customers            create
 //	GET    /v1/customers/{id}
@@ -73,6 +74,9 @@
 //	DELETE /v1/tables/{t}           put a table back to its defaults
 //	GET    /v1/monitor?minutes=N    transaction statistics (Analytics Engine)
 //
+// PUT and DELETE on a customer or product are refused with 423 while
+// another user has it locked for update on a terminal (sessions.ts).
+//
 // A cron trigger runs the job scheduler every minute (scheduler.ts), and
 // keeps the HELP facility's Vectorize index current (ai.ts).
 //
@@ -109,6 +113,7 @@ import {
 import { accountEntries, listPeriods, openPeriod, trialBalance } from "./ledger";
 import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
 import { requestKeys, screen } from "./screens";
+import { notLocked, tso, USER_HEADER, type Sessions } from "./sessions";
 
 export interface Env {
 	DB: D1Database;
@@ -123,9 +128,11 @@ export interface Env {
 	TXN?: AnalyticsEngineDataset; // the transaction monitor (monitor.ts)
 	CF_ACCOUNT_ID?: string; // for the Analytics Engine SQL API
 	AE_API_TOKEN?: string; // secret: an API token with Account Analytics Read
+	SESSIONS: DurableObjectNamespace<Sessions>; // the TSO address space
 }
 
 export { JobRunner } from "./jobs";
+export { Sessions } from "./sessions";
 
 type App = { Bindings: Env; Variables: { user: string; tran?: string; terminal?: string } };
 
@@ -170,6 +177,17 @@ app.post("/v1/screen", signedOn, async (c) => {
 	return json(200, res);
 });
 
+// The terminals' push channel. The Sessions object keeps the socket and
+// sends events on it; see docs/screen-protocol.md.
+app.get("/v1/live", signedOn, async (c) => {
+	if (c.req.header("Upgrade")?.toLowerCase() !== "websocket") {
+		throw new HttpError(426, "bad_request", "GET /v1/live is a WebSocket: send Upgrade: websocket");
+	}
+	const req = new Request(c.req.raw);
+	req.headers.set(USER_HEADER, c.get("user"));
+	return tso(c.env).fetch(req);
+});
+
 app.get("/v1/customers", signedOn, async (c) => {
 	const q = (k: string) => c.req.query(k) ?? "";
 	return json(200, await listCustomers(c.env.DB, q("prefix"), { city: q("city"), state: q("state"), status: q("status") }));
@@ -180,10 +198,12 @@ app.post("/v1/customers", signedOn, async (c) => {
 });
 app.get("/v1/customers/:id", signedOn, async (c) => json(200, await getCustomer(c.env.DB, c.req.param("id"))));
 app.put("/v1/customers/:id", signedOn, async (c) => {
+	await notLocked(c.env, `CUSTOMER ${c.req.param("id")}`, c.get("user"));
 	const { fields, version } = parseEditable(await readJSON(c.req.raw, customerFields));
 	return json(200, await updateCustomer(c.env.DB, c.req.param("id"), fields, version, c.get("user")));
 });
 app.delete("/v1/customers/:id", signedOn, async (c) => {
+	await notLocked(c.env, `CUSTOMER ${c.req.param("id")}`, c.get("user"));
 	await deleteCustomer(c.env.DB, c.req.param("id"), c.get("user"));
 	return noContent();
 });
@@ -230,6 +250,7 @@ app.post("/v1/products", signedOn, async (c) => {
 app.get("/v1/products/:sku", signedOn, async (c) => json(200, await getProduct(c.env.DB, c.req.param("sku").toUpperCase())));
 app.put("/v1/products/:sku", signedOn, async (c) => {
 	const sku = c.req.param("sku").toUpperCase();
+	await notLocked(c.env, `PRODUCT ${sku}`, c.get("user"));
 	const { fields, version } = parseProduct({ ...(await readJSON(c.req.raw, productFields)), sku });
 	return json(200, await updateProduct(c.env.DB, sku, fields, version, c.get("user")));
 });
@@ -345,7 +366,7 @@ app.delete("/v1/shipments/:id", signedOn, async (c) => {
 });
 app.post("/v1/shipments/:id/pack", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["cartons", "weight"]);
-	return json(200, await pack(c.env.DB, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
+	return json(200, await pack(c.env.DB, c.env.TABLES, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
 });
 app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
 	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase()));
@@ -436,6 +457,7 @@ for (const path of [
 	"/v1/health",
 	"/v1/session",
 	"/v1/screen",
+	"/v1/live",
 	"/v1/customers",
 	"/v1/customers/:id",
 	"/v1/customers/:id/transactions",

@@ -38,6 +38,12 @@
   // The transaction monitor writes a data point per request (src/monitor.ts).
   // Reading them back needs the AE_API_TOKEN secret (see README).
   "analytics_engine_datasets": [{ "binding": "TXN", "dataset": "customer_transactions" }],
+  // The TSO address space: signed-on sessions, record locks, SEND messages
+  // and the terminals' WebSockets for live screens (see src/sessions.ts).
+  "durable_objects": {
+    "bindings": [{ "name": "SESSIONS", "class_name": "Sessions" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sessions"] }],
   // Cloudflare Access guards every request; the Worker verifies its JWT.
   // Both values come from the Access application (see README).
   "vars": {
