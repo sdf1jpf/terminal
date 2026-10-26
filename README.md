@@ -342,7 +342,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | Option | Submenu | Options |
 | --- | --- | --- |
 | 1 | CUSTOMERS | 1 Browse, 2 Inquiry, 3 Add, 4 Event history |
-| 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox |
+| 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox, 4 Order timeline, 5 EDI exceptions, 6 Shipment tracking |
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
 | 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
@@ -609,6 +609,51 @@ order.
 PF6 on the list submits **CUSPICK**, which prints a pick ticket for every
 shipment still in picking. Releases and shipments show in the customer's
 event history. The API is under `/v1/shipments`.
+
+### Shipment tracking
+
+Once a shipment has gone, the system asks its carrier where it is: every
+half hour for each shipment on its way (the minute cron trigger), and
+whenever someone looks. Every carrier scan is kept, and the shipment carries
+its delivery status (`IN TRANSIT`, `OUT FOR DELIVERY`, `DELIVERED`, or
+`EXCEPTION` when the carrier reports a delay), the date the carrier promises
+and, once delivered, when and who signed for it.
+
+- Option **2.6 TRACKING** (CUSS03, also `TRACK 1Z...`) finds a shipment by
+  its number, its invoice or its tracking number and lists the scans, newest
+  first. PF5 asks the carrier again, PF4 opens the shipment and PF6 the
+  order timeline. `T` beside a shipment on the shipping list, or PF5 on a
+  shipped one, opens it too.
+- The shipping list's status column says where shipped ones are (`INTRANS`,
+  `OUTDLVY`, `DELIVRD`, `EXCEPTN`), and the shipment and invoice screens show
+  it next to the tracking number.
+- Company truck drivers have no scanner, so a truck delivery can be signed
+  off by hand: type who signed and press PF10 on CUSS03.
+- Out for delivery, delivered and exceptions wake the order's lifecycle, so
+  they land on its timeline (option 2.4). An exception also writes
+  `CUS1701W` to SYSLOG. Deliveries show in the customer's event history.
+
+Each carrier is reached through a `TrackingProvider` (`worker/src/tracking.ts`).
+**For now every carrier is simulated**: the simulator plays out a believable
+trip for each tracking number (label, pickup, the carrier's hub, destination,
+out for delivery, signed), timed by the CARRIER table's transit days, and
+holds about one shipment in ten up a day. Real tracking needs, per carrier:
+
+- **UPS:** a UPS developer account (developer.ups.com) with an app that has
+  the Tracking API, and its OAuth client ID and secret, stored as Worker
+  secrets `UPS_CLIENT_ID` and `UPS_CLIENT_SECRET`. The UPS account number
+  that ships is needed if the app is to see our shipments' full detail.
+- **FedEx:** a FedEx Developer Portal project (developer.fedex.com) with the
+  Track API, its API key and secret key as `FEDEX_API_KEY` and
+  `FEDEX_SECRET_KEY`, and the shipping account number. New projects start
+  on the sandbox; production keys follow FedEx's approval.
+
+With those in place, a provider for each is registered with
+`registerProvider` and the simulator steps aside for that carrier.
+
+The API: `GET /v1/shipments/{id}/tracking` (`POST` to ask the carrier
+first), `GET /v1/track/{number}` by shipment, invoice or tracking number, and
+`POST /v1/shipments/{id}/delivered` with `{"signed_by"}` for the truck.
 
 ## Accounts receivable and the general ledger
 

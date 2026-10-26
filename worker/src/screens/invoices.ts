@@ -6,6 +6,7 @@ import {
 } from "../invoices";
 import { bill } from "../edi";
 import { release, shipmentFor, shipStatusNames, type Shipment } from "../shipping";
+import { deliveryNames } from "../tracking";
 import { searchProducts } from "../products";
 import { padID } from "./detail";
 import { newTimeline } from "./timeline";
@@ -373,7 +374,8 @@ export const invoice: Program<InvoiceState> = {
 export const oneLine = (a: Address) => [a.name, a.address, cityLine(a)].filter(Boolean).join(", ");
 
 function shipLine(x: Shipment): string {
-	if (x.status === "S") return `SHIPPED ON ${x.id} VIA ${x.carrier} ${x.tracking}`;
+	if (x.status === "S" && x.delivery === "D") return `SHIPPED ON ${x.id} VIA ${x.carrier} ${x.tracking} - DELIVERED ${x.delivered.slice(0, 10)}`;
+	if (x.status === "S") return `SHIPPED ON ${x.id} VIA ${x.carrier} ${x.tracking} - ${deliveryNames[x.delivery]}`;
 	return `RELEASED TO THE WAREHOUSE ON ${x.id} - ${shipStatusNames[x.status]} - PF6 SHOWS IT`;
 }
 

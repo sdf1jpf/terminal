@@ -58,6 +58,10 @@
 //	DELETE /v1/shipments/{id}       cancel one that has not shipped
 //	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}; the system chooses the carrier ("carrier", "route")
 //	POST   /v1/shipments/{id}/ship  with the carrier chosen at packing; sends an 856 for EDI orders
+//	GET    /v1/shipments/{id}/tracking   where it is: -> {"shipment", "events"} (scans, newest first)
+//	POST   /v1/shipments/{id}/tracking   ask the carrier now, then the same
+//	POST   /v1/shipments/{id}/delivered  sign off a company truck delivery: {"signed_by"}
+//	GET    /v1/track/{number}       a shipment by its number, invoice or tracking number -> as /tracking
 //	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
 //	GET    /v1/ledger/periods       accounting periods, newest first
 //	GET    /v1/ledger/accounts/{n}?period=X   an account's journal entries in a period
@@ -129,6 +133,7 @@ import {
 } from "./purchasing";
 import { accountEntries, listPeriods, openPeriod, trialBalance } from "./ledger";
 import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
+import { confirmDelivery, findShipment, getTracking } from "./tracking";
 import { config as screens, requestKeys, screen } from "./screens";
 import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
 import { buildStatements, invoicePdf, listingPdf, statementPdf } from "./documents";
@@ -442,6 +447,17 @@ app.post("/v1/shipments/:id/pack", signedOn, async (c) => {
 app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
 	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase()));
 });
+app.get("/v1/shipments/:id/tracking", signedOn, async (c) => json(200, await getTracking(c.env.DB, c.env.TABLES, c.req.param("id"))));
+app.post("/v1/shipments/:id/tracking", signedOn, async (c) => json(200, await getTracking(c.env.DB, c.env.TABLES, c.req.param("id"), true)));
+app.post("/v1/shipments/:id/delivered", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["signed_by"]);
+	return json(200, await confirmDelivery(c.env.DB, c.get("user"), c.req.param("id"), str(body, "signed_by")));
+});
+app.get("/v1/track/:number", signedOn, async (c) => {
+	const shp = await findShipment(c.env.DB, c.req.param("number"));
+	if (!shp) throw new HttpError(404, "not_found", "no shipment has that number");
+	return json(200, await getTracking(c.env.DB, c.env.TABLES, shp.id));
+});
 
 app.get("/v1/ledger", signedOn, async (c) => json(200, await trialBalance(c.env.DB, c.req.query("period") ?? "")));
 app.get("/v1/ledger/periods", signedOn, async (c) => json(200, await listPeriods(c.env.DB)));
@@ -612,6 +628,9 @@ for (const path of [
 	"/v1/shipments/:id",
 	"/v1/shipments/:id/pack",
 	"/v1/shipments/:id/ship",
+	"/v1/shipments/:id/tracking",
+	"/v1/shipments/:id/delivered",
+	"/v1/track/:number",
 	"/v1/ledger",
 	"/v1/ledger/periods",
 	"/v1/ledger/accounts/:account",

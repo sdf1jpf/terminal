@@ -11,6 +11,7 @@ import type { Env } from "./index";
 import { jobLibrary, submitJob, type Job } from "./jobs";
 import { deliverSignals } from "./lifecycle";
 import { logStmt, prune, syslog } from "./syslog";
+import { pollTracking } from "./tracking";
 
 export const SCHEDULER = "SCHEDULR";
 
@@ -124,14 +125,20 @@ export async function runSchedules(env: Env, at: Date): Promise<Job[]> {
 }
 
 // tick is the cron trigger's handler: it runs the schedules, passes the
-// minute's order changes to their lifecycles, keeps the HELP facility's
-// index current and, once an hour, trims the log.
+// minute's order changes to their lifecycles, asks the carriers about the
+// shipments on their way, keeps the HELP facility's index current and, once
+// an hour, trims the log.
 export async function tick(env: Env, at: Date): Promise<void> {
 	await runSchedules(env, at);
 	try {
 		await deliverSignals(env);
 	} catch (e) {
 		console.error("delivering order signals:", e);
+	}
+	try {
+		await pollTracking(env.DB, env.TABLES, at.getTime());
+	} catch (e) {
+		console.error("tracking shipments:", e);
 	}
 	try {
 		if (await syncIndex(env)) await syslog(env.DB, SCHEDULER, "CUS1210I HELP FACILITY INDEX UPDATED");

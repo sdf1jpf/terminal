@@ -180,6 +180,15 @@ export interface ShipmentState {
 	errField?: string;
 	msg?: string;
 }
+export interface TrackingState {
+	p: "tracking";
+	back: State;
+	id?: string; // the shipment: SHP00012
+	top?: number;
+	signed?: string; // who signed for a truck delivery, kept across a failed PF10
+	errField?: string;
+	msg?: string;
+}
 export interface LedgerState {
 	p: "ledger";
 	back: State;
@@ -328,7 +337,7 @@ export interface AskState {
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
-	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState
+	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState | TrackingState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState;
 
