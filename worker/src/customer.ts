@@ -18,11 +18,13 @@ export interface Customer {
 	version: number;
 	updated: string; // RFC 3339, UTC
 	updated_by: string;
+	territory?: string; // assigned territory, "" for its state's (sales.ts); not editable here
+	salesperson?: string; // assigned salesperson, "" for its territory's
 }
 
 export const customerFields = [
 	"id", "name", "address", "city", "state", "zip", "phone",
-	"credit_limit", "balance", "status", "version", "updated", "updated_by",
+	"credit_limit", "balance", "status", "version", "updated", "updated_by", "territory", "salesperson",
 ] as const;
 
 // Editable is what a client may set. Balance, version and audit fields are
@@ -44,7 +46,8 @@ export function parseEditable(body: Record<string, unknown>): { fields: Editable
 		status: up("status"),
 	};
 	// The remaining keys are accepted but must be well-typed.
-	str(body, "id"), str(body, "updated"), str(body, "updated_by"), int(body, "balance");
+	// Territory and salesperson are assigned on the pricing screen (sales.ts).
+	str(body, "id"), str(body, "updated"), str(body, "updated_by"), int(body, "balance"), str(body, "territory"), str(body, "salesperson");
 	const version = int(body, "version");
 
 	const bad = validate(fields);

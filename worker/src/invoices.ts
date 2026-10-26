@@ -19,6 +19,7 @@
 
 import { HttpError } from "./http";
 import type { Transaction } from "./activity";
+import { pricingFor, salespersonOf, territoryOf } from "./sales";
 
 export interface Invoice {
 	id: string;
@@ -28,6 +29,8 @@ export interface Invoice {
 	total: number;
 	created: string;
 	created_by: string;
+	territory: string; // who sold it, as when it was opened (sales.ts)
+	salesperson: string;
 	billed: string;
 	paid: string;
 	bill_name: string;
@@ -69,7 +72,10 @@ export interface InvoiceLine {
 	sku: string;
 	description: string;
 	quantity: number;
-	unit_price: number;
+	unit_price: number; // the price charged
+	list_price: number; // the product's price when the line was added
+	disc_pct10: number; // the customer's discount, in tenths of a percent
+	price_rule: string; // the pricing agreement applied (sales.ts); "" at list
 }
 
 export const statusNames: Record<string, string> = { O: "OPEN", B: "BILLED", P: "PAID" };
@@ -80,7 +86,8 @@ const bad = (field: string, message: string) => new HttpError(422, "invalid", me
 const now = () => new Date().toISOString();
 
 // createInvoice opens a new, empty invoice for an active customer, billed
-// and shipped to the customer's address.
+// and shipped to the customer's address, and records the territory and
+// salesperson selling to it.
 export async function createInvoice(db: D1Database, user: string, customerId: string, po = ""): Promise<Invoice> {
 	po = po.trim().toUpperCase();
 	if (po.length > 22) throw bad("po", "PO number is limited to 22 characters");
@@ -92,9 +99,10 @@ export async function createInvoice(db: D1Database, user: string, customerId: st
 		db.prepare(
 			`INSERT INTO invoices (id, customer_id, status, po_number, created, created_by,
 			                      bill_name, bill_address, bill_city, bill_state, bill_zip,
-			                      ship_name, ship_address, ship_city, ship_state, ship_zip)
+			                      ship_name, ship_address, ship_city, ship_state, ship_zip, territory, salesperson)
 			 SELECT printf('INV%05d', n.value), c.id, 'O', ?2, ?3, ?4,
-			        c.name, c.address, c.city, c.state, c.zip, c.name, c.address, c.city, c.state, c.zip
+			        c.name, c.address, c.city, c.state, c.zip, c.name, c.address, c.city, c.state, c.zip,
+			        ${territoryOf}, ${salespersonOf}
 			 FROM counters n, customers c WHERE n.name = 'invoice_id' AND c.id = ?1
 			 RETURNING *`,
 		).bind(customerId, po, now(), user),
@@ -194,20 +202,25 @@ async function mustBeOpen(db: D1Database, id: string): Promise<void> {
 	if (shp) throw bad("sku", `invoice ${id} is released to the warehouse on ${shp.id} - cancel the shipment to change it`);
 }
 
-// addLine adds a product to an open invoice at its current price and takes
+// addLine adds a product to an open invoice at its current price, less
+// the customer's discount or at its contract price (sales.ts), and takes
 // the quantity out of stock.
 export async function addLine(db: D1Database, id: string, sku: string, qty: number): Promise<InvoiceLine> {
 	sku = sku.trim().toUpperCase();
 	checkQty(qty);
+	const inv = await db.prepare("SELECT customer_id FROM invoices WHERE id = ?").bind(id).first<{ customer_id: string }>();
+	const pr = await pricingFor(db, inv?.customer_id ?? "", sku);
 	const sellable = "sku = ?2 AND status = 'A' AND on_hand >= ?3";
+	// Rounded to the dollar, as sales.ts netPrice.
+	const net = "CAST(CASE WHEN ?5 > 0 THEN ?5 ELSE (unit_price * (1000 - ?4) + 500) / 1000 END AS INTEGER)";
 	const [inserted] = await db.batch<InvoiceLine>([
 		db.prepare(
-			`INSERT INTO invoice_lines (invoice_id, line, sku, description, quantity, unit_price)
+			`INSERT INTO invoice_lines (invoice_id, line, sku, description, quantity, unit_price, list_price, disc_pct10, price_rule)
 			 SELECT ?1, (SELECT COALESCE(MAX(line), 0) + 1 FROM invoice_lines WHERE invoice_id = ?1),
-			        sku, description, ?3, unit_price
+			        sku, description, ?3, ${net}, unit_price, ?4, ?6
 			 FROM products WHERE ${sellable} AND ${isOpen}
 			 RETURNING *`,
-		).bind(id, sku, qty),
+		).bind(id, sku, qty, pr.disc_pct10, pr.price, pr.rule),
 		db.prepare(`UPDATE products SET on_hand = on_hand - ?3, version = version + 1 WHERE ${sellable} AND changes() = 1`)
 			.bind(id, sku, qty),
 		retotal(db, id),

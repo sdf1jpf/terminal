@@ -33,6 +33,7 @@ import { menu } from "./menu";
 import { monitor } from "./monitor";
 import { tablerow, tablerows, tables } from "./tables";
 import { report } from "./report";
+import { pricing, salespeople, salesrpt, territories } from "./sales";
 import { search } from "./search";
 import { skusearch } from "./skusearch";
 import { output, spool } from "./spool";
@@ -47,6 +48,7 @@ const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
 	pos, po, vendors, vendhist, timeline: timelinePanel, ediex, shipments, shipment, tracking, trucks, drivers, fleetitem, loads, load, board: dispatchBoard, ledger, glaccount,
 	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc, mail, mailmsg,
+	pricing, territories, salespeople, salesrpt,
 };
 
 export const config: ScreenConfig<Env> = {

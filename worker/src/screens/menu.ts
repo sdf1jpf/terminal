@@ -13,6 +13,7 @@ import { find } from "./search";
 import { newVendHist } from "./vendhist";
 import { newTimeline } from "./timeline";
 import { newEdiEx } from "./ediex";
+import { newPricing, thisMonth } from "./sales";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program, type State } from "./program";
 
@@ -43,6 +44,7 @@ const menus: Record<string, Menu> = {
 			{ key: "3", name: "INVENTORY", desc: "Products, purchasing, vendors", sub: "3" },
 			{ key: "4", name: "ACCOUNTING", desc: "Ledger, close, dunning, credit", sub: "4" },
 			{ key: "5", name: "OPERATIONS", desc: "Jobs, console, output, monitor, tables", sub: "5" },
+			{ key: "6", name: "SELLING", desc: "Pricing, territories, salespeople", sub: "6" },
 			{ key: "7", name: "FREIGHT", desc: "Trucks, drivers, loads, dispatch", sub: "7" },
 			{
 				key: "T", name: "TUTORIAL", desc: "Keyboard and PF keys; HELP and a question", aliases: ["T", "HELP", "ASK"],
@@ -118,6 +120,26 @@ const menus: Record<string, Menu> = {
 			{ key: "3", name: "AGING", desc: "Receivables aging buckets", go: (_ctx, m) => newChart("A", m) },
 			{ key: "4", name: "TURNS", desc: "Inventory turns by product", go: (_ctx, m) => newChart("T", m) },
 			{ key: "5", name: "CREDIT", desc: "Credit exposure summary", go: (_ctx, m) => ({ p: "report", back: m }) },
+		],
+	},
+	"6": {
+		map: "CUSM60",
+		title: "SALES MENU",
+		options: [
+			{
+				key: "1", name: "PRICING", desc: "Customer discounts, contract prices", aliases: ["DISCOUNTS"],
+				go: (_ctx, m, arg) => newPricing(m, arg),
+			},
+			{ key: "2", name: "TERRITORIES", desc: "Sales territories by state", aliases: ["TERR"], go: (_ctx, m) => ({ p: "territories", back: m }) },
+			{ key: "3", name: "SALESPEOPLE", desc: "Salespeople, commission rates", aliases: ["REPS"], go: (_ctx, m) => ({ p: "salespeople", back: m }) },
+			{
+				key: "4", name: "BYTERRITORY", desc: "Sales by territory", aliases: ["TERRSALES"],
+				go: (_ctx, m, arg) => ({ p: "salesrpt", back: m, by: "T", month: arg || thisMonth() }),
+			},
+			{
+				key: "5", name: "COMMISSIONS", desc: "Sales and commission by rep", aliases: ["COMM", "BYREP"],
+				go: (_ctx, m, arg) => ({ p: "salesrpt", back: m, by: "S", month: arg || thisMonth() }),
+			},
 		],
 	},
 	"5": {

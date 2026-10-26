@@ -343,6 +343,42 @@ export interface TableRowState {
 	msg?: string;
 }
 
+export interface PricingState {
+	p: "pricing";
+	back: State;
+	cust?: string; // the customer shown
+	vals?: Record<string, string>; // the assignment and add fields, kept across a failed change
+	top?: number;
+	errField?: string;
+	errSel?: string; // the item whose selection failed
+	msg?: string;
+}
+export interface TerritoriesState {
+	p: "territories";
+	back: State;
+	vals?: Record<string, string>; // the entry line: code, tname, trep, states
+	confirm?: string; // D was entered once on this territory: enter it again to delete it
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface SalespeopleState {
+	p: "salespeople";
+	back: State;
+	vals?: Record<string, string>; // the entry line: sid, name, comm, status
+	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+export interface SalesRptState {
+	p: "salesrpt";
+	back: State;
+	by: "T" | "S"; // by territory or by salesperson
+	month: string; // YYYY-MM, billed in
+	errField?: string;
+	msg?: string;
+}
+
 export interface SearchState {
 	p: "search";
 	back: State;
@@ -374,7 +410,8 @@ export type State =
 	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState | TrackingState
 	| TrucksState | DriversState | FleetItemState | LoadsState | LoadState | BoardState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
-	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState;
+	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState
+	| PricingState | TerritoriesState | SalespeopleState | SalesRptState;
 
 export {
 	pf, takeDownload, takeFill, withDownload, withFill, type Download, type Fill, type Input, type Logoff,
