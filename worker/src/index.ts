@@ -46,8 +46,8 @@
 //	POST   /v1/shipments            release an open invoice to the warehouse: {"invoice_id"}
 //	GET    /v1/shipments/{id}       -> {"shipment", "invoice", "lines"}
 //	DELETE /v1/shipments/{id}       cancel one that has not shipped
-//	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}
-//	POST   /v1/shipments/{id}/ship  {"carrier"}: UPS, FDX or TRK; sends an 856 for EDI orders
+//	POST   /v1/shipments/{id}/pack  {"cartons", "weight"}; the system chooses the carrier ("carrier", "route")
+//	POST   /v1/shipments/{id}/ship  with the carrier chosen at packing; sends an 856 for EDI orders
 //	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
 //	GET    /v1/ledger/periods       accounting periods, newest first
 //	GET    /v1/ledger/accounts/{n}?period=X   an account's journal entries in a period
@@ -295,8 +295,7 @@ app.post("/v1/shipments/:id/pack", signedOn, async (c) => {
 	return json(200, await pack(c.env.DB, c.req.param("id").toUpperCase(), int(body, "cartons"), int(body, "weight")));
 });
 app.post("/v1/shipments/:id/ship", signedOn, async (c) => {
-	const body = await readJSON(c.req.raw, ["carrier"]);
-	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase(), str(body, "carrier")));
+	return json(200, await ship(c.env.DB, c.get("user"), c.req.param("id").toUpperCase()));
 });
 
 app.get("/v1/ledger", signedOn, async (c) => json(200, await trialBalance(c.env.DB, c.req.query("period") ?? "")));

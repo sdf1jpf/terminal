@@ -482,11 +482,19 @@ just one status) opens **SHIPPING** (CUSS01), and `S` beside a shipment
 opens **SHIPMENT** (CUSS02): its pick ticket, with each line's bin, in bin
 order.
 
-- **Pack:** type the cartons and weight and press PF10 (`PACKED`).
-- **Ship:** type the carrier (`UPS`, `FDX` or `TRK`) and press PF10
-  (`SHIPPED`, with a tracking number). A customer that ordered by EDI is
-  sent an **856 ship notice** with the cartons, carrier, tracking number and
-  lines.
+- **Pack:** type the cartons and weight and press PF10 (`PACKED`). The
+  system then picks the carrier from the invoice's ship-to, the weight and
+  the order's value, and the screen shows which one and why:
+  - `TRK` (company truck) when the ship-to is in the truck area: the
+    warehouse's state (OH) and IN, KY, MI, PA, WV.
+  - `FDX` (FedEx Freight) elsewhere for 150 lb or more, any carton over
+    70 lb, or an order of $5,000 or more.
+  - `UPS` ground for everything else.
+
+  The rules are `routeFor` in `worker/src/shipping.ts`.
+- **Ship:** press PF10 (`SHIPPED`, with a tracking number). A customer that
+  ordered by EDI is sent an **856 ship notice** with the cartons, carrier,
+  tracking number and lines.
 - **Bill:** PF11 on the shipment, or PF10 on the invoice. Billing an
   invoice that has not shipped is refused.
 

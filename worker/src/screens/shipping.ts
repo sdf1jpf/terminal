@@ -7,8 +7,8 @@ import { fail, isCode, pf, type Next, type Program, type ShipmentState, type Shi
 
 // CUSS01 SHIPPING lists shipments, newest first, and prints pick tickets
 // (the CUSPICK job). CUSS02 SHIPMENT is the warehouse's view of one: its
-// pick ticket in bin order, then packing (cartons and weight) and shipping
-// (carrier), and billing the invoice once it has gone.
+// pick ticket in bin order, then packing (cartons and weight, which routes
+// it to a carrier) and shipping, and billing the invoice once it has gone.
 
 const statusColor = (status: string): Color => (status === "P" ? "white" : status === "K" ? "yellow" : "green");
 
@@ -129,7 +129,7 @@ export const shipments: Program<ShipmentsState> = {
 
 const lineRows = (ctx: Ctx) => ctx.rows - 15;
 
-const messageIDs: Record<string, string> = { cartons: "CUS0810E", weight: "CUS0811E", carrier: "CUS0812E", status: "CUS0813E" };
+const messageIDs: Record<string, string> = { cartons: "CUS0810E", weight: "CUS0811E", status: "CUS0813E" };
 const fieldMessage = (field: string, msg: string) => `${messageIDs[field] ?? "CUS0819E"} ${msg.toUpperCase()}`;
 
 type Loaded = { shipment: Shipment; invoice: Invoice; lines: InvoiceLine[] };
@@ -179,12 +179,11 @@ export const shipment: Program<ShipmentState> = {
 				legend = "PF1=HELP PF3=EXIT PF4=INVOICE PF7/8=SCROLL PF9=CANCEL SHIP PF10=PACK";
 			} else if (x.status === "K") {
 				value(scr, 8, 4, `PACKED ${x.cartons} CARTONS, ${x.weight} LB`);
-				label(scr, 9, 4, "SHIP:  CARRIER ===>");
-				scr.input(9, 24, 3, "carrier", s.vals?.carrier ?? "", { bright: s.errField === "carrier" });
-				scr.text(9, 30, Object.entries(carriers).map(([k, v]) => `${k}=${v}`).join("  "), { color: "blue" });
+				scr.text(9, 4, `SHIPS VIA ${carriers[x.carrier] ?? x.carrier}${x.route ? ` - ${x.route}` : ""}`.slice(0, scr.cols - 5),
+					{ color: "yellow", bright: true });
 				legend = "PF1=HELP PF3=EXIT PF4=INVOICE PF7/8=SCROLL PF9=CANCEL SHIP PF10=SHIP";
 			} else {
-				value(scr, 8, 4, `${x.cartons} CARTONS, ${x.weight} LB`);
+				value(scr, 8, 4, `${x.cartons} CARTONS, ${x.weight} LB${x.route ? ` - ROUTED: ${x.route}` : ""}`.slice(0, scr.cols - 5));
 				scr.text(9, 4, `SHIPPED VIA ${carriers[x.carrier] ?? x.carrier}  TRACKING ${x.tracking}`, { color: "green", bright: true });
 				legend = inv.status === "O"
 					? "PF1=HELP  PF3=EXIT  PF4=INVOICE  PF7/8=SCROLL  PF11=BILL INVOICE  PF12=CANCEL"
@@ -203,7 +202,6 @@ export const shipment: Program<ShipmentState> = {
 			});
 			if (s.errField) scr.cursorTo(s.errField);
 			else if (x.status === "P") scr.cursorTo("cartons");
-			else if (x.status === "K") scr.cursorTo("carrier");
 		}
 		message(scr, msg);
 		keys(scr, legend);
@@ -214,7 +212,7 @@ export const shipment: Program<ShipmentState> = {
 		const confirm = s.confirm;
 		s.msg = s.errField = s.confirm = undefined;
 		const f = input.fields;
-		s.vals = { cartons: (f.cartons ?? "").trim(), weight: (f.weight ?? "").trim(), carrier: (f.carrier ?? "").trim().toUpperCase() };
+		s.vals = { cartons: (f.cartons ?? "").trim(), weight: (f.weight ?? "").trim() };
 		const got = await load(ctx, s.id);
 		const status = typeof got === "string" ? "" : got.shipment.status;
 		switch (input.aid) {
@@ -252,13 +250,13 @@ export const shipment: Program<ShipmentState> = {
 					return act(s, async () => {
 						const x = await pack(ctx.db, s.id, n("cartons"), n("weight"));
 						s.vals = undefined;
-						s.msg = `CUS0807I ${s.id} PACKED: ${x.cartons} CARTONS, ${x.weight} LB - ENTER A CARRIER AND PRESS PF10 TO SHIP`;
+						s.msg = `CUS0807I ${s.id} PACKED: ${x.cartons} CARTONS, ${x.weight} LB - ROUTED ${x.carrier} - PF10 SHIPS IT`;
 						return s;
 					});
 				}
 				if (status === "K") {
 					return act(s, async () => {
-						const { shipment: x, edi } = await ship(ctx.db, ctx.user, s.id, s.vals!.carrier);
+						const { shipment: x, edi } = await ship(ctx.db, ctx.user, s.id);
 						s.vals = undefined;
 						s.msg = `CUS0808I ${s.id} SHIPPED VIA ${x.carrier} ${x.tracking}${edi ? ` - 856 ${edi.id} SENT` : ""} - PF11 BILLS IT`;
 						return s;

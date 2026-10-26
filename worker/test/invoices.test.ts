@@ -200,7 +200,7 @@ describe("invoices API", () => {
 		expect(shp.status).toBe(201);
 		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 2 })).body.error.message).toMatch(/released to the warehouse/);
 		expect((await call("POST", `/v1/shipments/${shp.body.id}/pack`, { cartons: 2, weight: 80 })).body.status).toBe("K");
-		expect((await call("POST", `/v1/shipments/${shp.body.id}/ship`, { carrier: "ups" })).body.shipment.status).toBe("S");
+		expect((await call("POST", `/v1/shipments/${shp.body.id}/ship`)).body.shipment.status).toBe("S");
 		expect((await call("POST", `/v1/invoices/${id}/bill`)).body.invoice.status).toBe("B");
 		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 1 })).status).toBe(422);
 		expect((await call("POST", `/v1/invoices/${id}/pay`)).body.transaction.type).toBe("P");
