@@ -18,6 +18,7 @@
 // number of rows the statement before it changed.
 
 import { HttpError } from "./http";
+import { taxRate } from "./systables";
 import type { Transaction } from "./activity";
 import { priceLine, salespersonOf, territoryOf } from "./sales";
 
@@ -29,6 +30,9 @@ export interface Invoice {
 	total: number;
 	created: string;
 	created_by: string;
+	subtotal: number; // the lines
+	tax: number; // sales tax, set when it is billed
+	tax_note: string; // how it was taxed: OH 5.75%, EXEMPT 12-3456, NO TAX IN OR
 	territory: string; // who sold it, as when it was opened (sales.ts)
 	salesperson: string;
 	billed: string;
@@ -188,7 +192,8 @@ function checkQty(qty: number): void {
 const isOpen = `EXISTS (SELECT 1 FROM invoices WHERE id = ?1 AND status = 'O')
                 AND NOT EXISTS (SELECT 1 FROM shipments WHERE invoice_id = ?1)`;
 const retotal = (db: D1Database, id: string) => db.prepare(
-	`UPDATE invoices SET total = (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_lines WHERE invoice_id = ?1)
+	`UPDATE invoices SET subtotal = (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_lines WHERE invoice_id = ?1),
+	                     total = (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_lines WHERE invoice_id = ?1)
 	 WHERE id = ?1 AND status = 'O'`,
 ).bind(id);
 
@@ -301,25 +306,49 @@ export async function cancelInvoice(db: D1Database, id: string): Promise<void> {
 	await mustBeOpen(db, id);
 }
 
-// billInvoice posts an open invoice's total to its customer's account. The
-// invoice must have shipped, and its customer must be active.
-export async function billInvoice(db: D1Database, user: string, id: string): Promise<{ invoice: Invoice; transaction: Transaction }> {
+// salesTax is how an invoice shipping to a state is taxed for a customer:
+// at the TAXCODE system table's rate for the state, unless the customer
+// holds an exemption certificate.
+export async function salesTax(tables: KVNamespace, state: string, exempt: string): Promise<{ rate: number; note: string }> {
+	if (exempt) return { rate: 0, note: `EXEMPT ${exempt}`.slice(0, 24) };
+	const { rate } = await taxRate(tables, state);
+	return rate > 0 ? { rate, note: `${state} ${rate}%` } : { rate: 0, note: `NO TAX IN ${state}` };
+}
+
+// taxOn is the tax on an amount at a rate, rounded to the dollar.
+export const taxOn = (amount: number, rate: number) => Math.round((amount * rate) / 100);
+
+// billInvoice taxes an open invoice (salesTax) and posts its total to its
+// customer's account. The invoice must have shipped, and its customer must
+// be active.
+export async function billInvoice(
+	db: D1Database, tables: KVNamespace, user: string, id: string,
+): Promise<{ invoice: Invoice; transaction: Transaction }> {
 	const ready = `EXISTS (SELECT 1 FROM invoices i JOIN customers c ON c.id = i.customer_id
 	                       WHERE i.id = ?1 AND i.status = 'O' AND c.status = 'A')
 	               AND EXISTS (SELECT 1 FROM shipments WHERE invoice_id = ?1 AND status = 'S')`;
+	// The ship-to and the lines are frozen once the invoice has shipped.
+	const cur = await db.prepare(
+		"SELECT i.ship_state, i.subtotal, c.tax_exempt FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id WHERE i.id = ?",
+	).bind(id).first<{ ship_state: string; subtotal: number; tax_exempt: string | null }>();
+	const tax = await salesTax(tables, cur?.ship_state ?? "", cur?.tax_exempt ?? "");
+	const amount = taxOn(cur?.subtotal ?? 0, tax.rate);
 	const ts = now();
-	const [, posted, billed] = await db.batch<any>([
+	const [, , posted, billed] = await db.batch<any>([
+		db.prepare(
+			`UPDATE invoices SET tax = ?2, tax_note = ?3, total = subtotal + ?2 WHERE id = ?1 AND subtotal = ?4 AND ${ready}`,
+		).bind(id, amount, tax.note, cur?.subtotal ?? 0),
 		db.prepare(
 			`UPDATE customers SET balance = balance + (SELECT total FROM invoices WHERE id = ?1)
-			 WHERE id = (SELECT customer_id FROM invoices WHERE id = ?1) AND ${ready}`,
+			 WHERE id = (SELECT customer_id FROM invoices WHERE id = ?1) AND changes() = 1 AND ${ready}`,
 		).bind(id),
 		db.prepare(
 			`INSERT INTO transactions (customer_id, type, amount, reference, balance, posted, posted_by)
 			 SELECT i.customer_id, 'I', i.total, i.id, c.balance, ?2, ?3
-			 FROM invoices i JOIN customers c ON c.id = i.customer_id WHERE i.id = ?1 AND ${ready}
+			 FROM invoices i JOIN customers c ON c.id = i.customer_id WHERE i.id = ?1 AND changes() = 1 AND ${ready}
 			 RETURNING *`,
 		).bind(id, ts, user),
-		db.prepare(`UPDATE invoices SET status = 'B', billed = ?2 WHERE id = ?1 AND ${ready} RETURNING *`).bind(id, ts),
+		db.prepare(`UPDATE invoices SET status = 'B', billed = ?2 WHERE id = ?1 AND changes() = 1 AND ${ready} RETURNING *`).bind(id, ts),
 	]);
 	if (billed.results[0]) return { invoice: billed.results[0], transaction: posted.results[0] };
 

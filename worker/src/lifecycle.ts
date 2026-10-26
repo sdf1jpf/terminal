@@ -292,7 +292,7 @@ export async function billOnShipment(env: Env, id: string): Promise<boolean> {
 	if (!inv) return false;
 	if (inv.status !== "O") return true; // billed by hand meanwhile
 	try {
-		const { invoice, edi } = await bill(env.DB, LIFECYCLE, id);
+		const { invoice, edi } = await bill(env.DB, env.TABLES, LIFECYCLE, id);
 		await syslog(env.DB, LIFECYCLE,
 			`CUS1601I ${id} BILLED ON SHIPMENT, $${invoice.total.toLocaleString("en-US")} TO ${invoice.customer_id}${edi ? ` - 810 ${edi.id} SENT` : ""}`);
 		return true;

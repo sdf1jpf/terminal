@@ -279,7 +279,7 @@ export const shipment: Program<ShipmentState> = {
 			case pf(11):
 				if (status !== "S" || typeof got === "string" || got.invoice.status !== "O") break;
 				return act(s, async () => {
-					const { invoice: inv, edi } = await bill(ctx.db, ctx.user, got.invoice.id);
+					const { invoice: inv, edi } = await bill(ctx.db, ctx.tables, ctx.user, got.invoice.id);
 					s.msg = `CUS0507I INVOICE ${inv.id} BILLED, ${money(inv.total)} POSTED TO ${inv.customer_id}${edi ? ` - 810 ${edi.id} SENT` : ""}`;
 					return s;
 				});

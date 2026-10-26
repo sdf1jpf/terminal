@@ -52,9 +52,9 @@ describe("invoices", () => {
 		expect(invoice).toMatchObject({ total: 450, po_number: "PO-4472" });
 		expect(lines.map((l) => l.line)).toEqual([1]);
 
-		expect((await refused(() => billInvoice(db, "IBMUSER", inv.id))).message).toMatch(/has not shipped - release it to the warehouse first/);
+		expect((await refused(() => billInvoice(db, env.TABLES, "IBMUSER", inv.id))).message).toMatch(/has not shipped - release it to the warehouse first/);
 		await shipInvoice(db, inv.id);
-		const billed = await billInvoice(db, "IBMUSER", inv.id);
+		const billed = await billInvoice(db, env.TABLES, "IBMUSER", inv.id);
 		expect(billed.invoice.status).toBe("B");
 		expect(billed.transaction).toMatchObject({ type: "I", amount: 450, reference: inv.id, balance: before + 450 });
 		expect(await balance("000104")).toBe(before + 450);
@@ -63,7 +63,7 @@ describe("invoices", () => {
 		expect((await refused(() => addLine(db, inv.id, "BRG-6204", 1))).message).toMatch(/is billed/);
 		expect((await refused(() => changeLine(db, inv.id, 1, 1))).message).toMatch(/is billed/);
 		expect((await refused(() => cancelInvoice(db, inv.id))).message).toMatch(/is billed/);
-		expect((await refused(() => billInvoice(db, "IBMUSER", inv.id))).message).toMatch(/already billed/);
+		expect((await refused(() => billInvoice(db, env.TABLES, "IBMUSER", inv.id))).message).toMatch(/already billed/);
 
 		const paid = await payInvoice(db, "IBMUSER", inv.id);
 		expect(paid.transaction).toMatchObject({ type: "P", amount: 450, balance: before });
@@ -87,7 +87,7 @@ describe("invoices", () => {
 		expect(e).toMatchObject({ field: "sku", message: "product NOPE is not on file" });
 		e = await refused(() => addLine(db, inv.id, "BRG-6204", 0));
 		expect(e.field).toBe("qty");
-		e = await refused(() => billInvoice(db, "IBMUSER", inv.id));
+		e = await refused(() => billInvoice(db, env.TABLES, "IBMUSER", inv.id));
 		expect(e.message).toBe("add at least one line before billing");
 		e = await refused(() => payInvoice(db, "IBMUSER", inv.id));
 		expect(e.message).toMatch(/must be billed/);
@@ -158,7 +158,7 @@ describe("invoice addresses", () => {
 		await setAddress(db, inv.id, "bill", { ...dock, name: "DELTA MARINE AP DEPT" });
 		await db.prepare("DELETE FROM shipments WHERE id = ?").bind(shp.id).run();
 		await shipInvoice(db, inv.id);
-		await billInvoice(db, "IBMUSER", inv.id);
+		await billInvoice(db, env.TABLES, "IBMUSER", inv.id);
 		expect((await refused(() => setAddress(db, inv.id, "bill", dock))).message).toMatch(/is billed - its addresses can no longer be changed/);
 		expect((await getInvoice(db, inv.id)).invoice.bill_name).toBe("DELTA MARINE AP DEPT");
 	});

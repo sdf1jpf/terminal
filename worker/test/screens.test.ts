@@ -222,7 +222,7 @@ describe("reports and dashboard", () => {
 		const inv = await createInvoice(env.DB, "IBMUSER", cust, "");
 		await addLine(env.DB, inv.id, sku, qty);
 		await shipInvoice(env.DB, inv.id);
-		return billInvoice(env.DB, "IBMUSER", inv.id);
+		return billInvoice(env.DB, env.TABLES, "IBMUSER", inv.id);
 	}
 	const screenText = (t: Terminal) => Array.from({ length: t.scr.rows }, (_, i) => t.row(i + 1)).join("\n");
 
@@ -326,7 +326,7 @@ describe("activity and history screens", () => {
 		const inv = await createInvoice(env.DB, "IBMUSER", "000104", "AUDIT-1");
 		await addLine(env.DB, inv.id, "BRG-6310", 4);
 		const { shipment } = await shipInvoice(env.DB, inv.id);
-		await billInvoice(env.DB, "IBMUSER", inv.id);
+		await billInvoice(env.DB, env.TABLES, "IBMUSER", inv.id);
 		await payInvoice(env.DB, "IBMUSER", inv.id);
 		await t.send("ENTER");
 		expect(t.row(11)).toMatch(new RegExp(`^ +1 .* PAYMENT  ${inv.id} +-\\$124 IBMUSER`));
@@ -723,7 +723,7 @@ describe("invoice screens", () => {
 		const inv = await createInvoice(env.DB, "IBMUSER", "000119", "");
 		await addLine(env.DB, inv.id, "PLT-4848", 10);
 		await shipInvoice(env.DB, inv.id);
-		await billInvoice(env.DB, "IBMUSER", inv.id);
+		await billInvoice(env.DB, env.TABLES, "IBMUSER", inv.id);
 		const t = await Terminal.logon();
 		await t.fill("option", "2.1 119").send("ENTER");
 		expect(t.row(5)).toMatch(/BALANCE \$740 .* UNPAID \$140/);
@@ -1293,8 +1293,8 @@ describe("ledger screens", () => {
 		expect(t.message).toMatch(/^\$HASP100 CUSTRIAL ON INTRDR - JOB\d{5} SUBMITTED/);
 		await journal(env.DB, "TEST");
 		await t.send("ENTER");
-		expect(t.row(20)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
-		expect(t.row(21)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
+		expect(t.row(21)).toBe("   DEBITS EQUAL CREDITS - THE LEDGER IS IN BALANCE".padEnd(80));
+		expect(t.row(22)).toMatch(/AR CONTROL \$[\d,]+ +CUSTOMER ACCOUNTS \$[\d,]+ +AGREE/);
 
 		await t.send("PF5");
 		expect(t.message).toBe("CUS0903W PRESS PF5 AGAIN TO RUN THE MONTH-END CLOSE AND CLOSE THE PERIOD");
