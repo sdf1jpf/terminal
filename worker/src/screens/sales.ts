@@ -2,13 +2,14 @@ import { getCustomer } from "../data";
 import type { Customer } from "../customer";
 import { spoolReport } from "../spool";
 import {
-	assign, assignment, customerCounts, deletePricing, deleteTerritory, listPricing, listSalespeople, listTerritories, pct,
-	salesBy, saveSalesperson, saveTerritory, setPricing, terms, type Assignment, type Pricing, type SalesRow,
+	assign, assignment, customerCounts, deleteBreak, deletePricing, deletePromotion, deleteTerritory, listBreaks, listPricing,
+	listPromotions, listSalespeople, listTerritories, pct, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setPricing,
+	terms, today, type Assignment, type Pricing, type Promotion, type QtyBreak, type SalesRow,
 } from "../sales";
 import { padID } from "./detail";
 import { dots, header, invalidKey, keys, label, lpad, message, MIN_COLS, money, newScreen, pad, right, stamp, textLines, value, type Ctx } from "./screen";
 import {
-	fail, isCode, pf, type Next, type PricingState, type Program, type SalesRptState, type SalespeopleState, type State, type TerritoriesState,
+	fail, isCode, pf, type BreaksState, type Next, type PricingState, type PromosState, type Program, type SalesRptState, type SalespeopleState, type State, type TerritoriesState,
 } from "./program";
 
 // The SALES menu's panels (sales.ts has the rules):
@@ -22,6 +23,9 @@ import {
 // which U fills from a row.
 // CUSG03 SALES BY TERRITORY or BY SALESPERSON totals a month's billed
 // invoices, with discounts given and commission earned.
+// CUSC02 QUANTITY BREAKS and CUSC03 PROMOTIONS keep the discounts open to
+// every customer: an extra percentage off a large line, and dated
+// promotions (current ones in green, coming ones yellow, past ones blue).
 
 const bad = (id: string, e: unknown) => (isCode(e, "invalid") || isCode(e, "not_found") ? `${id} ${(e as Error).message.toUpperCase()}` : fail(e));
 const errField = (e: unknown) => (e as { field?: string }).field;
@@ -494,6 +498,223 @@ export const salesrpt: Program<SalesRptState> = {
 			}
 		}
 		s.msg = invalidKey(input.aid);
+		return s;
+	},
+};
+
+// ---- CUSC02 QUANTITY BREAKS ----
+
+const breakRows = (ctx: Ctx) => ctx.rows - 12;
+
+export const breaks: Program<BreaksState> = {
+	async render(ctx, s) {
+		const scr = newScreen(ctx, "CUSC02");
+		header(scr, ctx, "QUANTITY BREAKS");
+		let msg = s.msg ?? "";
+		let list: QtyBreak[] = [];
+		try {
+			list = await listBreaks(ctx.db);
+		} catch (e) {
+			msg = fail(e);
+		}
+		label(scr, 4, 2, "ITEM ===>");
+		scr.input(4, 12, 10, "item", s.vals?.item ?? "", { bright: s.errField === "item" });
+		label(scr, 4, 24, "QTY OR MORE ===>");
+		scr.input(4, 41, 5, "qty", s.vals?.qty ?? "", { numeric: true, bright: s.errField === "qty" });
+		label(scr, 4, 48, "EXTRA DISC % ===>");
+		scr.input(4, 66, 5, "disc", s.vals?.disc ?? "", { bright: s.errField === "disc" });
+		scr.text(5, 2, "A LINE OF THAT MANY OR MORE GETS THE EXTRA DISCOUNT AFTER THE CUSTOMER'S PRICE", { color: "blue" });
+		scr.text(6, 2, "SELECT: U=CHANGE  D=DELETE    ITEM IS A SKU, A PRODUCT LINE OR *", { color: "blue" });
+		scr.text(8, 2, "S ITEM       QTY OR MORE  EXTRA DISC  UPDATED     BY", { color: "white", bright: true });
+		scr.text(9, 2, "-".repeat(scr.cols - 3), { color: "blue" });
+		const rows = breakRows(ctx);
+		const top = Math.min(s.top ?? 0, Math.max(list.length - rows, 0));
+		list.slice(top, top + rows).forEach((b, i) => {
+			const key = `${b.item}/${b.min_qty}`;
+			scr.input(10 + i, 2, 1, `sel:${key}`, "", { bright: s.errSel === key });
+			value(scr, 10 + i, 4, `${pad(b.item, 10)} ${lpad(b.min_qty, 11)}  ${lpad(pct(b.disc_pct10), 10)}  ${stamp(ctx, b.updated).slice(0, 10)}  ${b.updated_by}`);
+		});
+		if (list.length === 0) scr.text(10, 4, "NO QUANTITY BREAKS", { color: "yellow" });
+
+		message(scr, msg);
+		keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		scr.cursorTo(s.errField ?? (s.errSel ? `sel:${s.errSel}` : "item"));
+		return scr;
+	},
+
+	async handle(ctx, s, input) {
+		s.msg = s.errField = s.errSel = undefined;
+		switch (input.aid) {
+			case pf(3):
+			case pf(12):
+				return s.back;
+			case pf(5):
+				s.vals = undefined;
+				return s;
+			case pf(7):
+			case pf(8):
+				s.top = scroll(ctx, s, input.aid, breakRows(ctx), (await listBreaks(ctx.db)).length);
+				return s;
+			case "ENTER":
+				break;
+			default:
+				s.msg = invalidKey(input.aid);
+				return s;
+		}
+		const f = input.fields;
+		s.vals = { item: (f.item ?? "").trim().toUpperCase(), qty: (f.qty ?? "").trim(), disc: (f.disc ?? "").trim() };
+		for (const [name, v] of Object.entries(f)) {
+			const code = v.trim().toUpperCase();
+			if (!name.startsWith("sel:") || code === "") continue;
+			const key = name.slice(4);
+			const [item, qty] = key.split("/");
+			const b = (await listBreaks(ctx.db)).find((x) => x.item === item && x.min_qty === Number(qty));
+			if (!b) {
+				s.msg = "CUS0641E THAT BREAK IS NO LONGER ON FILE";
+				return s;
+			}
+			if (code === "U") {
+				s.vals = { item: b.item, qty: String(b.min_qty), disc: pct(b.disc_pct10).replace("%", "") };
+				s.msg = "CUS0642I CHANGE THE DISCOUNT ABOVE AND PRESS ENTER";
+				return s;
+			}
+			if (code === "D") {
+				await deleteBreak(ctx.db, b.item, b.min_qty);
+				s.msg = `CUS0643I BREAK FOR ${b.item} AT ${b.min_qty} DELETED`;
+				return s;
+			}
+			s.errSel = key;
+			s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
+			return s;
+		}
+		if (!s.vals.item && !s.vals.qty && !s.vals.disc) return s;
+		try {
+			const b = await setBreak(ctx.db, ctx.user, s.vals as { item: string; qty: string; disc: string });
+			s.msg = `CUS0640I ${b.item} AT ${b.min_qty} OR MORE NOW ${pct(b.disc_pct10)} EXTRA OFF`;
+			s.vals = undefined;
+		} catch (e) {
+			s.errField = errField(e) ?? "item";
+			s.msg = bad("CUS0644E", e);
+		}
+		return s;
+	},
+};
+
+// ---- CUSC03 PROMOTIONS ----
+
+const promoRows = (ctx: Ctx) => ctx.rows - 13;
+
+export const promos: Program<PromosState> = {
+	async render(ctx, s) {
+		const scr = newScreen(ctx, "CUSC03");
+		header(scr, ctx, "PROMOTIONS");
+		let msg = s.msg ?? "";
+		let list: Promotion[] = [];
+		try {
+			list = await listPromotions(ctx.db);
+		} catch (e) {
+			msg = fail(e);
+		}
+		const v = s.vals ?? {};
+		label(scr, 4, 2, "ID ===>");
+		scr.input(4, 10, 5, "pid", v.pid ?? "", { bright: s.errField === "pid" });
+		label(scr, 4, 17, "DESCRIPTION ===>");
+		scr.input(4, 34, 30, "desc", v.desc ?? "", { bright: s.errField === "desc" });
+		label(scr, 5, 2, "ITEM =>");
+		scr.input(5, 10, 10, "item", v.item ?? "", { bright: s.errField === "item" });
+		label(scr, 5, 22, "DISC % =>");
+		scr.input(5, 32, 5, "disc", v.disc ?? "", { bright: s.errField === "disc" });
+		label(scr, 5, 39, "OR PRICE =>");
+		scr.input(5, 51, 9, "price", v.price ?? "", { bright: s.errField === "price" });
+		label(scr, 6, 2, "FROM =>");
+		scr.input(6, 10, 10, "starts", v.starts ?? "", { bright: s.errField === "starts" });
+		label(scr, 6, 22, "TO =====>");
+		scr.input(6, 32, 10, "ends", v.ends ?? "", { bright: s.errField === "ends" });
+		scr.text(6, 44, "YYYY-MM-DD; LEAVE ID BLANK TO ADD", { color: "blue" });
+		scr.text(7, 2, "SELECT: U=CHANGE  D=DELETE    THE LOWER OF THE PROMOTION AND THE CUSTOMER'S PRICE", { color: "blue" });
+		scr.text(9, 2, "S ID    DESCRIPTION            ITEM       TERMS          FROM       TO", { color: "white", bright: true });
+		scr.text(10, 2, "-".repeat(scr.cols - 3), { color: "blue" });
+		const day = today();
+		const rows = promoRows(ctx);
+		const top = Math.min(s.top ?? 0, Math.max(list.length - rows, 0));
+		list.slice(top, top + rows).forEach((p, i) => {
+			scr.input(11 + i, 2, 1, `sel:${p.id}`, "", { bright: s.errSel === p.id });
+			const color = s.confirm === p.id ? "red" : p.ends < day ? "blue" : p.starts > day ? "yellow" : "green";
+			scr.text(11 + i, 4, `${pad(p.id, 5)} ${pad(p.description, 22)} ${pad(p.item, 10)} ${pad(p.price ? `$${p.price.toLocaleString("en-US")}` : `${pct(p.disc_pct10)} OFF`, 14)} ${p.starts.slice(2)} ${p.ends.slice(2)}`, { color });
+		});
+		if (list.length === 0) scr.text(11, 4, "NO PROMOTIONS", { color: "yellow" });
+
+		message(scr, msg);
+		keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		scr.cursorTo(s.errField ?? (s.errSel ? `sel:${s.errSel}` : "desc"));
+		return scr;
+	},
+
+	async handle(ctx, s, input) {
+		const confirm = s.confirm;
+		s.msg = s.errField = s.errSel = s.confirm = undefined;
+		switch (input.aid) {
+			case pf(3):
+			case pf(12):
+				return s.back;
+			case pf(5):
+				s.vals = undefined;
+				return s;
+			case pf(7):
+			case pf(8):
+				s.top = scroll(ctx, s, input.aid, promoRows(ctx), (await listPromotions(ctx.db)).length);
+				return s;
+			case "ENTER":
+				break;
+			default:
+				s.msg = invalidKey(input.aid);
+				return s;
+		}
+		const f = input.fields;
+		const t = (k: string) => (f[k] ?? "").trim().toUpperCase();
+		s.vals = { pid: t("pid"), desc: t("desc"), item: t("item"), disc: t("disc"), price: t("price"), starts: t("starts"), ends: t("ends") };
+		for (const [name, v] of Object.entries(f)) {
+			const code = v.trim().toUpperCase();
+			if (!name.startsWith("sel:") || code === "") continue;
+			const id = name.slice(4);
+			const p = (await listPromotions(ctx.db)).find((x) => x.id === id);
+			if (!p) {
+				s.msg = `CUS0651E PROMOTION ${id} IS NO LONGER ON FILE`;
+				return s;
+			}
+			if (code === "U") {
+				s.vals = {
+					pid: p.id, desc: p.description, item: p.item, disc: p.price ? "" : pct(p.disc_pct10).replace("%", ""),
+					price: p.price ? String(p.price) : "", starts: p.starts, ends: p.ends,
+				};
+				s.msg = `CUS0652I CHANGE ${p.id} ABOVE AND PRESS ENTER`;
+				return s;
+			}
+			if (code === "D") {
+				if (confirm !== id) {
+					s.confirm = s.errSel = id;
+					s.msg = `CUS0653W ENTER D AGAIN TO DELETE PROMOTION ${id}`;
+					return s;
+				}
+				await deletePromotion(ctx.db, id);
+				s.msg = `CUS0654I PROMOTION ${id} DELETED`;
+				return s;
+			}
+			s.errSel = id;
+			s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
+			return s;
+		}
+		if (Object.values(s.vals).every((x) => x === "")) return s;
+		try {
+			const p = await savePromotion(ctx.db, ctx.user, s.vals.pid, {
+				description: s.vals.desc, item: s.vals.item, disc: s.vals.disc, price: s.vals.price, starts: s.vals.starts, ends: s.vals.ends,
+			});
+			s.msg = `CUS0650I PROMOTION ${p.id} SAVED, ${p.starts} TO ${p.ends}`;
+			s.vals = undefined;
+		} catch (e) {
+			s.errField = isCode(e, "not_found") ? "pid" : errField(e) ?? "desc";
+			s.msg = bad("CUS0655E", e);
+		}
 		return s;
 	},
 };
