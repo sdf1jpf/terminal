@@ -12,6 +12,7 @@ import type { Customer } from "./customer";
 import { termsText, type Invoice, type InvoiceLine } from "./invoices";
 import { Pdf, type RGB } from "./pdf";
 import { AGING_BUCKETS, agedAccounts } from "./reports";
+import type { PriceList } from "./sales";
 import { printPages, type Output } from "./spool";
 
 export const COMPANY = {
@@ -304,6 +305,34 @@ export function statementPdf(s: Statement): Uint8Array {
 	f.footer([
 		`PLEASE REMIT TO ${COMPANY.name}, ${COMPANY.address}, ${COMPANY.city}. QUOTE ACCOUNT ${c.id} WITH YOUR PAYMENT.`,
 		`QUESTIONS ABOUT YOUR ACCOUNT? CALL ACCOUNTS RECEIVABLE AT ${COMPANY.phone}.`,
+	]);
+	return f.bytes();
+}
+
+// ---- price lists ----
+
+const PRICE_HEAD = `${pad("SKU", 10)} ${pad("DESCRIPTION", 24)} ${pad("LIST", 9, true)} ${pad("YOUR PRICE", 12, true)}  BASIS`;
+
+// priceListPdf prints a customer's price list (sales.ts priceList): each
+// product at list and at its price, and the quantity prices under it.
+export function priceListPdf(pl: PriceList, cust: Customer): Uint8Array {
+	const f = new Form(`PRICE LIST ${cust.id} ${pl.day}`);
+	f.page("PRICE LIST");
+	f.addressBlock(0, 4, "PRICES FOR", customerLines(cust));
+	f.facts(5, [
+		["ACCOUNT", cust.id],
+		["PRICES AS OF", pl.day],
+		["PRODUCTS", String(pl.items.length)],
+		["BELOW LIST", String(pl.items.filter((i) => i.price < i.list).length)],
+	]);
+	const rows = pl.items.flatMap((i) => [
+		`${pad(i.sku, 10)} ${pad(i.description, 24)} ${pad(money(i.list), 9, true)} ${pad(money(i.price), 12, true)}  ${pad(i.until ? `${i.rule} TO ${i.until.slice(5)}` : i.rule, 15)}`,
+		...(i.breaks.length ? [`${pad("", 11)}BY QUANTITY: ${i.breaks.map((b) => `${b.qty}+ ${money(b.price)}`).join("  ")}`.slice(0, 75)] : []),
+	]);
+	f.table(PRICE_HEAD, rows, "PRICE LIST", 12);
+	f.footer([
+		"PRICES ARE EACH, IN U.S. DOLLARS, BEFORE SALES TAX AND FREIGHT, AND MAY CHANGE WITHOUT NOTICE.",
+		`QUESTIONS ABOUT YOUR PRICING? CALL YOUR SALES REPRESENTATIVE OR ${COMPANY.phone}.`,
 	]);
 	return f.bytes();
 }

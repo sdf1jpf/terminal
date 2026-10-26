@@ -12,6 +12,8 @@
 //	856 ship notice     out  sent when an invoice that came from an 850 ships
 //	810 invoice         out  sent when an invoice that came from an 850 is billed
 //	820 remittance      in   marks each invoice it names paid, if the amounts agree
+//	832 price catalog   out  the customer's price list (sales.ts priceList), sent
+//	                         by CUSPRICE each month and from the pricing panel
 //
 // Any customer can trade: its interchange ID (ISA06/ISA08) is its customer
 // number, and ours is CUSTAPI. The EDISIM batch job (jobs.ts) plays the
@@ -33,6 +35,7 @@ import type { Transaction } from "./activity";
 import type { StepResult } from "./jobs";
 import { vendorDocument } from "./purchasing";
 import { holdLines, type EdiException } from "./ediexceptions";
+import type { PriceList } from "./sales";
 
 export const OUR_ID = "CUSTAPI";
 
@@ -55,11 +58,12 @@ export const typeNames: Record<string, string> = {
 	"810": "INVOICE",
 	"820": "REMITTANCE ADVICE",
 	"855": "PO ACKNOWLEDGMENT",
+	"832": "PRICE/SALES CATALOG",
 	"856": "SHIP NOTICE",
 	"997": "FUNCTIONAL ACKNOWLEDGMENT",
 };
 
-const functionalIDs: Record<string, string> = { "850": "PO", "810": "IN", "820": "RA", "855": "PR", "856": "SH", "997": "FA" };
+const functionalIDs: Record<string, string> = { "850": "PO", "810": "IN", "820": "RA", "855": "PR", "832": "SC", "856": "SH", "997": "FA" };
 
 const MAX_RAW = 64 * 1024;
 
@@ -425,6 +429,41 @@ function it1(l: InvoiceLine): (string | number)[][] {
 		["IT1", l.line, l.quantity, "EA", l.list_price, "", "VP", l.sku],
 		["SAC", "A", "C310", "", "", off * 100, "", "", "", "", "", "", "", "", "", l.price_rule || "DISCOUNT"],
 	];
+}
+
+// ---- price catalogs ----
+
+// ediCustomers are the customers that trade with us by EDI: those that have
+// sent an 850 we accepted.
+export async function ediCustomers(db: D1Database): Promise<string[]> {
+	const { results } = await db.prepare(
+		`SELECT DISTINCT e.partner FROM edi e JOIN customers c ON c.id = e.partner
+		 WHERE e.direction = 'I' AND e.type = '850' AND e.status = 'ACCEPTED' AND c.status <> 'C' ORDER BY e.partner`,
+	).all<{ partner: string }>();
+	return results.map((r) => r.partner);
+}
+
+// sendCatalog sends a customer its price list as an 832. Each product is a
+// LIN with its list price (CTP CAT), its price for one (CTP CON, or PRP
+// with the promotion's last day in a DTM 036) and a CTP CON at each
+// quantity break, the quantity in CTP04.
+export async function sendCatalog(db: D1Database, pl: PriceList): Promise<Interchange> {
+	const day = pl.day.replaceAll("-", "");
+	const catalog = `PL${pl.customer.id}${day.slice(2)}`;
+	return send(db, pl.customer.id, "832", [
+		["BCT", "PC", catalog],
+		["DTM", "007", day],
+		["N1", "BY", pl.customer.name, "91", pl.customer.id],
+		...pl.items.flatMap((i) => [
+			["LIN", "", "VP", i.sku],
+			["PID", "F", "", "", "", i.description],
+			["CTP", "", "CAT", i.list, 1, "EA"],
+			["CTP", "", i.until ? "PRP" : "CON", i.price, 1, "EA"],
+			...(i.until ? [["DTM", "036", i.until.replaceAll("-", "")]] : []),
+			...i.breaks.map((b) => ["CTP", "", "CON", b.price, b.qty, "EA"]),
+		]),
+		["CTT", pl.items.length],
+	], catalog);
 }
 
 // ---- the trading partners' side, for the simulator ----

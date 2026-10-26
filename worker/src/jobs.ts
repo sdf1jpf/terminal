@@ -7,7 +7,7 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Customer } from "./customer";
-import { partnersOrder, partnersPay, processInterchange } from "./edi";
+import { ediCustomers, partnersOrder, partnersPay, processInterchange, sendCatalog } from "./edi";
 import { HttpError } from "./http";
 import type { Env } from "./index";
 import { reorder, vendorsConfirm, vendorsShip } from "./purchasing";
@@ -19,8 +19,8 @@ import { manifestStep, planStep } from "./fleet";
 import { closeStep, dunningLetters, journalStep, lastClosed, trialBalance, trialBalanceReport, trialBalanceStep } from "./ledger";
 import { archiveSpool, putArchive, RETENTION_DAYS } from "./archive";
 import { mailStep } from "./mail";
-import { buildStatements, listingPdf, statementLines, statementPdf } from "./documents";
-import { commissionMonth, commissionStatement, listSalespeople } from "./sales";
+import { buildStatements, COMPANY, listingPdf, priceListPdf, statementLines, statementPdf } from "./documents";
+import { commissionMonth, commissionStatement, listSalespeople, priceList, priceListLines } from "./sales";
 
 export interface Job {
 	id: string;
@@ -134,6 +134,14 @@ export const jobLibrary: Record<string, JobDef> = {
 		steps: [
 			{ name: "STEP010", run: commissionStatements },
 			{ name: "STEP020", run: mailStep("M") },
+		],
+	},
+	CUSPRICE: {
+		title: "PRICE LISTS, AND 832 CATALOGS TO EDI CUSTOMERS",
+		short: "PRICE LISTS",
+		steps: [
+			{ name: "STEP010", run: priceLists },
+			{ name: "STEP020", run: priceCatalogs },
 		],
 	},
 	CUSARCH: {
@@ -439,6 +447,47 @@ export async function commissionStatements(db: D1Database, job: Job, env: Env): 
 		}, st.lines, listingPdf({ id: sp.id, name: job.name, title }, st.lines));
 	}
 	lines.push(`${n} COMMISSION STATEMENTS FOR ${month}${final ? "" : " TO DATE"}, ${dollars(total)} IN COMMISSION, FILED IN THE ARCHIVE`);
+	return { rc: 0, lines };
+}
+
+// priceLists is CUSPRICE's first step: a price list for each customer with
+// pricing agreements or that trades by EDI, as of today, filed in the
+// archive under prices/<day>/<customer>.
+export async function priceLists(db: D1Database, job: Job, env: Env): Promise<StepResult> {
+	const day = new Date().toISOString().slice(0, 10);
+	const edi = await ediCustomers(db);
+	const { results } = await db.prepare(
+		`SELECT * FROM customers WHERE status <> 'C'
+		 AND (id IN (SELECT customer_id FROM customer_pricing) OR id IN (SELECT value FROM json_each(?))) ORDER BY id`,
+	).bind(JSON.stringify(edi)).all<Customer>();
+	const lines = ["", `PRICE LISTS AS OF ${day} FILED IN THE ARCHIVE:`, ""];
+	for (const c of results) {
+		const pl = await priceList(db, c.id, day);
+		const title = `PRICE LIST ${day} ${c.name}`.slice(0, 60);
+		await putArchive(db, env.ARCHIVE, {
+			key: `prices/${day}/${c.id}`, kind: "M", ref: c.id, name: job.name, title, owner: job.submitted_by,
+			created: new Date().toISOString(), archived_by: job.name,
+		}, priceListLines(pl, COMPANY.name), priceListPdf(pl, c));
+		const off = pl.items.filter((i) => i.price < i.list).length;
+		lines.push(`  ${c.id} ${pad(c.name, 30)} ${pad(pl.items.length, 4, true)} PRODUCTS ${pad(off, 4, true)} BELOW LIST${edi.includes(c.id) ? "  EDI" : ""}`);
+	}
+	if (results.length === 0) lines.push("  NO CUSTOMERS HAVE PRICING AGREEMENTS OR TRADE BY EDI");
+	lines.push("", `${results.length} PRICE LISTS FILED`);
+	return { rc: 0, lines };
+}
+
+// priceCatalogs is CUSPRICE's second step: each customer that trades by
+// EDI gets its price list as an 832.
+export async function priceCatalogs(db: D1Database): Promise<StepResult> {
+	const lines = ["", "PRICE/SALES CATALOGS SENT (832):", ""];
+	const edi = await ediCustomers(db);
+	for (const id of edi) {
+		const pl = await priceList(db, id);
+		const sent = await sendCatalog(db, pl);
+		lines.push(`  ${sent.id} ${id} ${pad(pl.customer.name, 30)} ${sent.reference}  ${pl.items.length} ITEMS`);
+	}
+	if (edi.length === 0) lines.push("  NO CUSTOMERS TRADE BY EDI");
+	lines.push("", `${edi.length} CATALOGS SENT`);
 	return { rc: 0, lines };
 }
 

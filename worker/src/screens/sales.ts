@@ -1,9 +1,11 @@
 import { getCustomer } from "../data";
 import type { Customer } from "../customer";
+import { COMPANY } from "../documents";
+import { ediCustomers, sendCatalog } from "../edi";
 import { spoolReport } from "../spool";
 import {
 	assign, assignment, customerCounts, deleteBreak, deletePricing, deletePromotion, deleteTerritory, listBreaks, listPricing,
-	listPromotions, listSalespeople, listTerritories, pct, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setEarlyPay, setPricing, setTaxExempt,
+	listPromotions, listSalespeople, listTerritories, pct, priceList, priceListLines, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setEarlyPay, setPricing, setTaxExempt,
 	terms, today, type Assignment, type Pricing, type Promotion, type QtyBreak, type SalesRow,
 } from "../sales";
 import { padID } from "./detail";
@@ -115,7 +117,7 @@ export const pricing: Program<PricingState> = {
 		}
 
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		keys(scr, "PF3=EXIT PF5=REFRESH PF7=UP PF8=DOWN PF9=PRICE LIST PF10=SEND 832 PF12=CANCEL");
 		const focus = s.errField ?? (s.errSel ? `sel:${s.errSel}` : cust ? "item" : "cust");
 		scr.cursorTo(focus);
 		return scr;
@@ -138,11 +140,41 @@ export const pricing: Program<PricingState> = {
 				s.top = scroll(ctx, s, input.aid, pricingRows(ctx), total);
 				return s;
 			}
+			case pf(9):
+			case pf(10):
+				return sendPrices(ctx, s, input.aid === pf(10));
 		}
 		s.msg = invalidKey(input.aid);
 		return s;
 	},
 };
+
+// sendPrices prints the customer's price list to the spool, or sends it as
+// an 832 when it trades by EDI.
+async function sendPrices(ctx: Ctx, s: PricingState, edi: boolean): Promise<Next> {
+	if (!s.cust) {
+		s.errField = "cust";
+		s.msg = "CUS0600E ENTER A CUSTOMER NUMBER";
+		return s;
+	}
+	try {
+		if (edi && !(await ediCustomers(ctx.db)).includes(s.cust)) {
+			s.msg = `CUS0607E CUSTOMER ${s.cust} DOES NOT TRADE BY EDI - PF9 PRINTS ITS PRICE LIST`;
+			return s;
+		}
+		const pl = await priceList(ctx.db, s.cust);
+		if (edi) {
+			const sent = await sendCatalog(ctx.db, pl);
+			s.msg = `CUS0608I 832 CATALOG ${sent.reference} SENT AS ${sent.id}, ${pl.items.length} ITEMS`;
+		} else {
+			const id = await spoolReport(ctx.db, ctx.user, "CUSC01", `PRICE LIST ${s.cust} ${pl.day}`, priceListLines(pl, COMPANY.name));
+			s.msg = `CUS0609I PRICE LIST PRINTED TO THE SPOOL AS ${id} - SEE OPTION 5.4`;
+		}
+	} catch (e) {
+		s.msg = isCode(e, "not_found") ? `CUS0601E CUSTOMER ${s.cust} NOT FOUND` : fail(e);
+	}
+	return s;
+}
 
 function scroll(ctx: Ctx, s: { top?: number; msg?: string }, aid: string, rows: number, total: number): number {
 	if (aid === pf(7)) {
