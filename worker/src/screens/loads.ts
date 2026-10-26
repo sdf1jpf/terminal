@@ -1,7 +1,7 @@
 import { submitJob } from "../jobs";
 import {
 	assignLoad, board, cancelLoad, dayOf, dispatchLoad, freightDay, getLoad, listLoads, listTrucks, loadStatusNames, MAX_DRIVE_MIN, MAX_DUTY_MIN,
-	planLoads, PRETRIP_MIN, returnLoad, serviceState, truckStatusNames, waitingShipments, type LoadSummary, type StopStatus,
+	deliverStop, planLoads, PRETRIP_MIN, returnLoad, stopNotDelivered, serviceState, truckStatusNames, waitingShipments, type LoadSummary, type StopStatus,
 } from "../fleet";
 import { deliveryShort } from "../tracking";
 import { header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, type Color, type Ctx } from "./screen";
@@ -209,10 +209,11 @@ function loadError(e: unknown, id: string): string {
 const stopRows = (ctx: Ctx) => ctx.rows - 14;
 
 function stopLine(seq: string, shp: string, name: string, city: string, st: string, lb: string, mi: string, eta: string, status: string): string {
-	return `${lpad(seq, 4)} ${pad(shp, 8)} ${pad(name, 16)} ${pad(city, 12)} ${pad(st, 2)} ${lpad(lb, 6)} ${lpad(mi, 5)} ${pad(eta, 5)} ${status}`;
+	return `${lpad(seq, 4)} ${pad(shp, 8)} ${pad(name, 15)} ${pad(city, 11)} ${pad(st, 2)} ${lpad(lb, 6)} ${lpad(mi, 5)} ${pad(eta, 5)} ${status}`;
 }
 
-const stopColor = (x: StopStatus): Color => (x.delivery === "D" ? "green" : x.delivery === "X" ? "red" : x.delivery === "O" ? "yellow" : "turquoise");
+const stopColor = (x: StopStatus): Color =>
+	x.pod_status === "D" ? "green" : x.pod_status === "X" ? "red" : x.delivery === "O" ? "yellow" : "turquoise";
 
 export const load: Program<LoadState> = {
 	async render(ctx, s) {
@@ -246,23 +247,28 @@ export const load: Program<LoadState> = {
 			else if (l.dispatched) when.push(`DUE BACK ${stamp(ctx, new Date(Date.parse(l.dispatched) + (l.duty_min - PRETRIP_MIN) * 60_000).toISOString()).slice(11)}`);
 			if (when.length > 0) scr.text(8, 2, when.join("  "), { color: "green" });
 			if (l.status === "D") {
-				label(scr, 9, 2, "TRUCK BACK, MILES ===>");
-				scr.input(9, 25, 5, "miles", s.vals?.miles ?? "", { numeric: true, bright: s.errField === "miles" });
-				scr.text(9, 32, `BLANK FOR THE PLANNED ${l.miles}, THEN PF10`, { color: "blue" });
+				label(scr, 9, 2, "SIGNED BY/WHY ===>");
+				scr.input(9, 21, 20, "signed", s.vals?.signed ?? "", { bright: s.errField === "signed" });
+				label(scr, 9, 43, "CTN ===>");
+				scr.input(9, 52, 3, "cartons", s.vals?.cartons ?? "", { numeric: true, bright: s.errField === "cartons" });
+				label(scr, 9, 57, "MILES BACK ===>");
+				scr.input(9, 73, 5, "miles", s.vals?.miles ?? "", { numeric: true, bright: s.errField === "miles" });
 			}
 
 			const rows = stopRows(ctx);
 			const top = Math.min(s.top ?? 0, Math.max(stops.length - rows, 0));
-			scr.text(10, 2, "SELECT: S=SHIPMENT  T=TRACK", { color: "blue" });
+			scr.text(10, 2, l.status === "D" ? "SELECT: S=SHIPMENT  T=TRACK  D=DELIVERED  X=NOT DELIVERED" : "SELECT: S=SHIPMENT  T=TRACK", { color: "blue" });
 			if (stops.length > rows) scr.text(10, right(scr, 66), `${top + 1}-${Math.min(top + rows, stops.length)}/${stops.length}`, { color: "white" });
 			scr.text(11, 2, "S " + stopLine("STOP", "SHIPMENT", "SHIP TO", "CITY", "ST", "LB", "MILES", "ETA", "STATUS"), { color: "white", bright: true });
 			scr.text(12, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 			const left = l.dispatched ? Date.parse(l.dispatched) : NaN;
 			stops.slice(top, top + rows).forEach((x, i) => {
 				scr.input(13 + i, 2, 1, "sel:" + x.shipment_id, "", { bright: s.errSel === x.shipment_id });
-				const eta = isNaN(left) ? "+" + hm(x.eta_min) : stamp(ctx, new Date(left + x.eta_min * 60_000).toISOString()).slice(11);
-				const status = x.ship_status !== "S" ? "PACKED" : deliveryShort[x.delivery];
-				scr.text(13 + i, 4, stopLine(String(x.seq), x.shipment_id, x.name, x.city, x.state, String(x.weight), String(x.leg_miles), eta, status), { color: stopColor(x) });
+				const eta = x.pod_at ? stamp(ctx, x.pod_at).slice(11)
+					: isNaN(left) ? "+" + hm(x.eta_min) : stamp(ctx, new Date(left + x.eta_min * 60_000).toISOString()).slice(11);
+				const status = x.pod_status === "D" ? `DLVD ${x.pod_signed}` : x.pod_status === "X" ? `NOT ${x.pod_note}`
+					: x.ship_status !== "S" ? "PACKED" : x.delivery === "X" ? "REDELIVER" : deliveryShort[x.delivery];
+				scr.text(13 + i, 4, stopLine(String(x.seq), x.shipment_id, x.name, x.city, x.state, String(x.weight), String(x.leg_miles), eta, status).slice(0, scr.cols - 4), { color: stopColor(x) });
 			});
 			if (stops.length === 0) scr.text(13, 4, "NO STOPS LEFT - PF9 CANCELS THE LOAD", { color: "yellow" });
 			legend = l.status === "P"
@@ -272,7 +278,7 @@ export const load: Program<LoadState> = {
 					: "PF1=HELP  PF3=EXIT  PF4=BOARD  PF7=UP  PF8=DOWN  PF12=CANCEL";
 			if (s.errField) scr.cursorTo(s.errField);
 			else if (s.errSel) scr.cursorTo("sel:" + s.errSel);
-			else if (l.status === "D") scr.cursorTo("miles");
+			else if (l.status === "D") scr.cursorTo(stops.some((x) => x.pod_status === "") ? "signed" : "miles");
 			else if (l.status === "P") scr.cursorTo("truck");
 		} catch (e) {
 			msg = isCode(e, "not_found") ? `CUS1929E LOAD ${s.id} NOT FOUND` : fail(e);
@@ -286,12 +292,15 @@ export const load: Program<LoadState> = {
 		const confirm = s.confirm;
 		s.msg = s.errField = s.errSel = s.confirm = undefined;
 		const f = input.fields;
-		s.vals = { truck: (f.truck ?? "").trim().toUpperCase(), driver: (f.driver ?? "").trim().toUpperCase(), miles: (f.miles ?? "").trim() };
+		s.vals = {
+			truck: (f.truck ?? "").trim().toUpperCase(), driver: (f.driver ?? "").trim().toUpperCase(), miles: (f.miles ?? "").trim(),
+			signed: (f.signed ?? "").trim().toUpperCase(), cartons: (f.cartons ?? "").trim(),
+		};
 		const act = async (fn: () => Promise<Next>): Promise<Next> => {
 			try {
 				return await fn();
 			} catch (e) {
-				if (isCode(e, "invalid") && e.field && ["truck", "driver", "miles"].includes(e.field)) s.errField = e.field;
+				if (isCode(e, "invalid") && e.field && ["truck", "driver", "miles", "signed", "cartons"].includes(e.field)) s.errField = e.field;
 				s.msg = loadError(e, s.id);
 				return s;
 			}
@@ -303,6 +312,21 @@ export const load: Program<LoadState> = {
 					const [id, code] = sel;
 					if (code === "S") return { p: "shipment", back: s, id };
 					if (code === "T") return { p: "tracking", back: s, id };
+					if (code === "D" || code === "X") {
+						s.errSel = id;
+						return act(async () => {
+							const ctn = s.vals!.cartons;
+							const x = code === "D"
+								? await deliverStop(ctx.db, ctx.user, s.id, id, s.vals!.signed, /^\d+$/.test(ctn) ? Number(ctn) : ctn ? NaN : 0)
+								: await stopNotDelivered(ctx.db, ctx.user, s.id, id, s.vals!.signed);
+							s.vals = undefined;
+							s.errSel = undefined;
+							s.msg = x.pod_status === "D"
+								? `CUS1942I STOP ${x.seq} DELIVERED, ${x.pod_cartons} CTN SIGNED FOR BY ${x.pod_signed}${x.pod_note ? " - " + x.pod_note : ""}`
+								: `CUS1943W STOP ${x.seq} NOT DELIVERED: ${x.pod_note} - ${x.shipment_id} COMES BACK FOR ANOTHER LOAD`;
+							return s;
+						});
+					}
 					s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
 					s.errSel = id;
 					return s;
@@ -348,9 +372,8 @@ export const load: Program<LoadState> = {
 						const mi = s.vals!.miles;
 						const back = await returnLoad(ctx.db, ctx.user, s.id, /^\d+$/.test(mi) ? Number(mi) : mi ? NaN : 0);
 						s.vals = undefined;
-						const open = back.stops - back.delivered;
-						s.msg = `CUS1933${open ? "W" : "I"} LOAD ${s.id} COMPLETE, ${back.actual_miles} MI ON TRUCK ${back.truck_id}` +
-							(open ? ` - ${open} STOP(S) NOT SIGNED FOR` : "");
+						s.msg = `CUS1933${back.missed ? "W" : "I"} LOAD ${s.id} COMPLETE, ${back.actual_miles} MI ON TRUCK ${back.truck_id}` +
+							(back.missed ? ` - ${back.missed} SHIPMENT(S) WAIT TO BE REDELIVERED` : "");
 						return s;
 					}
 					s.msg = invalidKey(input.aid);
@@ -376,7 +399,7 @@ export const dispatchBoard: Program<BoardState> = {
 		const day = dayShown(s);
 		label(scr, 4, 2, "DATE ===>");
 		scr.input(4, 12, 10, "day", s.errField === "day" ? s.day ?? "" : day, { bright: s.errField === "day" });
-		scr.text(4, 24, "SELECT: S=LOAD   PROGRESS: * DELIVERED  > NEXT  . TO GO", { color: "blue" });
+		scr.text(4, 24, "S=LOAD  * DELIVERED  X NOT DELIVERED  > NEXT  . TO GO", { color: "blue" });
 		scr.text(6, 2, "S " + boardLine("TRUCK", "DRIVER", "LOAD", "PROGRESS", "NEXT STOP", "ETA", "BACK"), { color: "white", bright: true });
 		scr.text(7, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		let row = 8;
@@ -387,8 +410,9 @@ export const dispatchBoard: Program<BoardState> = {
 				if (row > ctx.rows - 3) break;
 				const { load: l } = r;
 				scr.input(row, 2, 1, "sel:" + l.id, "", { bright: s.errSel === l.id });
-				const marks = r.stops.map((x) => (x.delivery === "D" ? "*" : x === r.next && l.status === "D" ? ">" : ".")).join("");
-				const progress = l.status === "P" ? "PLANNED" : l.status === "C" ? "COMPLETE" : `${marks.slice(0, 8)} ${r.stops.filter((x) => x.delivery === "D").length}/${r.stops.length}`;
+				const marks = r.stops.map((x) => (x.pod_status === "D" ? "*" : x.pod_status === "X" ? "X" : x === r.next && l.status === "D" ? ">" : ".")).join("");
+				const progress = l.status === "P" ? "PLANNED" : l.status === "C" ? (l.missed ? `COMPLETE ${l.missed}X` : "COMPLETE")
+					: `${marks.slice(0, 8)} ${l.delivered + l.missed}/${l.stops}`;
 				const next = r.next ? `${r.next.city}, ${r.next.state}` : l.status === "D" ? "RETURNING" : "";
 				const eta = r.nextEta ? stamp(ctx, r.nextEta).slice(11) : "";
 				const back = l.returned ? stamp(ctx, l.returned).slice(11) : r.backEta ? stamp(ctx, r.backEta).slice(11) : "";

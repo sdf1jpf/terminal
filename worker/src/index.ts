@@ -73,7 +73,9 @@
 //	PUT    /v1/loads/{id}           put a planned load on another truck or driver: {"truck_id", "driver_id"}
 //	DELETE /v1/loads/{id}           cancel a planned load; its shipments wait again
 //	POST   /v1/loads/{id}/dispatch  send it out: its shipments ship and are out for delivery
-//	POST   /v1/loads/{id}/return    the truck is back: {"miles"}, the planned miles if 0 or left out
+//	POST   /v1/loads/{id}/stops/{shipment}/delivered  proof of delivery: {"signed_by", "cartons" (0: all), "note"}
+//	POST   /v1/loads/{id}/stops/{shipment}/missed     not delivered: {"reason"}; it waits for another load
+//	POST   /v1/loads/{id}/return    the truck is back, every stop signed off: {"miles"}, the planned miles if 0 or left out
 //	GET    /v1/dispatch?day=X       the dispatch board: each load, its next stop and when it is due back
 //	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
 //	GET    /v1/ledger/periods       accounting periods, newest first
@@ -149,7 +151,7 @@ import { cancelShipment, getShipment, listShipments, pack, release, ship } from 
 import { confirmDelivery, findShipment, getTracking } from "./tracking";
 import {
 	assignLoad, board, cancelLoad, dayOf, dispatchLoad, dutyMinutes, freightDay, getDriver, getLoad, getTruck, listDrivers, listLoads, listTrucks,
-	parseDriver, parseTruck, planLoads, returnLoad, saveDriver, saveTruck, truckServiced, waitingShipments,
+	deliverStop, parseDriver, parseTruck, planLoads, returnLoad, saveDriver, saveTruck, stopNotDelivered, truckServiced, waitingShipments,
 } from "./fleet";
 import { config as screens, requestKeys, screen } from "./screens";
 import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
@@ -519,6 +521,14 @@ app.delete("/v1/loads/:id", signedOn, async (c) => {
 	return noContent();
 });
 app.post("/v1/loads/:id/dispatch", signedOn, async (c) => json(200, await dispatchLoad(c.env.DB, c.env.TABLES, c.get("user"), c.req.param("id"))));
+app.post("/v1/loads/:id/stops/:shipment/delivered", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["signed_by", "cartons", "note"]);
+	return json(200, await deliverStop(c.env.DB, c.get("user"), c.req.param("id"), c.req.param("shipment"), str(body, "signed_by"), int(body, "cartons"), str(body, "note")));
+});
+app.post("/v1/loads/:id/stops/:shipment/missed", signedOn, async (c) => {
+	const body = await readJSON(c.req.raw, ["reason"]);
+	return json(200, await stopNotDelivered(c.env.DB, c.get("user"), c.req.param("id"), c.req.param("shipment"), str(body, "reason")));
+});
 app.post("/v1/loads/:id/return", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["miles"]);
 	return json(200, await returnLoad(c.env.DB, c.get("user"), c.req.param("id"), int(body, "miles")));
@@ -710,6 +720,8 @@ for (const path of [
 	"/v1/loads/:id",
 	"/v1/loads/:id/dispatch",
 	"/v1/loads/:id/return",
+	"/v1/loads/:id/stops/:shipment/delivered",
+	"/v1/loads/:id/stops/:shipment/missed",
 	"/v1/dispatch",
 	"/v1/ledger",
 	"/v1/ledger/periods",

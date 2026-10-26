@@ -76,8 +76,9 @@ const concepts: Topic[] = [
 		text: "Freight to OH, IN, KY, MI, PA and WV goes on the company's own trucks (carrier TRK). Once packed, those shipments wait " +
 			"for a load: option 7.3 (PF6, or the CUSLOAD job) groups them by direction and weight into loads, each on the smallest " +
 			"truck it fits, with a driver licensed for that truck who has hours left this week (60 in 7 days, 11 driving and 14 on " +
-			"duty a day), its stops in the order that drives the fewest miles. Dispatching a load ships its shipments; PF10 when the " +
-			"truck is back adds its miles to the odometer. Option 7.4 is the dispatch board. Trucks due for service (every 15,000 " +
+			"duty a day), its stops in the order that drives the fewest miles. Dispatching a load ships its shipments. On the load, " +
+			"D beside a stop with who signed is its proof of delivery, X with why means it was not delivered and waits for another " +
+			"load; PF10 when the truck is back, with every stop signed off, adds its miles to the odometer. Option 7.4 is the dispatch board. Trucks due for service (every 15,000 " +
 			"miles or 90 days) or in the shop are not planned: option 7.1, V records a service.",
 		go: "=7.3",
 	},

@@ -686,13 +686,23 @@ runs that fleet (`worker/src/fleet.ts`, migration 0031).
   changed while it is planned, and the stops with their miles and when the
   plan has the truck there. PF10 dispatches it: its shipments ship (an 856
   goes to EDI customers) and are out for delivery on the truck, and shipping
-  one by hand is refused while it is on a planned load. When the truck is
-  back, type the miles (blank for the planned miles) and press PF10: the load
-  is complete and the truck's odometer goes up. PF9 cancels a planned load
-  and its shipments wait again.
+  one by hand is refused while it is on a planned load. PF9 cancels a
+  planned load and its shipments wait again.
+- **Proof of delivery**, on CUSF06 while the load is out: type who signed
+  (and the cartons they took, if not all) and put `D` beside the stop; or
+  type why it was not delivered (`RECEIVER CLOSED`, `REFUSED`) and put `X`.
+  Delivered is the shipment's delivery, with who signed and any shortage,
+  on its tracking (2.6) and its order's timeline (2.4). Not delivered is an
+  exception there, and the shipment rides back and waits for the next load
+  (`REDELIVER`), which takes it out again without shipping it twice. Signing
+  off a truck delivery from the tracking screen signs off its stop. Drivers
+  can also post it to the API. When the truck is back, with every stop
+  signed off, type the miles (blank for the planned miles) and press PF10:
+  the load is complete and the truck's odometer goes up.
 - **7.4 DISPATCH** (CUSF07) is the dispatch board: each truck's load, its
-  stops delivered (`*`), the next (`>`) and still to go (`.`), the next
-  stop's city and planned arrival (red when the truck is behind), and when
+  stops delivered (`*`), not delivered (`X`), the next (`>`) and still to go
+  (`.`), the next stop's city and when the truck should be there, from the
+  last stop signed off (red when the truck is behind), and when
   it is due back; then the trucks that are free, in the shop or due for
   service.
 
@@ -702,7 +712,9 @@ at 50 mph, with 30 minutes at each stop. Planning, dispatch, a truck's return
 and services are logged on SYSLOG as `CUS19xx`.
 
 The API: `/v1/trucks`, `/v1/drivers`, `/v1/loads` (`POST /v1/loads/plan`,
-`POST /v1/loads/{id}/dispatch`, `POST /v1/loads/{id}/return`) and
+`POST /v1/loads/{id}/dispatch`, `POST /v1/loads/{id}/stops/{shipment}/delivered`
+with `{"signed_by", "cartons", "note"}`, `.../missed` with `{"reason"}`,
+`POST /v1/loads/{id}/return`) and
 `GET /v1/dispatch`.
 
 ## Accounts receivable and the general ledger

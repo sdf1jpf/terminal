@@ -19,7 +19,7 @@ import { HttpError } from "./http";
 import { getInvoice, addressOf, type Address } from "./invoices";
 import type { Shipment } from "./shipping";
 import { syslog } from "./syslog";
-import { fleetTracking } from "./fleet";
+import { deliverStop, fleetTracking, loadFor } from "./fleet";
 import { carrierRates } from "./systables";
 
 export type Delivery = "" | "T" | "O" | "D" | "X";
@@ -256,6 +256,13 @@ export async function confirmDelivery(db: D1Database, user: string, id: string, 
 	if (shp.status !== "S") throw new HttpError(422, "invalid", `shipment ${shp.id} has not shipped`, "status");
 	if (shp.delivery === "D") throw new HttpError(422, "invalid", `shipment ${shp.id} is already delivered`, "status");
 	if (shp.carrier !== "TRK") throw new HttpError(422, "invalid", `${shp.carrier} reports its own deliveries - only truck deliveries are signed off by hand`, "status");
+	// On a load, it is signed off as the load's stop (fleet.ts).
+	const stop = await loadFor(db, shp.id);
+	if (stop && stop.pod_status === "" && stop.status === "D") {
+		await deliverStop(db, user, stop.id, shp.id, who);
+		return (await db.prepare("SELECT * FROM shipments WHERE id = ?").bind(shp.id).first<Shipment>())!;
+	}
+	if (stop && stop.pod_status === "") throw new HttpError(422, "invalid", `shipment ${shp.id} is on load ${stop.id}, not gone yet`, "status");
 	const at = new Date().toISOString();
 	const [, updated] = await db.batch<Shipment>([
 		db.prepare(
