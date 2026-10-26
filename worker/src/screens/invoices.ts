@@ -2,7 +2,7 @@ import { getCustomer } from "../data";
 import type { Customer } from "../customer";
 import {
 	addLine, addressOf, cancelInvoice, changeLine, cityLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice,
-	salesTax, setAddress, setPO, statusNames, taxOn, type Address, type AddressKind, type Invoice, type InvoiceLine,
+	salesTax, setAddress, setPO, statusNames, taxOn, termsText, type Address, type AddressKind, type Invoice, type InvoiceLine,
 } from "../invoices";
 import { bill } from "../edi";
 import { release, shipmentFor, shipStatusNames, type Shipment } from "../shipping";
@@ -121,7 +121,9 @@ export const invoices: Program<InvoicesState> = {
 					try {
 						const { invoice: inv, transaction: t } = await payInvoice(ctx.db, ctx.user, id);
 						s.errSel = undefined;
-						s.msg = `CUS0508I INVOICE ${id} PAID, ${money(inv.total)} PAYMENT POSTED - BALANCE NOW ${money(t.balance)}`;
+						s.msg = inv.discount_taken
+							? `CUS0508I ${id} PAID: ${money(inv.total - inv.discount_taken)} + ${money(inv.discount_taken)} EARLY DISCOUNT - BAL ${money(t.balance)}`
+							: `CUS0508I INVOICE ${id} PAID, ${money(inv.total)} PAYMENT POSTED - BALANCE NOW ${money(t.balance)}`;
 					} catch (e) {
 						s.msg = isCode(e, "invalid") ? fieldMessage("", e.message) : fail(e);
 					}
@@ -263,7 +265,8 @@ export const invoice: Program<InvoiceState> = {
 			}
 			// Sales tax is charged on billing; until then it is an estimate.
 			if (inv.tax_note) {
-				scr.text(9, 4, `SALES TAX ${inv.tax_note}  ${money(inv.tax)} ON ${money(inv.subtotal)}`, { color: "green" });
+				const terms = inv.discount_taken ? `  ${money(inv.discount_taken)} EARLY DISCOUNT TAKEN` : `  TERMS ${termsText(inv)}`;
+				scr.text(9, 4, `SALES TAX ${inv.tax_note}  ${money(inv.tax)} ON ${money(inv.subtotal)}${terms}`.slice(0, scr.cols - 5), { color: "green" });
 			} else if (inv.status === "O" && c) {
 				const tax = await salesTax(ctx.tables, inv.ship_state, c.tax_exempt ?? "");
 				const est = tax.rate > 0 ? `EST TAX ${tax.note} ${money(taxOn(inv.subtotal, tax.rate))}` : tax.note;
@@ -375,7 +378,9 @@ export const invoice: Program<InvoiceState> = {
 			case pf(11):
 				return act(s, async () => {
 					const { invoice: inv } = await payInvoice(ctx.db, ctx.user, s.id);
-					s.msg = `CUS0508I INVOICE ${s.id} PAID, ${money(inv.total)} PAYMENT POSTED TO ${inv.customer_id}`;
+					s.msg = inv.discount_taken
+						? `CUS0508I INVOICE ${s.id} PAID, ${money(inv.total - inv.discount_taken)} AND ${money(inv.discount_taken)} EARLY-PAY DISCOUNT`
+						: `CUS0508I INVOICE ${s.id} PAID, ${money(inv.total)} PAYMENT POSTED TO ${inv.customer_id}`;
 					return s;
 				});
 		}

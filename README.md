@@ -549,6 +549,16 @@ and the rules in `worker/src/sales.ts`.
   to 2200 SALES TAX PAYABLE instead of sales. Sales reports and commission
   leave tax out.
 
+- **Early-payment terms:** every invoice is due in 30 days. The EARLY PAY
+  field on 6.1 (`2/10`) offers a customer a discount on the lines for paying
+  within that many days of billing, so its invoices read `2% 10 NET 30`. The
+  terms are fixed on each invoice when it is billed. Marking it paid within
+  the window takes the discount: the payment still clears the whole
+  invoice, and the close debits the discount to 4100 SALES DISCOUNTS
+  instead of cash. An 820 for the total less the discount is accepted
+  within the window. The PDF shows the discounted amount and its date, and
+  the 810 carries an `ITD` segment.
+
 The API has the same under `/v1/customers/{id}/sales`,
 `/v1/customers/{id}/pricing/{item}`, `/v1/territories`, `/v1/salespeople`
 and `/v1/sales`.

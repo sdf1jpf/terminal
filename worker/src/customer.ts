@@ -21,11 +21,13 @@ export interface Customer {
 	territory?: string; // assigned territory, "" for its state's (sales.ts); not editable here
 	salesperson?: string; // assigned salesperson, "" for its territory's
 	tax_exempt?: string; // exemption certificate number, "" when taxable
+	early_pct10?: number; // early-payment discount, in tenths of a percent (sales.ts setEarlyPay)
+	early_days?: number;
 }
 
 export const customerFields = [
 	"id", "name", "address", "city", "state", "zip", "phone",
-	"credit_limit", "balance", "status", "version", "updated", "updated_by", "territory", "salesperson", "tax_exempt",
+	"credit_limit", "balance", "status", "version", "updated", "updated_by", "territory", "salesperson", "tax_exempt", "early_pct10", "early_days",
 ] as const;
 
 // Editable is what a client may set. Balance, version and audit fields are
@@ -49,6 +51,7 @@ export function parseEditable(body: Record<string, unknown>): { fields: Editable
 	// The remaining keys are accepted but must be well-typed.
 	// Territory and salesperson are assigned on the pricing screen (sales.ts).
 	str(body, "id"), str(body, "updated"), str(body, "updated_by"), int(body, "balance"), str(body, "territory"), str(body, "salesperson"), str(body, "tax_exempt");
+	int(body, "early_pct10"), int(body, "early_days");
 	const version = int(body, "version");
 
 	const bad = validate(fields);

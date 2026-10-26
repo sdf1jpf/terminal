@@ -33,6 +33,9 @@ export interface Invoice {
 	subtotal: number; // the lines
 	tax: number; // sales tax, set when it is billed
 	tax_note: string; // how it was taxed: OH 5.75%, EXEMPT 12-3456, NO TAX IN OR
+	early_pct10: number; // early-payment discount it was billed with, in tenths (termsText)
+	early_days: number;
+	discount_taken: number; // the early-payment discount taken when it was paid
 	territory: string; // who sold it, as when it was opened (sales.ts)
 	salesperson: string;
 	billed: string;
@@ -336,7 +339,10 @@ export async function billInvoice(
 	const ts = now();
 	const [, , posted, billed] = await db.batch<any>([
 		db.prepare(
-			`UPDATE invoices SET tax = ?2, tax_note = ?3, total = subtotal + ?2 WHERE id = ?1 AND subtotal = ?4 AND ${ready}`,
+			`UPDATE invoices SET tax = ?2, tax_note = ?3, total = subtotal + ?2,
+			     early_pct10 = (SELECT early_pct10 FROM customers WHERE id = invoices.customer_id),
+			     early_days = (SELECT early_days FROM customers WHERE id = invoices.customer_id)
+			 WHERE id = ?1 AND subtotal = ?4 AND ${ready}`,
 		).bind(id, amount, tax.note, cur?.subtotal ?? 0),
 		db.prepare(
 			`UPDATE customers SET balance = balance + (SELECT total FROM invoices WHERE id = ?1)
@@ -361,10 +367,35 @@ export async function billInvoice(
 	throw bad("sku", `customer ${invoice.customer_id} is not active - the invoice cannot be billed`);
 }
 
-// payInvoice marks a billed invoice paid, posting a payment for its total.
-export async function payInvoice(db: D1Database, user: string, id: string): Promise<{ invoice: Invoice; transaction: Transaction }> {
+const DAY = 86_400_000;
+
+// termsText describes payment terms: NET 30, or 2% 10 NET 30.
+export function termsText(t: Pick<Invoice, "early_pct10" | "early_days">): string {
+	if (!t.early_pct10) return "NET 30";
+	const p = t.early_pct10 % 10 === 0 ? t.early_pct10 / 10 : (t.early_pct10 / 10).toFixed(1);
+	return `${p}% ${t.early_days} NET 30`;
+}
+
+// earlyDiscount is what a billed invoice's customer may take off for
+// paying on day at (RFC 3339): its discount on the lines, if it is paid
+// within the discount days of billing, else 0.
+export function earlyDiscount(inv: Pick<Invoice, "billed" | "subtotal" | "early_pct10" | "early_days">, at = now()): number {
+	if (!inv.early_pct10 || !inv.billed) return 0;
+	const last = Date.parse(inv.billed.slice(0, 10)) + (inv.early_days + 1) * DAY; // through the end of the last day
+	return Date.parse(at) < last ? Math.round((inv.subtotal * inv.early_pct10) / 1000) : 0;
+}
+
+// payInvoice marks a billed invoice paid, posting a payment that clears
+// its total. Paid within its terms' discount days, the customer is taken
+// to have paid the total less the discount, which is recorded on the
+// invoice, unless takeDiscount is false (a payment of the full amount).
+export async function payInvoice(
+	db: D1Database, user: string, id: string, takeDiscount = true,
+): Promise<{ invoice: Invoice; transaction: Transaction }> {
 	const billed = "EXISTS (SELECT 1 FROM invoices WHERE id = ?1 AND status = 'B')";
 	const ts = now();
+	const cur = await db.prepare("SELECT * FROM invoices WHERE id = ?").bind(id).first<Invoice>();
+	const disc = cur && takeDiscount ? earlyDiscount(cur, ts) : 0;
 	const [, posted, paid] = await db.batch<any>([
 		db.prepare(
 			`UPDATE customers SET balance = balance - (SELECT total FROM invoices WHERE id = ?1)
@@ -376,7 +407,8 @@ export async function payInvoice(db: D1Database, user: string, id: string): Prom
 			 FROM invoices i JOIN customers c ON c.id = i.customer_id WHERE i.id = ?1 AND ${billed}
 			 RETURNING *`,
 		).bind(id, ts, user),
-		db.prepare(`UPDATE invoices SET status = 'P', paid = ?2 WHERE id = ?1 AND ${billed} RETURNING *`).bind(id, ts),
+		db.prepare(`UPDATE invoices SET status = 'P', paid = ?2, discount_taken = ?3 WHERE id = ?1 AND ${billed} RETURNING *`)
+			.bind(id, ts, disc),
 	]);
 	if (paid.results[0]) return { invoice: paid.results[0], transaction: posted.results[0] };
 	const { invoice } = await getInvoice(db, id);

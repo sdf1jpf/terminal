@@ -3,7 +3,7 @@ import type { Customer } from "../customer";
 import { spoolReport } from "../spool";
 import {
 	assign, assignment, customerCounts, deleteBreak, deletePricing, deletePromotion, deleteTerritory, listBreaks, listPricing,
-	listPromotions, listSalespeople, listTerritories, pct, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setPricing, setTaxExempt,
+	listPromotions, listSalespeople, listTerritories, pct, salesBy, saveSalesperson, savePromotion, saveTerritory, setBreak, setEarlyPay, setPricing, setTaxExempt,
 	terms, today, type Assignment, type Pricing, type Promotion, type QtyBreak, type SalesRow,
 } from "../sales";
 import { padID } from "./detail";
@@ -86,7 +86,11 @@ export const pricing: Program<PricingState> = {
 
 			label(scr, 7, 4, "TAX EXEMPT ===>");
 			scr.input(7, 20, 15, "exempt", s.vals?.exempt ?? cust.tax_exempt ?? "", { bright: s.errField === "exempt" });
-			scr.text(7, 37, cust.tax_exempt ? "CERTIFICATE ON FILE - NOT TAXED" : "TAXABLE - ENTER A CERTIFICATE TO EXEMPT", { color: "green" });
+			scr.text(7, 37, cust.tax_exempt ? "ON FILE - NOT TAXED" : "TAXABLE", { color: "green" });
+			label(scr, 7, 52, "EARLY PAY =>");
+			const early = cust.early_pct10 ? `${pct(cust.early_pct10).replace("%", "")}/${cust.early_days}` : "";
+			scr.input(7, 65, 5, "early", s.vals?.early ?? early, { bright: s.errField === "early" });
+			scr.text(7, 71, early ? "NET 30" : "% / DAYS", { color: "green" });
 			label(scr, 8, 4, "ADD:  ITEM ===>");
 			scr.input(8, 20, 10, "item", s.vals?.item ?? "", { bright: s.errField === "item" });
 			label(scr, 8, 32, "DISC % ===>");
@@ -166,7 +170,7 @@ async function applyPricing(ctx: Ctx, s: PricingState, f: Record<string, string>
 		return s;
 	}
 	const vals = { terr: (f.terr ?? "").trim().toUpperCase(), rep: (f.rep ?? "").trim().toUpperCase(),
-		exempt: (f.exempt ?? "").trim().toUpperCase(),
+		exempt: (f.exempt ?? "").trim().toUpperCase(), early: (f.early ?? "").trim(),
 		item: (f.item ?? "").trim().toUpperCase(), disc: (f.disc ?? "").trim(), price: (f.price ?? "").trim() };
 	s.vals = vals;
 	try {
@@ -188,6 +192,11 @@ async function applyPricing(ctx: Ctx, s: PricingState, f: Record<string, string>
 		if (vals.terr !== (c.territory ?? "") || vals.rep !== (c.salesperson ?? "")) {
 			const who = await assign(ctx.db, ctx.user, cust, { territory: vals.terr, salesperson: vals.rep });
 			done.push(`SOLD BY ${who.territory || "NO TERRITORY"}/${who.salesperson || "HOUSE"}`);
+		}
+		const early = c.early_pct10 ? `${pct(c.early_pct10).replace("%", "")}/${c.early_days}` : "";
+		if (vals.early.replace(/%/g, "") !== early) {
+			const t = await setEarlyPay(ctx.db, ctx.user, cust, vals.early);
+			done.push(t.pct10 ? `TERMS ${pct(t.pct10)} ${t.days} NET 30` : "TERMS NET 30");
 		}
 		if (vals.exempt !== (c.tax_exempt ?? "")) {
 			await setTaxExempt(ctx.db, ctx.user, cust, vals.exempt);
