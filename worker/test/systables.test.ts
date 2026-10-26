@@ -3,6 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { record, stats } from "../src/monitor";
 import { monitor } from "../src/screens/monitor";
+import { config } from "../src/screens";
 import type { Ctx } from "../src/screens/screen";
 import { carrierRates, chooseCarrier, freight, taxRate } from "../src/systables";
 import { accessJWT, fetchSpy } from "./access";
@@ -260,7 +261,7 @@ describe("transaction monitor", () => {
 		});
 
 		it("draws the monitor screen", async () => {
-			const ctx = { env: aeEnv, db: env.DB, tables: env.TABLES, jobs: env.JOBS, tso: tso(env), user: "IBMUSER", sid: "", rows: 24, cols: 80,
+			const ctx = { env: aeEnv, app: config.app, db: env.DB, tables: env.TABLES, jobs: env.JOBS, tso: tso(env), user: "IBMUSER", sid: "", rows: 24, cols: 80,
 				system: "TEST", terminal: "TERM0001", host: "api.test", tzOffset: 0, live: false } satisfies Ctx;
 			const s = { p: "monitor" as const, back: { p: "menu" as const } };
 			let scr = await monitor.render(ctx, s);

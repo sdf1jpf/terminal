@@ -44,7 +44,8 @@ tell application "Terminal"
 end tell
 APPLESCRIPT
 
-go build -o "$APP/Contents/Resources/terminal" ./cmd/terminal
+# The client is greenscreen's, at the version pinned in go.mod.
+go build -o "$APP/Contents/Resources/terminal" github.com/sdf1jpf/greenscreen/cmd/greenscreen
 
 echo "Built $APP"
 echo "Open it from Launchpad or Spotlight, or drag it to the Dock."

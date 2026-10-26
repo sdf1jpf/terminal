@@ -69,7 +69,7 @@ npm run db:migrate:local && npm run db:seed:local
 npm run dev                                # http://localhost:8787
 
 # 2. In another window, run the terminal
-go run ./cmd/terminal                      # defaults to http://localhost:8787
+go tool greenscreen                        # defaults to http://localhost:8787
 ```
 
 Press Enter on the logon screen. Locally there is no Cloudflare Access, so
@@ -104,9 +104,9 @@ Then point the terminal at it. It signs in with
 caches the token after that.
 
 ```sh
-go install ./cmd/terminal
-terminal -api https://customer-api.<you>.workers.dev
-# or: export TERMINAL_API_URL=https://customer-api.<you>.workers.dev
+go tool greenscreen -api https://customer-api.<you>.workers.dev
+# or: export GREENSCREEN_API_URL=https://customer-api.<you>.workers.dev
+# or build it: go build -o terminal github.com/sdf1jpf/greenscreen/cmd/greenscreen
 ```
 
 ### Who can log on
@@ -145,7 +145,7 @@ duration.
 
 `.github/workflows/ci.yml` runs on every push and pull request:
 
-- **Terminal client:** `gofmt`, `go vet`, `go test -race`, and a build of `cmd/terminal`.
+- **Terminal client:** verifies the pinned greenscreen client and builds it.
 - **API:** `npm ci`, the TypeScript typecheck, and the Worker tests in the Workers runtime.
 
 When both pass on a push to `main`, the **Deploy API** job applies any new D1
@@ -179,7 +179,7 @@ approval before each deploy, add required reviewers to that environment
 
 | Flag / env | Meaning |
 | --- | --- |
-| `-api URL` or `TERMINAL_API_URL` | API base URL (default `http://localhost:8787`) |
+| `-api URL` or `GREENSCREEN_API_URL` | API base URL (default `http://localhost:8787`) |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Use an Access service token instead of a browser sign-in |
 | `-system SYS1`, `-lu TERM0001` | Names shown on the screens |
 | `-latency 150ms` | Extra delay on each response, to make the `X ()` lock easier to see |
@@ -217,8 +217,10 @@ Keys are the same as the Go client's (see [Keyboard](#keyboard)), with
 Shift+Enter for New Line. Browsers keep some function keys for themselves
 (F11 and F12 usually), so the key bar under the screen has Enter, Clear,
 Reset, PA1, PA2, PF1 to PF12, RETRV (PF24) and SNAP (a picture of the screen)
-as buttons. The page lives in `worker/public/`
-and is plain HTML, CSS and JavaScript with no build step.
+as buttons. The page is greenscreen's browser terminal
+([`@greenscreen-dev/web`](https://github.com/sdf1jpf/greenscreen/tree/main/packages/web)),
+served from `worker/node_modules`: plain HTML, CSS and JavaScript with no
+build step.
 
 ## The API
 
@@ -892,17 +894,12 @@ Browser Rendering needs nothing set up beyond the `browser` binding in
 ## Development
 
 ```sh
-go test ./...                              # terminal client
 cd worker && npm test && npm run typecheck # API, in the Workers runtime
 ```
 
 ```
 .github/workflows/   CI: test both halves, deploy the Worker from main
-cmd/terminal/        the terminal client (Go)
-internal/tn3270/     terminal emulation: screen buffer, fields, keyboard, rendering
-internal/host/       the application screens; they call a Backend interface
-internal/api/        HTTP client for the API (implements host.Backend)
-internal/customer/   the customer record exchanged with the API
+go.mod               pins the terminal client, greenscreen's (go tool greenscreen)
 worker/              the API: Cloudflare Worker + D1 (TypeScript)
   src/               routes, auth, validation, batch jobs, scheduler, SYSLOG
   migrations/        D1 schema
@@ -910,6 +907,8 @@ worker/              the API: Cloudflare Worker + D1 (TypeScript)
   test/              API tests (vitest, Workers runtime)
 ```
 
-To point the terminal at a different API, implement `host.Backend` (`Logon`,
-`List`, `Get`, `Create`, `Update`, `Delete`, …) and pass it in `host.Config`.
-The screens don't change.
+The terminal client, the browser terminal and the screen engine come from
+[greenscreen](https://github.com/sdf1jpf/greenscreen): the Go client is pinned
+in `go.mod`, and `@greenscreen-dev/worker` and `@greenscreen-dev/web` are in
+`worker/package.json`. Everything specific to this system (the panels, the
+data, the console watcher in `worker/src/sessions.ts`) lives here.

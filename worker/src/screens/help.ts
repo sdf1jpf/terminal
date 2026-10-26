@@ -1,3 +1,4 @@
+import { tutorialKeys } from "@greenscreen-dev/worker";
 import { fieldValues, helpFor, type Value } from "./fieldhelp";
 import { newAsk } from "./ask";
 import { header, keys, message, newScreen, pad, type Ctx } from "./screen";
@@ -10,24 +11,6 @@ import { pf, withFill, type HelpState, type Next, type Program } from "./program
 // A field with a set of valid values lists them under its help, ISPF prompt
 // style: S (or /) beside one returns with it in the field. PF7 and PF8
 // scroll a long list.
-
-export const keyRows = [
-	["ENTER", "Send the screen to the host (AID key)"],
-	["F1 - F12", "PF1-PF12. Shift+F1-F12 are PF13-PF24 (PF24 RETRIEVE)"],
-	["PGUP / PGDN", "PF7 / PF8 (scroll up / down)"],
-	["CTRL+L", "CLEAR key: blank the screen and notify the host"],
-	["ALT+1/2/3", "PA1 / PA2 / PA3"],
-	["TAB / SHIFT+TAB", "Next / previous input field"],
-	["ARROWS, MOUSE", "Move the cursor anywhere on the screen"],
-	["HOME / END", "First input field / end of current field"],
-	["CTRL+N", "New line: first input field on the next row"],
-	["INSERT", "Toggle insert mode (^ shown in the status line)"],
-	["CTRL+E", "Erase to end of field (ERASE EOF)"],
-	["CTRL+U", "Erase all input fields (ERASE INPUT)"],
-	["ESC / CTRL+R", "RESET. ESC then 1-9 0 - = is PF1 - PF12 (no F keys)"],
-	["CTRL+P", "PRINT: save a copy of the screen to a text file"],
-	["CTRL+C", "Disconnect the terminal session"],
-];
 
 export const help: Program<HelpState> = {
 	async render(ctx, h) {
@@ -67,7 +50,7 @@ export const help: Program<HelpState> = {
 
 		scr.text(4, 4, "This is a block-mode terminal. You fill in fields locally, then an AID", { color: "green" });
 		scr.text(5, 4, "key sends the whole screen to the host, which replies with a new one.", { color: "green" });
-		keyRows.forEach(([k, d], i) => {
+		tutorialKeys.forEach(([k, d], i) => {
 			scr.text(7 + i, 4, k, { color: "white", bright: true });
 			scr.text(7 + i, 22, d, { color: "turquoise" });
 		});

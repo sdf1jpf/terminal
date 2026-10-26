@@ -1,9 +1,9 @@
-// The browser terminal's screen model and protocol (public/), which run in
+// The browser terminal's screen model and protocol (@greenscreen-dev/web), which run in
 // the page; they have no DOM dependencies, so they are tested here.
 import { describe, expect, it } from "vitest";
-import { decodeScreen, encodeRequest, encodeSnapshot } from "../public/protocol.js";
+import { decodeScreen, encodeRequest, encodeSnapshot } from "@greenscreen-dev/web/protocol.js";
 import { screenHtml, snapScreen } from "../src/snapshot";
-import { Lock, Screen } from "../public/screen.js";
+import { Lock, Screen } from "@greenscreen-dev/web/screen.js";
 
 const response = {
 	v: 1,

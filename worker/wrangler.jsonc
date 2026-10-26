@@ -7,7 +7,7 @@
   "observability": { "enabled": true },
   // The browser terminal (public/index.html), served at /. Requests that
   // match no file fall through to the Worker. The binding is for tests.
-  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "assets": { "directory": "node_modules/@greenscreen-dev/web/public", "binding": "ASSETS" },
   "d1_databases": [
     {
       "binding": "DB",

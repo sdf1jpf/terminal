@@ -20,6 +20,8 @@
     "wrangler": "^4.152.0"
   },
   "dependencies": {
+    "@greenscreen-dev/web": "^0.2.2",
+    "@greenscreen-dev/worker": "^0.2.2",
     "hono": "^4.13.14"
   }
 }

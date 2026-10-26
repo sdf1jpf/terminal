@@ -3,6 +3,7 @@
 //
 //	GET    /v1/health
 //	POST   /v1/session              logon: -> {"userid"}
+//	GET    /v1/screen/info          the logon screen's title and what the clients may use (not signed on)
 //	POST   /v1/screen               the terminal's screens; see docs/screen-protocol.md
 //	GET    /v1/live                 WebSocket: events that tell a terminal to redraw its screen
 //	GET    /v1/customers?prefix=X   list, ordered by name; also &city=, &state=, &status=
@@ -120,7 +121,7 @@ import {
 } from "./purchasing";
 import { accountEntries, listPeriods, openPeriod, trialBalance } from "./ledger";
 import { cancelShipment, getShipment, listShipments, pack, release, ship } from "./shipping";
-import { requestKeys, screen } from "./screens";
+import { config as screens, requestKeys, screen } from "./screens";
 import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
 import { buildStatements, invoicePdf, listingPdf, statementPdf } from "./documents";
 import { pdfResponse } from "./pdf";
@@ -184,6 +185,13 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/v1/health", () => json(200, { status: "ok" }));
+
+// The clients ask this before logon to title their logon screen and to
+// know what they may use, so it is not signed on and says nothing secret.
+app.get("/v1/screen/info", () => {
+	const { title, system, prefix, tagline } = screens.app;
+	return json(200, { v: 1, title, system, prefix, tagline, live: true, snapshot: true });
+});
 
 app.post("/v1/session", signedOn, (c) => json(201, { userid: c.get("user") }));
 
@@ -531,6 +539,7 @@ for (const path of [
 	"/v1/health",
 	"/v1/session",
 	"/v1/screen",
+	"/v1/screen/info",
 	"/v1/live",
 	"/v1/customers",
 	"/v1/customers/:id",

@@ -4,9 +4,9 @@
 // what the screens do; a few describe how the business works. ai.ts
 // indexes them in Vectorize and hands the best ones to the model.
 
+import { tutorialKeys } from "@greenscreen-dev/worker";
 import { jobLibrary } from "./jobs";
 import { fieldTopics } from "./screens/fieldhelp";
-import { keyRows } from "./screens/help";
 import { menuTopics } from "./screens/menu";
 
 export interface Topic {
@@ -139,7 +139,7 @@ export function topics(): Topic[] {
 	out.push({
 		id: "keys",
 		title: "KEYBOARD AND PF KEYS",
-		text: keyRows.map(([k, d]) => `${k}: ${d}`).join(". ") + ". PF1 is help, PF3 exits, PF7 and PF8 scroll, PF12 cancels.",
+		text: tutorialKeys.map(([k, d]) => `${k}: ${d}`).join(". ") + ". PF1 is help, PF3 exits, PF7 and PF8 scroll, PF12 cancels.",
 		go: "T",
 	});
 	for (const [name, j] of Object.entries(jobLibrary)) {
