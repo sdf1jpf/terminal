@@ -399,11 +399,13 @@ const help: Record<string, FieldHelp> = {
 	"timeline.id": {
 		title: "ORDER NUMBER",
 		lines: [
-			"The invoice whose lifecycle to show, such as INV00042 or just 42. Each",
-			"invoice's life runs as a workflow: it bills the invoice when it ships,",
-			"waits for payment, and sends a reminder when payment is due (net 30),",
-			"a second notice 30 days later and a final notice 30 days after that,",
-			"which puts the account on hold. The timeline lists what it has seen.",
+			"An invoice, such as INV00042 or just 42, or a purchase order, such as",
+			"PO00012 or PO12. Each order's life runs as a workflow. An invoice's",
+			"bills it when it ships, waits for payment, and sends a reminder when",
+			"payment is due (net 30), a second notice 30 days later and a final",
+			"notice 30 days after that, which puts the account on hold. A purchase",
+			"order's watches the vendor: it raises an expedite alert if the 855,",
+			"the 856 or the goods are late. The timeline lists what it has seen.",
 		],
 	},
 	"vendhist.vendor": {

@@ -167,7 +167,8 @@ export async function cancelPO(db: D1Database, id: string): Promise<void> {
 		db.prepare(`DELETE FROM po_lines WHERE po_id = ?1 AND ${isOpen}`).bind(id),
 		db.prepare("DELETE FROM purchase_orders WHERE id = ? AND status = 'O'").bind(id),
 	]);
-	if (deleted.meta.changes === 1) return;
+	// The count includes the order signal its trigger adds (lifecycle.ts).
+	if (deleted.meta.changes > 0) return;
 	await mustBeOpen(db, id);
 }
 
@@ -238,7 +239,8 @@ export async function receivePO(
 	const results = await db.batch(stmts);
 	let units = 0;
 	[...wanted.values()].forEach((n, i) => {
-		if (results[i * 3 + 2].meta.changes === 1) units += n;
+		// The count includes the order signal the receipt's trigger adds.
+		if (results[i * 3 + 2].meta.changes > 0) units += n;
 	});
 	if (units === 0 && wanted.size > 0) throw new HttpError(409, "conflict", "record was changed by another user");
 	return { po: (await getPO(db, id)).po, units };

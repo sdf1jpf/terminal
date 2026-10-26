@@ -87,6 +87,10 @@ const menus: Record<string, Menu> = {
 				key: "4", name: "VHISTORY", desc: "Vendor and PO history", aliases: ["VH", "POHIST"],
 				go: (_ctx, m, arg, rest) => newVendHist(m, arg, rest.split(/\s+/)[1] ?? ""),
 			},
+			{
+				key: "5", name: "POTIMELINE", desc: "Purchase order lifecycle", aliases: ["POTL"],
+				go: (_ctx, m, arg) => newTimeline(m, arg ? (/^po/i.test(arg) ? arg : "PO" + arg) : ""),
+			},
 		],
 	},
 	"4": {
