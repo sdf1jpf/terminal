@@ -13,6 +13,8 @@
 //	POST   /v1/customers/{id}/transactions   post an invoice or payment
 //	GET    /v1/customers/{id}/history        change history, newest first
 //	GET    /v1/search?q=X&type=T    customers, invoices, POs, shipments, vendors, products matching X
+//	GET    /v1/search/natural?q=X   a search in plain English: -> {"filter", "description", "hits"}
+//	POST   /v1/ask                  ask the HELP facility: {"question"} -> {"answer", "topics"}
 //	GET    /v1/products?prefix=X    product file, ordered by SKU
 //	GET    /v1/products?q=X         active products whose SKU or description contains X
 //	POST   /v1/products             add a product
@@ -53,6 +55,7 @@
 //	POST   /v1/jobs                 submit a batch job: {"name"}
 //	GET    /v1/jobs                 recent jobs, newest first
 //	GET    /v1/jobs/{id}            a job and its output listing
+//	POST   /v1/jobs/{id}/explain    explain why it failed: -> {"explanation"}
 //	GET    /v1/syslog?before=N      the system log, newest first; &limit= (max 500)
 //	GET    /v1/schedules            the job schedule, with each job's next run
 //	PUT    /v1/schedules/{job}      schedule a job: {"cron", "enabled"?}
@@ -63,13 +66,15 @@
 //	POST   /v1/spool/{id}/print     print it on PRT1 (again, for a reprint)
 //	DELETE /v1/spool/{id}           purge it
 //
-// A cron trigger runs the job scheduler every minute (scheduler.ts).
+// A cron trigger runs the job scheduler every minute (scheduler.ts), and
+// keeps the HELP facility's Vectorize index current (ai.ts).
 //
 // Routing is Hono. Everything except health is behind Cloudflare Access,
 // applied per route by the signedOn middleware (auth.ts). The browser
 // terminal at / is static assets (public/) and never reaches this code.
 
 import { Hono, type MiddlewareHandler } from "hono";
+import { AiError, ask, describe, explainJob, naturalSearch } from "./ai";
 import { customerHistory, listTransactions, parsePosting, postTransaction, transactionFields } from "./activity";
 import { authenticate } from "./auth";
 import { customerFields, parseEditable } from "./customer";
@@ -83,7 +88,7 @@ import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs"
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
 import { recent } from "./syslog";
-import { hitTypes, search, type HitType } from "./search";
+import { filterSearch, hitTypes, search, type HitType } from "./search";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, searchProducts, updateProduct } from "./products";
 import {
 	addPOLine, cancelPO, createPO, deletePOLine, getPO, getVendor, listPOs, listVendors, receivePO, sendPO,
@@ -99,6 +104,8 @@ export interface Env {
 	DEV_USER?: string; // wrangler dev only, when Access is not configured
 	JOBS: Queue<JobMessage>; // the batch job input queue
 	JOB_RUNNER: Workflow<JobMessage>;
+	AI: Ai; // Workers AI, for the HELP facility (ai.ts)
+	VECTORIZE: Vectorize; // the customer-help index: help topics and products by meaning
 }
 
 export { JobRunner } from "./jobs";
@@ -117,6 +124,7 @@ const app = new Hono<App>({ strict: false });
 
 app.onError((e) => {
 	if (e instanceof HttpError) return errorResponse(e);
+	if (e instanceof AiError) return errorResponse(new HttpError(503, "unavailable", "help facility not available: " + e.message));
 	console.error(e);
 	return errorResponse(new HttpError(500, "internal", "internal error"));
 });
@@ -162,6 +170,21 @@ app.get("/v1/search", signedOn, async (c) => {
 	const bad = types.find((t) => !(t in hitTypes));
 	if (bad) throw new HttpError(400, "bad_request", `unknown type "${bad}": use ${Object.keys(hitTypes).join(", ")}`);
 	return json(200, await search(c.env.DB, c.req.query("q") ?? "", types as HitType[]));
+});
+
+app.get("/v1/search/natural", signedOn, async (c) => {
+	const q = (c.req.query("q") ?? "").trim();
+	if (!q) throw new HttpError(400, "bad_request", '"q" is required');
+	const { filter, also } = await naturalSearch(c.env, q);
+	return json(200, { filter, description: describe(filter), hits: await filterSearch(c.env.DB, filter, also) });
+});
+
+app.post("/v1/ask", signedOn, async (c) => {
+	const question = str(await readJSON(c.req.raw, ["question"]), "question").trim();
+	if (!question) throw new HttpError(422, "invalid", "a question is required", "question");
+	const got = await ask(c.env, question.slice(0, 500));
+	if (got.error) throw new AiError(got.error);
+	return json(200, { answer: got.answer, topics: got.topics.map(({ id, title, go }) => ({ id, title, go })) });
 });
 
 app.get("/v1/products", signedOn, async (c) => {
@@ -293,6 +316,13 @@ app.get("/v1/jobs/:id", signedOn, async (c) => {
 	return json(200, job);
 });
 
+app.post("/v1/jobs/:id/explain", signedOn, async (c) => {
+	const found = await getJob(c.env.DB, c.req.param("id").toUpperCase());
+	if (!found) throw notFound();
+	if (found.job.status !== "OUTPUT") throw new HttpError(409, "conflict", `job ${found.job.id} has not ended`);
+	return json(200, { explanation: await explainJob(c.env, found.job, found.output) });
+});
+
 app.get("/v1/syslog", signedOn, async (c) => {
 	const n = (k: string) => Math.trunc(Number(c.req.query(k) ?? "")) || 0;
 	return json(200, await recent(c.env.DB, n("before"), Math.min(Math.max(n("limit") || 100, 1), 500)));
@@ -334,6 +364,8 @@ for (const path of [
 	"/v1/customers/:id/transactions",
 	"/v1/customers/:id/history",
 	"/v1/search",
+	"/v1/search/natural",
+	"/v1/ask",
 	"/v1/products",
 	"/v1/products/:sku",
 	"/v1/invoices",
@@ -361,6 +393,7 @@ for (const path of [
 	"/v1/ledger/accounts/:account",
 	"/v1/jobs",
 	"/v1/jobs/:id",
+	"/v1/jobs/:id/explain",
 	"/v1/syslog",
 	"/v1/schedules",
 	"/v1/schedules/:name",

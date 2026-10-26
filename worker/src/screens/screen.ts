@@ -3,6 +3,7 @@
 // helpers the panels share. The Go client draws these with the same
 // semantics as its tn3270.Screen.Text and Input.
 
+import type { AiEnv } from "../ai";
 import type { JobMessage } from "../jobs";
 
 export const MIN_ROWS = 24;
@@ -36,6 +37,7 @@ export type Cursor = { field: string } | { row: number; col: number };
 export interface Ctx {
 	db: D1Database;
 	jobs: Queue<JobMessage>; // the batch job input queue
+	ai: AiEnv; // Workers AI and Vectorize, for the HELP facility
 	user: string; // the Access userid
 	rows: number;
 	cols: number;

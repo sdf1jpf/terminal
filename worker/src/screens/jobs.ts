@@ -1,10 +1,12 @@
+import { newExplain } from "./ask";
 import { getJob, jobLibrary, listJobs, submitJob, type Job } from "../jobs";
 import { header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, type Color, type Ctx } from "./screen";
 import { fail, isCode, pf, type JobLogState, type JobsState, type Program } from "./program";
 
 // CUSJ01 BATCH JOBS submits jobs from the job library and lists recent
 // jobs with their status, like SDSF's status display. S on a job opens
-// CUSJ02 JOB OUTPUT, its output listing.
+// CUSJ02 JOB OUTPUT, its output listing; E on a failed job, or PF6 on its
+// output, asks the HELP facility to explain it (CUSJ03, screens/ask.ts).
 
 // jobRows is how many jobs fit on a page: 13 on 24x80.
 const jobRows = (ctx: Ctx) => ctx.rows - 11;
@@ -53,7 +55,7 @@ export const jobs: Program<JobsState> = {
 		if (list.length > 0) {
 			scr.text(4, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(6, 2, "SELECT: S=VIEW OUTPUT", { color: "blue" });
+		scr.text(6, 2, "SELECT: S=VIEW OUTPUT  E=EXPLAIN A FAILURE", { color: "blue" });
 		scr.text(7, 2, "S " + jobLine("JOBNAME", "JOBID", "OWNER", "STATUS", "RC", "SUBMITTED", "ENDED"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		list.slice(top, top + rows).forEach((job, i) => {
@@ -80,6 +82,7 @@ export const jobs: Program<JobsState> = {
 				for (const [i, id] of (j.ids ?? []).entries()) {
 					const code = (input.fields[`sel${i}`] ?? "").trim().toUpperCase();
 					if (!code) continue;
+					if (code === "E") return newExplain(ctx, j, id);
 					if (code !== "S") {
 						j.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
 						j.errSel = `sel${i}`;
@@ -152,7 +155,8 @@ export const joblog: Program<JobLogState> = {
 			});
 		}
 		message(scr, msg);
-		keys(scr, "PF1=HELP  PF3=EXIT  PF5=REFRESH  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		const failed = found && found.job.status === "OUTPUT" && found.job.rc !== "0000";
+		keys(scr, `PF1=HELP  PF3=EXIT  PF5=REFRESH${failed ? "  PF6=EXPLAIN" : ""}  PF7=UP  PF8=DOWN  PF12=CANCEL`);
 		scr.setCursor(scr.rows, 2);
 		return scr;
 	},
@@ -166,6 +170,8 @@ export const joblog: Program<JobLogState> = {
 			case "ENTER":
 			case pf(5):
 				return l;
+			case pf(6):
+				return newExplain(ctx, l, l.id);
 			case pf(7):
 			case pf(8): {
 				const found = await getJob(ctx.db, l.id);

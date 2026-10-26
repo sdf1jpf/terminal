@@ -5,6 +5,7 @@
 import { HttpError } from "../http";
 import type { Customer } from "../customer";
 import type { Product } from "../products";
+import type { Filter } from "../search";
 import type { Ctx, Screen } from "./screen";
 
 export type Mode = "inquiry" | "update" | "add" | "delete";
@@ -217,8 +218,22 @@ export interface SearchState {
 	back: State;
 	q?: string; // what to look for
 	type?: string; // only this type of record; "" for all
+	filter?: Filter; // what a plain-English search was taken to mean (ai.ts)
+	also?: string[]; // the products it found by meaning
 	top?: number;
 	errField?: string;
+	errSel?: string;
+	msg?: string;
+}
+
+export interface AskState {
+	p: "ask";
+	back: State;
+	q?: string; // the question, or the job being explained
+	job?: string; // explaining why this job failed rather than answering a question
+	answer?: string;
+	refs?: { title: string; go: string }[]; // related topics, for the selection codes
+	top?: number;
 	errSel?: string;
 	msg?: string;
 }
@@ -227,7 +242,7 @@ export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
-	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState;
+	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState | AskState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {

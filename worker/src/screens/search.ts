@@ -1,6 +1,7 @@
 import { statusNames } from "../invoices";
 import { poStatusNames } from "../purchasing";
-import { search as searchAll, hitTypes, MAX_PER_TYPE, type Hit, type HitType } from "../search";
+import { AiError, describe, naturalSearch } from "../ai";
+import { filterSearch, search as searchAll, hitTypes, MAX_PER_TYPE, type Hit, type HitType } from "../search";
 import { shipStatusNames } from "../shipping";
 import { newInquiry } from "./detail";
 import { loadProduct } from "./products";
@@ -11,6 +12,11 @@ import { fail, pf, type Next, type Program, type SearchState, type State } from 
 // CUSF01 SEARCH finds anything by name or number: customers, invoices,
 // purchase orders, shipments, vendors and products. S beside a hit opens
 // it on its own panel, and PF3 there comes back to the search.
+//
+// A search in plain English (CUSTOMERS IN OHIO OVER THEIR CREDIT LIMIT)
+// that matches no name or number, or any search starting with ?, goes to
+// Workers AI, which turns it into a filter on one type of record (ai.ts).
+// The filter is kept on the state, so paging does not ask again.
 
 const listRows = (ctx: Ctx) => ctx.rows - 11;
 
@@ -37,8 +43,40 @@ export function newSearch(back: State, q = "", type = ""): SearchState {
 	return { p: "search", back, q: q.toUpperCase(), type: type.toUpperCase() };
 }
 
+// find opens the search with q already searched, for FIND on a command line.
+export async function find(ctx: Ctx, back: State, q: string): Promise<SearchState> {
+	const s = newSearch(back, q);
+	if (s.q) await resolve(ctx, s);
+	return s;
+}
+
 async function hits(ctx: Ctx, s: SearchState): Promise<Hit[]> {
+	if (s.filter) return filterSearch(ctx.db, s.filter, s.also);
 	return searchAll(ctx.db, s.q ?? "", s.type ? [s.type as HitType] : []);
+}
+
+// resolve decides how to search for s.q: by name or number, or, when that
+// finds nothing and it reads like a sentence, in plain English.
+async function resolve(ctx: Ctx, s: SearchState): Promise<void> {
+	s.filter = s.also = undefined;
+	const q = s.q ?? "";
+	const forced = q.startsWith("?");
+	const text = q.replace(/^\?\s*/, "");
+	if (!text) return;
+	if (!forced && (!/\s/.test(text) || (await hits(ctx, s)).length > 0)) return;
+	try {
+		const hint = s.type ? `${hitTypes[s.type as HitType]}S: ` : "";
+		const { filter, also } = await naturalSearch(ctx.ai, hint + text.toLowerCase());
+		if (s.type) filter.type = s.type as HitType;
+		s.filter = filter;
+		if (also.length > 0) s.also = also;
+		s.msg = `CUS1003I SEARCHED FOR ${describe(filter)}`.slice(0, 79);
+	} catch (e) {
+		if (!(e instanceof AiError)) throw e;
+		s.msg = forced
+			? "CUS1004W PLAIN-ENGLISH SEARCH NOT AVAILABLE - SEARCH BY NAME OR NUMBER"
+			: "";
+	}
 }
 
 export const search: Program<SearchState> = {
@@ -56,9 +94,9 @@ export const search: Program<SearchState> = {
 		const top = Math.min(s.top ?? 0, Math.max(list.length - rows, 0));
 
 		label(scr, 4, 2, "SEARCH FOR ===>");
-		scr.input(4, 18, 30, "q", s.q ?? "", { bright: s.errField === "q" });
-		label(scr, 4, 51, "TYPE ===>");
-		scr.input(4, 61, 1, "type", s.type ?? "", { bright: s.errField === "type" });
+		scr.input(4, 18, scr.cols - 31, "q", s.q ?? "", { bright: s.errField === "q" });
+		label(scr, 4, scr.cols - 13, "TYPE ===>");
+		scr.input(4, scr.cols - 3, 1, "type", s.type ?? "", { bright: s.errField === "type" });
 		scr.text(5, 2, "TYPE: C CUSTOMER  I INVOICE  O PURCHASE ORDER  S SHIPMENT  V VENDOR  P PRODUCT", { color: "blue" });
 		scr.text(6, 2, "SELECT: S=SHOW", { color: "blue" });
 		if (list.length > 0) {
@@ -103,7 +141,9 @@ export const search: Program<SearchState> = {
 			if (type && !(type in hitTypes)) {
 				s.errField = "type";
 				s.msg = `CUS1001E INVALID TYPE "${type}" - USE C, I, O, S, V OR P, OR LEAVE IT BLANK`;
+				return s;
 			}
+			await resolve(ctx, s);
 			return s;
 		}
 		switch (input.aid) {
