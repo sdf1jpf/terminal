@@ -345,7 +345,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox, 4 Order timeline, 5 EDI exceptions, 6 Shipment tracking |
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
-| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
+| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables, 7 Archive, 8 Mail, 9 CICS |
 | 6 | SELLING | 1 Customer pricing, 2 Territories, 3 Salespeople, 4 Sales by territory, 5 Sales and commission by salesperson, 6 Quantity breaks, 7 Promotions |
 | 7 | FREIGHT | 1 Trucks, 2 Drivers, 3 Load planning, 4 Dispatch board, 5 Freight costs |
 | T, X | | Tutorial, log off |
@@ -354,7 +354,8 @@ A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
 and option names (`INQUIRY`, `EDI`, `SYSLOG`, ...) work anywhere too. A second
 word is passed to the option, so `1.2 000105` shows that customer. `=` alone
 goes back to the primary menu, and `=X` logs off. An option returns to its own
-submenu when you leave it.
+submenu when you leave it. CICS transaction IDs such as `CINQ 000105` work
+from any menu as well (see [CICS transactions](#cics-transactions)).
 
 ## Searching and help
 
@@ -1069,6 +1070,40 @@ sends its PDF, and `R` restores an archived listing to the spool, held,
 under its old ID. The API is `GET /v1/archive?name=&kind=`,
 `GET /v1/archive/{key}` (`.pdf` and `.txt` for the files) and
 `POST /v1/archive/restore {"key"}`.
+## CICS transactions
+
+Every screen also runs as a CICS transaction with a four-character ID
+(`worker/src/cics.ts`). Press CLEAR on a menu, or pick option 5.9, for a
+blank screen (DFHCLEAR) and type a transaction ID, with anything after it
+passed on: `CINQ 000105`, `ORDR`, `MENU`. The IDs work on any menu's
+command line too.
+
+| ID | Starts | ID | Starts |
+| --- | --- | --- | --- |
+| MENU | Primary menu | INVQ | Products |
+| CBRW, CINQ, CADD | Customer browse, inquiry, add | PURC, VEND | Purchase orders, vendors |
+| CEVT, FIND | Event history, search | GLED, RPTS | Ledger, reports |
+| ORDR, SHIP, TRAK | Invoices, shipping, tracking | JOBS, CONS, SPOL | Jobs, console, held output |
+| EDIM, EDIX, TIME | EDI mailbox, exceptions, timeline | MNTR, TABL, ARCH, MAIL | Monitor, tables, archive, mail |
+| PRIC, SALE | Pricing, territories | FLET, LOAD | Fleet, loads |
+
+The CICS-supplied transactions:
+
+| ID | What it does |
+| --- | --- |
+| `CEMT I TRAN` | Lists transactions with program, status, uses, abends and last use. Overtype `Ena`/`Dis` to change one, or `CEMT S TRAN(ORDR) DIS`; patterns like `TRAN(C*)` work. A disabled transaction answers `DFHAC2008` from every way in, fast paths included. CEMT, CEDF, CEBR, CESF and MENU cannot be disabled. |
+| `CEMT I TASK`, `CEMT I ENQ` | Signed-on sessions, and records locked for update |
+| `CEDF` | EDF mode for this terminal: every screen step stops on DFHEDFD with the `EXEC CICS RETURN`, the EIB (EIBTRNID, EIBTASKN, EIBAID, EIBCALEN, ...) and the commarea in and out. ENTER continues, PF3 or `CEDF OFF` ends it. Each step is also written to the TS queue `CEDFtttt` (the last four characters of the terminal ID). |
+| `CEBR [queue]` | Browses temporary storage queues: `Q name`, `TOP`, `BOTTOM`, `PURGE`, `LIST`, PF7/PF8. `CSMT` is the abend log. |
+| `CESF` | Signs off |
+
+A program that fails no longer fails the request: the transaction abends
+with `DFHAC2206 ... TRANSACTION CINQ FAILED WITH ABEND ASRA` (ASRA a program
+check, AEIM a record not found, AEIP an invalid request, AEY9 Workers AI
+unavailable). ENTER goes back to the screen as it was, PF3 to the menu, and
+PF6 asks the HELP facility to explain the abend. Abends are counted in CEMT
+and written to CSMT and SYSLOG.
+
 ## Transaction monitor
 
 Every request the Worker answers is timed and written to

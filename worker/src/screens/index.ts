@@ -12,6 +12,7 @@ import { mail, mailmsg } from "./mail";
 import { ask } from "./ask";
 import { browse } from "./browse";
 import { chart } from "./charts";
+import { abendPanel, cebr, cedf, cemt, cics, cicsWrap } from "./cics";
 import { opconsole, schedule } from "./console";
 import { detail } from "./detail";
 import { helpFor } from "./fieldhelp";
@@ -44,19 +45,22 @@ import type { Program, State } from "./program";
 
 export { requestKeys, type ScreenResponse } from "@greenscreen-dev/worker";
 
-const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = {
+// Every panel runs as a CICS task (screens/cics.ts): transactions can be
+// disabled, failures abend with a code, and EDF can stop on each step.
+const programs: { [P in State["p"]]: Program<Extract<State, { p: P }>> } = cicsWrap({
+	cics, cemt, cedf, cebr, abend: abendPanel,
 	menu, browse, detail, report, chart, help, activity, event, jobs, joblog, products, product, invoices, invoice, invaddr, skusearch, edi, edidoc,
 	pos, po, vendors, vendhist, timeline: timelinePanel, ediex, shipments, shipment, tracking, trucks, drivers, fleetitem, loads, load, board: dispatchBoard, costs, ledger, glaccount,
 	console: opconsole, schedule, spool, output, search, monitor, tables, tablerows, tablerow, ask, archive, archdoc, mail, mailmsg,
 	pricing, territories, salespeople, salesrpt, breaks, promos,
-};
+});
 
 export const config: ScreenConfig<Env> = {
 	app: { title: "CUSTOMER INFORMATION SYSTEM", prefix: "CUS", system: "SYS1", tagline: "MODERN MAINFRAME EXPERIENCE" },
 	programs,
-	// The menu, console and ask panels have command lines: PF24 (RETRIEVE,
+	// The menu, console, ask and CICS panels have command lines: PF24 (RETRIEVE,
 	// as in ISPF) puts back what was entered there, newest first.
-	commandLines: { menu: "option", console: "cmd", ask: "q" },
+	commandLines: { menu: "option", console: "cmd", ask: "q", cics: "tran", cemt: "cmd", cebr: "cmd" },
 	// Field help text lives in the HELP system table, so operators can change
 	// it. The engine only asks whether a field has any; help.ts draws it.
 	fieldHelp: async (s, field, ctx) => ((await helpFor((ctx as Ctx).tables, s as State, field)) ? { title: field, lines: [] } : undefined),

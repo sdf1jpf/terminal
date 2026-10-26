@@ -425,7 +425,41 @@ export interface AskState {
 	msg?: string;
 }
 
+// The CICS transactions' panels (screens/cics.ts).
+export interface CicsState { p: "cics"; msg?: string } // the clear screen: type a transaction ID
+export interface CemtState {
+	p: "cemt";
+	back: State;
+	cmd: string; // the command shown on the top line, such as I TRAN(*)
+	ids?: string[]; // the transactions on the rows shown, for overtyping their status
+	top?: number;
+	msg?: string;
+}
+export interface CebrState { p: "cebr"; back: State; queue: string; top?: number; total?: number; msg?: string } // queue: "" lists the queues
+export interface CedfState {
+	p: "cedf";
+	back: State; // the screen the program returned, shown on ENTER
+	tran: string;
+	program: string;
+	task: number;
+	aid: string;
+	from: string; // the panel that took the key
+	before: string; // its commarea as it came in
+	msg?: string;
+}
+export interface AbendState {
+	p: "abend";
+	back: State; // ENTER returns here
+	tran: string;
+	code: string;
+	panel: string;
+	text: string;
+	why?: string[]; // the HELP facility's explanation, after PF6
+	msg?: string;
+}
+
 export type State =
+	| CicsState | CemtState | CebrState | CedfState | AbendState
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState | TrackingState
