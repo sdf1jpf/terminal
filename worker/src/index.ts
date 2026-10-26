@@ -77,6 +77,7 @@
 //	POST   /v1/loads/{id}/stops/{shipment}/missed     not delivered: {"reason"}; it waits for another load
 //	POST   /v1/loads/{id}/return    the truck is back, every stop signed off: {"miles"}, the planned miles if 0 or left out
 //	GET    /v1/dispatch?day=X       the dispatch board: each load, its next stop and when it is due back
+//	GET    /v1/freight/costs?month=YYYY-MM   truck loads' costs against the carriers', and what each carrier charged
 //	GET    /v1/ledger?period=YYYY-MM          trial balance (the open period by default)
 //	GET    /v1/ledger/periods       accounting periods, newest first
 //	GET    /v1/ledger/accounts/{n}?period=X   an account's journal entries in a period
@@ -151,7 +152,7 @@ import { cancelShipment, getShipment, listShipments, pack, release, ship } from 
 import { confirmDelivery, findShipment, getTracking } from "./tracking";
 import {
 	assignLoad, board, cancelLoad, dayOf, dispatchLoad, dutyMinutes, freightDay, getDriver, getLoad, getTruck, listDrivers, listLoads, listTrucks,
-	deliverStop, parseDriver, parseTruck, planLoads, returnLoad, saveDriver, saveTruck, stopNotDelivered, truckServiced, waitingShipments,
+	deliverStop, freightCosts, parseDriver, parseTruck, planLoads, returnLoad, saveDriver, saveTruck, stopNotDelivered, truckServiced, waitingShipments,
 } from "./fleet";
 import { config as screens, requestKeys, screen } from "./screens";
 import { archiveFile, getEntry, listArchive, restoreArchive } from "./archive";
@@ -478,8 +479,8 @@ app.get("/v1/track/:number", signedOn, async (c) => {
 	return json(200, await getTracking(c.env.DB, c.env.TABLES, shp.id));
 });
 
-const truckKeys = ["id", "name", "plate", "capacity_lb", "cdl_class", "odometer", "status", "service_miles", "service_due", "version"];
-const driverKeys = ["id", "name", "phone", "cdl_class", "cdl_expires", "status", "version"];
+const truckKeys = ["id", "name", "plate", "capacity_lb", "cdl_class", "odometer", "status", "service_miles", "service_due", "cost_per_mile", "version"];
+const driverKeys = ["id", "name", "phone", "cdl_class", "cdl_expires", "status", "hourly_rate", "version"];
 const versionOf = (body: Record<string, unknown>) => {
 	const v = int(body, "version");
 	if (v < 1) throw new HttpError(422, "invalid", "send the version read", "version");
@@ -531,8 +532,9 @@ app.post("/v1/loads/:id/stops/:shipment/missed", signedOn, async (c) => {
 });
 app.post("/v1/loads/:id/return", signedOn, async (c) => {
 	const body = await readJSON(c.req.raw, ["miles"]);
-	return json(200, await returnLoad(c.env.DB, c.get("user"), c.req.param("id"), int(body, "miles")));
+	return json(200, await returnLoad(c.env.DB, c.env.TABLES, c.get("user"), c.req.param("id"), int(body, "miles")));
 });
+app.get("/v1/freight/costs", signedOn, async (c) => json(200, await freightCosts(c.env.DB, c.req.query("month") ?? freightDay().slice(0, 7))));
 app.get("/v1/dispatch", signedOn, async (c) => {
 	const day = dayOf(c.req.query("day") ?? "");
 	return json(200, { day, board: await board(c.env.DB, day) });
@@ -723,6 +725,7 @@ for (const path of [
 	"/v1/loads/:id/stops/:shipment/delivered",
 	"/v1/loads/:id/stops/:shipment/missed",
 	"/v1/dispatch",
+	"/v1/freight/costs",
 	"/v1/ledger",
 	"/v1/ledger/periods",
 	"/v1/ledger/accounts/:account",

@@ -28,6 +28,7 @@ import { addressOf, type Invoice } from "./invoices";
 import type { StepResult } from "./jobs";
 import { ship, type Shipment } from "./shipping";
 import { syslog } from "./syslog";
+import { carrierRates, chooseCarrier, freight } from "./systables";
 import { trackShipment, type Scan, type TrackingProvider, type TrackRequest } from "./tracking";
 
 export interface Truck {
@@ -40,6 +41,7 @@ export interface Truck {
 	status: "A" | "S" | "R";
 	service_miles: number;
 	service_due: string; // YYYY-MM-DD
+	cost_per_mile: number; // dollars: fuel, tires, maintenance
 	version: number;
 	updated: string;
 	updated_by: string;
@@ -52,6 +54,7 @@ export interface Driver {
 	cdl_class: "A" | "B" | "C";
 	cdl_expires: string; // YYYY-MM-DD
 	status: "A" | "O" | "L";
+	hourly_rate: number; // dollars, with benefits
 	version: number;
 	updated: string;
 	updated_by: string;
@@ -73,6 +76,9 @@ export interface Load {
 	dispatched_by: string;
 	returned: string;
 	actual_miles: number;
+	cost_miles: number; // whole dollars, once back: the miles at the truck's cost per mile
+	cost_labor: number; // ... the driver's hours at their rate
+	cost_carrier: number; // ... and what the carriers would have charged for the same shipments
 }
 
 export interface Stop {
@@ -198,6 +204,12 @@ function oneOf(v: unknown, field: string, what: string, names: Record<string, st
 	return s;
 }
 
+function dollars(v: unknown, field: string, what: string, min: number, max: number): number {
+	const n = typeof v === "number" ? v : /^\s*\d+(\.\d{1,2})?\s*$/.test(String(v ?? "")) ? Number(v) : NaN;
+	if (!(n >= min && n <= max)) throw bad(field, `the ${what} must be dollars and cents from ${min} to ${max}`);
+	return Math.round(n * 100) / 100;
+}
+
 function dateField(v: unknown, field: string, what: string, required: boolean): string {
 	const s = String(v ?? "").trim();
 	if (!s && !required) return "";
@@ -220,6 +232,7 @@ export function parseTruck(b: Record<string, unknown>): TruckFields {
 		status: oneOf(b.status, "status", "status", truckStatusNames) as Truck["status"],
 		service_miles: whole(b.service_miles ?? 0, "service_miles", "service miles", 0, 9_999_999),
 		service_due: dateField(b.service_due, "service_due", "service date", false),
+		cost_per_mile: dollars(b.cost_per_mile, "cost_per_mile", "cost per mile", 0, 20),
 	};
 }
 
@@ -227,18 +240,18 @@ export function parseTruck(b: Record<string, unknown>): TruckFields {
 export async function saveTruck(db: D1Database, user: string, t: TruckFields, version: number): Promise<Truck> {
 	if (version === 0) {
 		const row = await db.prepare(
-			`INSERT INTO trucks (id, name, plate, capacity_lb, cdl_class, odometer, status, service_miles, service_due, updated, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING *`,
-		).bind(t.id, t.name, t.plate, t.capacity_lb, t.cdl_class, t.odometer, t.status, t.service_miles, t.service_due, now(), user).first<Truck>();
+			`INSERT INTO trucks (id, name, plate, capacity_lb, cdl_class, odometer, status, service_miles, service_due, cost_per_mile, updated, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING *`,
+		).bind(t.id, t.name, t.plate, t.capacity_lb, t.cdl_class, t.odometer, t.status, t.service_miles, t.service_due, t.cost_per_mile, now(), user).first<Truck>();
 		if (!row) throw bad("id", `truck ${t.id} is already on file`);
 		await syslog(db, user, `CUS1901I TRUCK ${t.id} ADDED: ${t.name}`.slice(0, 120));
 		return row;
 	}
 	const row = await db.prepare(
 		`UPDATE trucks SET name = ?2, plate = ?3, capacity_lb = ?4, cdl_class = ?5, odometer = ?6, status = ?7, service_miles = ?8,
-		   service_due = ?9, version = version + 1, updated = ?10, updated_by = ?11
+		   service_due = ?9, cost_per_mile = ?13, version = version + 1, updated = ?10, updated_by = ?11
 		 WHERE id = ?1 AND version = ?12 RETURNING *`,
-	).bind(t.id, t.name, t.plate, t.capacity_lb, t.cdl_class, t.odometer, t.status, t.service_miles, t.service_due, now(), user, version).first<Truck>();
+	).bind(t.id, t.name, t.plate, t.capacity_lb, t.cdl_class, t.odometer, t.status, t.service_miles, t.service_due, now(), user, version, t.cost_per_mile).first<Truck>();
 	if (row) return row;
 	await getTruck(db, t.id);
 	throw new HttpError(409, "conflict", "record was changed by another user");
@@ -282,23 +295,25 @@ export function parseDriver(b: Record<string, unknown>): DriverFields {
 		cdl_class: oneOf(b.cdl_class, "cdl_class", "license class", classes) as Driver["cdl_class"],
 		cdl_expires: dateField(b.cdl_expires, "cdl_expires", "license expiry", true),
 		status: oneOf(b.status, "status", "status", driverStatusNames) as Driver["status"],
+		hourly_rate: dollars(b.hourly_rate, "hourly_rate", "hourly rate", 0, 200),
 	};
 }
 
 export async function saveDriver(db: D1Database, user: string, d: DriverFields, version: number): Promise<Driver> {
 	if (version === 0) {
 		const row = await db.prepare(
-			`INSERT INTO drivers (id, name, phone, cdl_class, cdl_expires, status, updated, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING *`,
-		).bind(d.id, d.name, d.phone, d.cdl_class, d.cdl_expires, d.status, now(), user).first<Driver>();
+			`INSERT INTO drivers (id, name, phone, cdl_class, cdl_expires, status, hourly_rate, updated, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING *`,
+		).bind(d.id, d.name, d.phone, d.cdl_class, d.cdl_expires, d.status, d.hourly_rate, now(), user).first<Driver>();
 		if (!row) throw bad("id", `driver ${d.id} is already on file`);
 		await syslog(db, user, `CUS1903I DRIVER ${d.id} ADDED: ${d.name}`.slice(0, 120));
 		return row;
 	}
 	const row = await db.prepare(
-		`UPDATE drivers SET name = ?2, phone = ?3, cdl_class = ?4, cdl_expires = ?5, status = ?6, version = version + 1, updated = ?7, updated_by = ?8
+		`UPDATE drivers SET name = ?2, phone = ?3, cdl_class = ?4, cdl_expires = ?5, status = ?6, hourly_rate = ?10, version = version + 1,
+		   updated = ?7, updated_by = ?8
 		 WHERE id = ?1 AND version = ?9 RETURNING *`,
-	).bind(d.id, d.name, d.phone, d.cdl_class, d.cdl_expires, d.status, now(), user, version).first<Driver>();
+	).bind(d.id, d.name, d.phone, d.cdl_class, d.cdl_expires, d.status, now(), user, version, d.hourly_rate).first<Driver>();
 	if (row) return row;
 	await getDriver(db, d.id);
 	throw new HttpError(409, "conflict", "record was changed by another user");
@@ -738,21 +753,111 @@ export async function dispatchLoad(db: D1Database, tables: KVNamespace, user: st
 
 // returnLoad closes a dispatched load when the truck is back: miles is the
 // odometer's reading of the run, the planned miles if 0, and the truck's
-// odometer goes up by it.
-export async function returnLoad(db: D1Database, user: string, id: string, actual = 0): Promise<LoadSummary> {
-	const { load } = await getLoad(db, id);
+// odometer goes up by it. The load is costed (loadCost) and the cost
+// shared over its shipments by weight.
+export async function returnLoad(db: D1Database, tables: KVNamespace, user: string, id: string, actual = 0): Promise<LoadSummary> {
+	const { load, stops, truck, driver } = await getLoad(db, id);
 	if (load.status !== "D") throw bad("status", `load ${load.id} is ${loadStatusNames[load.status].toLowerCase()} - only a dispatched load comes back`);
 	if (!Number.isInteger(actual) || actual < 0 || actual > 5000) throw bad("miles", "the miles must be a whole number from 0 to 5000");
 	const open = load.stops - load.delivered - load.missed;
 	if (open > 0) throw bad("status", `${open} stop(s) on load ${load.id} have no proof of delivery - mark each delivered or not delivered`);
 	const mi = actual || load.miles;
-	const res = await db.prepare("UPDATE loads SET status = 'C', returned = ?2, actual_miles = ?3 WHERE id = ?1 AND status = 'D'")
-		.bind(load.id, now(), mi).run();
+	const at = now();
+	const cost = loadCost(truck, driver, mi, load.dispatched, at);
+	const carrier = await carrierEquivalent(db, tables, stops);
+	const res = await db.prepare(
+		`UPDATE loads SET status = 'C', returned = ?2, actual_miles = ?3, cost_miles = ?4, cost_labor = ?5, cost_carrier = ?6
+		 WHERE id = ?1 AND status = 'D'`,
+	).bind(load.id, at, mi, cost.miles, cost.labor, carrier).run();
 	if (res.meta.changes === 0) throw new HttpError(409, "conflict", "record was changed by another user");
-	await db.prepare("UPDATE trucks SET odometer = odometer + ?2 WHERE id = ?1").bind(load.truck_id, mi).run();
+	await db.batch([
+		db.prepare("UPDATE trucks SET odometer = odometer + ?2 WHERE id = ?1").bind(load.truck_id, mi),
+		...share(cost.miles + cost.labor, stops).map(([shp, dollars]) =>
+			db.prepare("UPDATE shipments SET freight_cost = freight_cost + ?2 WHERE id = ?1").bind(shp, dollars)),
+	]);
 	await syslog(db, user, `CUS1908${load.missed ? "W" : "I"} LOAD ${load.id} BACK: TRUCK ${load.truck_id}, ${mi} MI` +
 		(load.missed ? `, ${load.missed} SHIPMENT(S) BACK TO REDELIVER` : ""));
 	return (await getLoad(db, load.id)).load;
+}
+
+// ---- freight costs ----
+
+// loadCost is what a run cost: its miles at the truck's cost per mile, and
+// the driver's time on duty, from leaving to coming back plus the
+// pre-trip, at their rate. Whole dollars.
+export function loadCost(truck: Truck, driver: Driver, mi: number, left: string, back: string): { miles: number; labor: number } {
+	const minutes = Math.max(Math.round((Date.parse(back) - Date.parse(left)) / 60_000), 0) + PRETRIP_MIN;
+	return { miles: Math.round(mi * truck.cost_per_mile), labor: Math.round((minutes / 60) * driver.hourly_rate) };
+}
+
+// share splits whole dollars over stops by weight; the cents left over go
+// to the heaviest.
+export function share(total: number, stops: Pick<Stop, "shipment_id" | "weight">[]): [string, number][] {
+	const lb = stops.reduce((t, s) => t + s.weight, 0);
+	if (stops.length === 0 || total <= 0) return [];
+	const parts = stops.map((s) => [s.shipment_id, Math.floor((total * (lb ? s.weight / lb : 1 / stops.length)))] as [string, number]);
+	const left = total - parts.reduce((t, [, d]) => t + d, 0);
+	const heaviest = stops.reduce((h, s, i) => (s.weight > stops[h].weight ? i : h), 0);
+	parts[heaviest][1] += left;
+	return parts;
+}
+
+// carrierEquivalent is what the carriers would have charged for a load's
+// shipments: each by the CARRIER table as if there were no truck.
+export async function carrierEquivalent(db: D1Database, tables: KVNamespace, stops: Pick<Stop, "shipment_id" | "state" | "weight" | "cartons">[]): Promise<number> {
+	const table = (await carrierRates(tables)).filter((c) => c.code !== "TRK");
+	let total = 0;
+	for (const s of stops) {
+		const inv = await db.prepare("SELECT i.total FROM shipments h JOIN invoices i ON i.id = h.invoice_id WHERE h.id = ?").bind(s.shipment_id).first<{ total: number }>();
+		const c = chooseCarrier(table, { state: s.state, weight: s.weight, maxCarton: Math.ceil(s.weight / Math.max(s.cartons, 1)), value: inv?.total ?? 0 })
+			?? table[table.length - 1];
+		if (c) total += freight(c, s.weight);
+	}
+	return Math.round(total);
+}
+
+export interface CostRow {
+	load: Load & { stops: number; weight: number };
+	cost: number; // the truck's: miles and labor
+	per_mile: number;
+	saved: number; // what the carriers would have charged, less the truck's cost
+}
+
+export interface FreightCosts {
+	month: string; // YYYY-MM
+	loads: CostRow[];
+	truck: { loads: number; miles: number; weight: number; cost: number; carrier: number };
+	carriers: { carrier: string; shipments: number; weight: number; cost: number }[];
+}
+
+// freightCosts is a month's freight: each company truck load that came
+// back, with its cost against what the carriers would have charged, and
+// what each carrier charged for the shipments it took.
+export async function freightCosts(db: D1Database, month: string): Promise<FreightCosts> {
+	if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw bad("month", "the month must be YYYY-MM");
+	const { results } = await db.prepare(
+		`SELECT l.*, COUNT(s.seq) AS stops, COALESCE(SUM(s.weight), 0) AS weight
+		 FROM loads l LEFT JOIN load_stops s ON s.load_id = l.id
+		 WHERE l.status = 'C' AND substr(l.day, 1, 7) = ? GROUP BY l.id ORDER BY l.day, l.id`,
+	).bind(month).all<Load & { stops: number; weight: number }>();
+	const loads = results.map((l) => {
+		const cost = l.cost_miles + l.cost_labor;
+		return { load: l, cost, per_mile: l.actual_miles ? Math.round((cost / l.actual_miles) * 100) / 100 : 0, saved: l.cost_carrier - cost };
+	});
+	const { results: carriers } = await db.prepare(
+		`SELECT carrier, COUNT(*) AS shipments, COALESCE(SUM(weight), 0) AS weight, COALESCE(SUM(freight_cost), 0) AS cost
+		 FROM shipments WHERE status = 'S' AND carrier <> 'TRK' AND substr(shipped, 1, 7) = ? GROUP BY carrier ORDER BY carrier`,
+	).bind(month).all<{ carrier: string; shipments: number; weight: number; cost: number }>();
+	return {
+		month, loads, carriers,
+		truck: {
+			loads: loads.length,
+			miles: loads.reduce((t, r) => t + r.load.actual_miles, 0),
+			weight: loads.reduce((t, r) => t + r.load.weight, 0),
+			cost: loads.reduce((t, r) => t + r.cost, 0),
+			carrier: loads.reduce((t, r) => t + r.load.cost_carrier, 0),
+		},
+	};
 }
 
 // ---- proof of delivery ----

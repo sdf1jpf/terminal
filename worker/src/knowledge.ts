@@ -79,7 +79,9 @@ const concepts: Topic[] = [
 			"duty a day), its stops in the order that drives the fewest miles. Dispatching a load ships its shipments. On the load, " +
 			"D beside a stop with who signed is its proof of delivery, X with why means it was not delivered and waits for another " +
 			"load; PF10 when the truck is back, with every stop signed off, adds its miles to the odometer. Option 7.4 is the dispatch board. Trucks due for service (every 15,000 " +
-			"miles or 90 days) or in the shop are not planned: option 7.1, V records a service.",
+			"miles or 90 days) or in the shop are not planned: option 7.1, V records a service. Option 7.5 is freight cost by " +
+			"route: each load back costs its miles at the truck's cost per mile and the driver's hours at their rate, against what " +
+			"UPS or FedEx would have charged; the month-end journal posts truck costs to 5210 and carrier charges to 5200.",
 		go: "=7.3",
 	},
 	{

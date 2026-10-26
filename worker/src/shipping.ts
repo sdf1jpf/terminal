@@ -14,7 +14,7 @@ import { fromEDIOrder, party, send, ymd, type Interchange } from "./edi";
 import { HttpError } from "./http";
 import { addressOf, cityLine, getInvoice, type Invoice, type InvoiceLine } from "./invoices";
 import type { StepResult } from "./jobs";
-import { carrierRates, chooseCarrier, type Carrier, type Order } from "./systables";
+import { carrierRates, chooseCarrier, freight, type Carrier, type Order } from "./systables";
 
 export interface Shipment {
 	id: string;
@@ -36,6 +36,7 @@ export interface Shipment {
 	delivered: string;
 	signed_by: string;
 	tracked: string; // when the carrier was last asked
+	freight_cost: number; // whole dollars: the carrier's charge, or the shipment's share of its truck load's cost (fleet.ts)
 }
 
 export const shipStatusNames: Record<string, string> = { P: "PICKING", K: "PACKED", S: "SHIPPED" };
@@ -140,11 +141,14 @@ export async function pack(db: D1Database, tables: KVNamespace, id: string, cart
 	if (!Number.isInteger(cartons) || cartons < 1 || cartons > 999) throw bad("cartons", "cartons must be a whole number from 1 to 999");
 	if (!Number.isInteger(weight) || weight < 1 || weight > 99_999) throw bad("weight", "weight must be whole pounds from 1 to 99999");
 	const { shipment, invoice } = await getShipment(db, id);
-	const r = routeFor(await carrierRates(tables), addressOf(invoice, "ship"), cartons, weight, invoice.total);
+	const table = await carrierRates(tables);
+	const r = routeFor(table, addressOf(invoice, "ship"), cartons, weight, invoice.total);
+	// What the carrier will charge; the truck's cost is shared out when it is back.
+	const cost = r.carrier === "TRK" ? 0 : Math.round(freight(table.find((c) => c.code === r.carrier)!, weight));
 	const row = await db.prepare(
-		`UPDATE shipments SET status = 'K', cartons = ?2, weight = ?3, packed = ?4, carrier = ?5, route = ?6
+		`UPDATE shipments SET status = 'K', cartons = ?2, weight = ?3, packed = ?4, carrier = ?5, route = ?6, freight_cost = ?7
 		 WHERE id = ?1 AND status = 'P' RETURNING *`,
-	).bind(shipment.id, cartons, weight, now(), r.carrier, r.reason).first<Shipment>();
+	).bind(shipment.id, cartons, weight, now(), r.carrier, r.reason, cost).first<Shipment>();
 	return row ?? why(db, id, "P", "packed");
 }
 

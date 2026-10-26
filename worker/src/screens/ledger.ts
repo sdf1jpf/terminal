@@ -10,6 +10,9 @@ import { fail, isCode, pf, type GLAccountState, type LedgerState, type Program, 
 // latest activity. S on an account opens CUSA02 ACCOUNT LEDGER, its entries
 // in the period.
 
+// accountRows is how many accounts fit above the totals.
+const accountRows = (ctx: Ctx) => ctx.rows - 16;
+
 const amt = (n: number) => (n ? money(n) : "");
 
 function tbLine(acct: string, name: string, type: string, activity: string, debit: string, credit: string): string {
@@ -47,11 +50,17 @@ export const ledger: Program<LedgerState> = {
 			scr.text(5, 2, "SELECT: S=ACCOUNT ENTRIES       BALANCES ARE AS OF THE END OF THE PERIOD", { color: "blue" });
 			scr.text(7, 2, "S " + tbLine("ACCT", "NAME", "TYPE", "IN PERIOD", "DEBIT", "CREDIT"), { color: "white", bright: true });
 			scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
-			tb.rows.forEach((r, i) => {
+			// The accounts scroll above the totals, which keep to the bottom.
+			const rows = accountRows(ctx);
+			const top = Math.min(s.top ?? 0, Math.max(tb.rows.length - rows, 0));
+			if (tb.rows.length > rows) {
+				scr.text(6, 2, `ACCOUNTS ${top + 1} TO ${Math.min(top + rows, tb.rows.length)} OF ${tb.rows.length} - PF7/PF8 SCROLL`, { color: "white" });
+			}
+			tb.rows.slice(top, top + rows).forEach((r, i) => {
 				scr.input(9 + i, 2, 1, "sel:" + r.account, "", { bright: s.errSel === r.account });
 				scr.text(9 + i, 4, tbLine(r.account, r.name, typeNames[r.type], amt(r.activity), amt(r.debit), amt(r.credit)), { color: "green" });
 			});
-			const row = 10 + tb.rows.length;
+			const row = 10 + Math.min(rows, tb.rows.length);
 			scr.text(row - 1, 4, tbLine("", "", "", "", "-".repeat(12), "-".repeat(12)), { color: "blue" });
 			scr.text(row, 4, tbLine("", "TOTALS", "", "", money(tb.debits), money(tb.credits)), { color: "white", bright: true });
 			const balanced = tb.debits === tb.credits;
@@ -128,6 +137,21 @@ export const ledger: Program<LedgerState> = {
 				return submit("CUSDUNN");
 			case pf(10):
 				return submit("CUSTRIAL");
+			case pf(7):
+			case pf(8): {
+				const tb = await load(ctx, s.period ?? "");
+				const total = typeof tb === "string" ? 0 : tb.rows.length;
+				const rows = accountRows(ctx);
+				if (input.aid === pf(7)) {
+					if (!s.top) s.msg = "CUS0101W ALREADY AT TOP OF DATA";
+					s.top = Math.max((s.top ?? 0) - rows, 0);
+				} else if ((s.top ?? 0) + rows >= total) {
+					s.msg = "CUS0102W ALREADY AT BOTTOM OF DATA";
+				} else {
+					s.top = Math.min((s.top ?? 0) + rows, total - rows);
+				}
+				return s;
+			}
 		}
 		s.msg = invalidKey(input.aid);
 		return s;

@@ -222,12 +222,14 @@ export interface LoadState {
 	confirm?: boolean; // PF9 pressed once
 	msg?: string;
 }
+export interface CostsState { p: "costs"; back: State; month?: string; top?: number; errField?: string; msg?: string }
 export interface BoardState { p: "board"; back: State; day?: string; errSel?: string; errField?: string; msg?: string }
 export interface LedgerState {
 	p: "ledger";
 	back: State;
 	period?: string; // the period shown; "" for the open one
 	confirm?: boolean; // PF5 was pressed once: press it again to close the period
+	top?: number; // the first account shown
 	errField?: string;
 	errSel?: string;
 	msg?: string;
@@ -372,7 +374,7 @@ export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
 	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
 	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | TimelineState | EdiExState | ShipmentsState | ShipmentState | TrackingState
-	| TrucksState | DriversState | FleetItemState | LoadsState | LoadState | BoardState
+	| TrucksState | DriversState | FleetItemState | LoadsState | LoadState | BoardState | CostsState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
 	| MonitorState | TablesState | TableRowsState | TableRowState | AskState | ArchiveState | ArchDocState | MailState | MailMsgState;
 
