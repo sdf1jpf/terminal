@@ -15,6 +15,7 @@ import { outputLines, spoolStmts } from "./spool";
 import { logStmt } from "./syslog";
 import { agedAccounts } from "./reports";
 import { pickTickets } from "./shipping";
+import { manifestStep, planStep } from "./fleet";
 import { closeStep, dunningLetters, journalStep, lastClosed, trialBalance, trialBalanceReport, trialBalanceStep } from "./ledger";
 import { archiveSpool, putArchive, RETENTION_DAYS } from "./archive";
 import { mailStep } from "./mail";
@@ -91,6 +92,14 @@ export const jobLibrary: Record<string, JobDef> = {
 		title: "PICK TICKETS FOR THE WAREHOUSE",
 		short: "PICK TICKETS",
 		steps: [{ name: "STEP010", run: pickTickets }],
+	},
+	CUSLOAD: {
+		title: "PLAN TODAY'S TRUCK LOADS, PRINT MANIFESTS",
+		short: "TRUCK LOADS",
+		steps: [
+			{ name: "STEP010", run: planStep },
+			{ name: "STEP020", run: manifestStep },
+		],
 	},
 	CUSCLOSE: {
 		title: "MONTH-END CLOSE",

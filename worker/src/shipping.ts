@@ -157,9 +157,15 @@ function trackingNumber(carrier: string, id: string): string {
 }
 
 // ship sends a packed shipment with the carrier chosen when it was packed
-// and, if its invoice came from an 850, sends the customer an 856.
-export async function ship(db: D1Database, user: string, id: string): Promise<{ shipment: Shipment; edi?: Interchange }> {
+// and, if its invoice came from an 850, sends the customer an 856. A
+// shipment on a company truck load ships when the load is dispatched
+// (fleet.ts), which passes the load as onLoad.
+export async function ship(db: D1Database, user: string, id: string, onLoad = ""): Promise<{ shipment: Shipment; edi?: Interchange }> {
 	const { shipment: packed } = await getShipment(db, id);
+	const load = await db.prepare(
+		"SELECT l.id FROM load_stops s JOIN loads l ON l.id = s.load_id WHERE s.shipment_id = ? AND l.status = 'P'",
+	).bind(packed.id).first<{ id: string }>();
+	if (load && load.id !== onLoad) throw bad("status", `shipment ${packed.id} is on truck load ${load.id} - it ships when the load is dispatched (option 7.3)`);
 	const row = await db.prepare(
 		`UPDATE shipments SET status = 'S', tracking = ?3, shipped = ?4, shipped_by = ?5, delivery = 'T'
 		 WHERE id = ?1 AND status = 'K' AND carrier = ?2 RETURNING *`,

@@ -19,6 +19,7 @@ import { HttpError } from "./http";
 import { getInvoice, addressOf, type Address } from "./invoices";
 import type { Shipment } from "./shipping";
 import { syslog } from "./syslog";
+import { fleetTracking } from "./fleet";
 import { carrierRates } from "./systables";
 
 export type Delivery = "" | "T" | "O" | "D" | "X";
@@ -46,6 +47,7 @@ export interface TrackingEvent extends Scan {
 
 // What a provider is asked about: one shipment on its way.
 export interface TrackRequest {
+	shipment: string; // SHP00012
 	carrier: string; // UPS, FDX, TRK
 	tracking: string;
 	shipped: string; // RFC 3339, UTC
@@ -146,15 +148,17 @@ export const simulated: TrackingProvider = {
 };
 
 // providers holds the carriers whose real tracking API is set up, by
-// carrier code. A carrier not in it is tracked by the simulator.
+// carrier code. A carrier not in it is tracked by the simulator, except
+// that the company truck's loads are tracked by the fleet (fleet.ts).
 const providers: Record<string, TrackingProvider> = {};
 
 export function registerProvider(carrier: string, p: TrackingProvider): void {
 	providers[carrier] = p;
 }
 
-export function providerFor(carrier: string): TrackingProvider {
-	return providers[carrier] ?? simulated;
+export function providerFor(carrier: string, db?: D1Database): TrackingProvider {
+	const p = providers[carrier] ?? simulated;
+	return carrier === "TRK" && db ? fleetTracking(db, p) : p;
 }
 
 // ---- tracking shipments ----
@@ -171,9 +175,9 @@ export async function trackShipment(db: D1Database, tables: KVNamespace, shp: Sh
 	if (shp.status !== "S" || shp.delivery === "D") return shp;
 	const { invoice } = await getInvoice(db, shp.invoice_id);
 	const carrier = (await carrierRates(tables)).find((c) => c.code === shp.carrier);
-	const provider = providerFor(shp.carrier);
+	const provider = providerFor(shp.carrier, db);
 	const r = await provider.track({
-		carrier: shp.carrier, tracking: shp.tracking, shipped: shp.shipped,
+		shipment: shp.id, carrier: shp.carrier, tracking: shp.tracking, shipped: shp.shipped,
 		shipTo: addressOf(invoice, "ship"), transitDays: carrier?.transit_days || 3,
 	}, at);
 	const stmts = r.scans.map((s) => db.prepare(
