@@ -31,11 +31,11 @@ describe("general ledger", () => {
 		const inv = await sale("000107", "BRG-6310", 10); // 10 at $31, cost $19
 		await payInvoice(db, "IBMUSER", inv.id);
 		tb = await trialBalance(db);
-		expect(tb.unjournaled).toBe(2);
+		expect(tb.unjournaled).toBe(3); // the invoice, the payment and the freight to ship it
 		const step = await journalStep(db, { name: "CUSTRIAL" });
 		expect(step.rc).toBe(0);
 		expect(step.lines.find((l) => l.startsWith("5000"))).toMatch(/COST OF GOODS SOLD +\$190 *$/);
-		expect(step.lines.at(-1)).toBe("6 ENTRIES POSTED");
+		expect(step.lines.at(-1)).toBe("8 ENTRIES POSTED");
 		tb = await trialBalance(db);
 		expect(tb.debits).toBe(tb.credits);
 		expect(ar().debit).toBe(tb.subledger);

@@ -1,11 +1,11 @@
 import { submitJob } from "../jobs";
 import {
-	assignLoad, board, cancelLoad, dayOf, dispatchLoad, freightDay, getLoad, listLoads, listTrucks, loadStatusNames, MAX_DRIVE_MIN, MAX_DUTY_MIN,
+	assignLoad, board, cancelLoad, dayOf, freightCosts, dispatchLoad, freightDay, getLoad, listLoads, listTrucks, loadStatusNames, MAX_DRIVE_MIN, MAX_DUTY_MIN,
 	deliverStop, planLoads, PRETRIP_MIN, returnLoad, stopNotDelivered, serviceState, truckStatusNames, waitingShipments, type LoadSummary, type StopStatus,
 } from "../fleet";
 import { deliveryShort } from "../tracking";
-import { header, invalidKey, keys, label, lpad, message, newScreen, pad, right, stamp, type Color, type Ctx } from "./screen";
-import { fail, isCode, pf, type BoardState, type LoadsState, type LoadState, type Next, type Program, type State } from "./program";
+import { header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, type Color, type Ctx } from "./screen";
+import { fail, isCode, pf, type BoardState, type CostsState, type LoadsState, type LoadState, type Next, type Program, type State } from "./program";
 
 // CUSF05 LOADS plans a day's company truck loads (fleet.ts): PF6 groups
 // the packed truck shipments waiting into loads, each with a truck, a
@@ -246,6 +246,12 @@ export const load: Program<LoadState> = {
 			if (l.returned) when.push(`BACK ${stamp(ctx, l.returned).slice(5)}, ${l.actual_miles} MI`);
 			else if (l.dispatched) when.push(`DUE BACK ${stamp(ctx, new Date(Date.parse(l.dispatched) + (l.duty_min - PRETRIP_MIN) * 60_000).toISOString()).slice(11)}`);
 			if (when.length > 0) scr.text(8, 2, when.join("  "), { color: "green" });
+			if (l.status === "C") {
+				const cost = l.cost_miles + l.cost_labor;
+				const saved = l.cost_carrier - cost;
+				scr.text(9, 2, `COST ${money(cost)} (MILES ${money(l.cost_miles)}, DRIVER ${money(l.cost_labor)})  CARRIERS ${money(l.cost_carrier)}  ` +
+					`${saved >= 0 ? "SAVED" : "EXTRA"} ${money(Math.abs(saved))}`.slice(0, scr.cols - 3), { color: saved >= 0 ? "green" : "yellow" });
+			}
 			if (l.status === "D") {
 				label(scr, 9, 2, "SIGNED BY/WHY ===>");
 				scr.input(9, 21, 20, "signed", s.vals?.signed ?? "", { bright: s.errField === "signed" });
@@ -370,7 +376,7 @@ export const load: Program<LoadState> = {
 					}
 					if (l.status === "D") {
 						const mi = s.vals!.miles;
-						const back = await returnLoad(ctx.db, ctx.user, s.id, /^\d+$/.test(mi) ? Number(mi) : mi ? NaN : 0);
+						const back = await returnLoad(ctx.db, ctx.tables, ctx.user, s.id, /^\d+$/.test(mi) ? Number(mi) : mi ? NaN : 0);
 						s.vals = undefined;
 						s.msg = `CUS1933${back.missed ? "W" : "I"} LOAD ${s.id} COMPLETE, ${back.actual_miles} MI ON TRUCK ${back.truck_id}` +
 							(back.missed ? ` - ${back.missed} SHIPMENT(S) WAIT TO BE REDELIVERED` : "");
@@ -461,6 +467,88 @@ export const dispatchBoard: Program<BoardState> = {
 				return s.back.p === "loads" ? s.back : { p: "loads", back: s, day: s.day };
 			case pf(5):
 				s.msg = `CUS1935I BOARD REFRESHED AT ${stamp(ctx, new Date().toISOString()).slice(11)}`;
+				return s;
+		}
+		s.msg = invalidKey(input.aid);
+		return s;
+	},
+};
+
+// ---- CUSF08 FREIGHT COSTS ----
+
+const costRows = (ctx: Ctx) => ctx.rows - 13;
+
+function costLine(id: string, day: string, truck: string, lb: string, mi: string, miles: string, labor: string, total: string, per: string, carriers: string, saved: string): string {
+	return `${pad(id, 7)} ${pad(day, 5)} ${pad(truck, 5)} ${lpad(lb, 6)} ${lpad(mi, 5)} ${lpad(miles, 7)} ${lpad(labor, 7)} ${lpad(total, 7)} ${lpad(per, 5)} ${lpad(carriers, 7)} ${lpad(saved, 7)}`;
+}
+
+const thisMonth = () => freightDay().slice(0, 7);
+
+export const costs: Program<CostsState> = {
+	async render(ctx, s) {
+		const scr = newScreen(ctx, "CUSF08");
+		header(scr, ctx, "FREIGHT COSTS");
+		let msg = s.msg ?? "";
+		const month = s.errField === "month" ? thisMonth() : s.month || thisMonth();
+		label(scr, 4, 2, "MONTH ===>");
+		scr.input(4, 13, 7, "month", s.errField === "month" ? s.month ?? "" : month, { bright: s.errField === "month" });
+		scr.text(4, 22, "YYYY-MM.  COMPANY TRUCK LOADS BACK, AGAINST WHAT THE CARRIERS CHARGE", { color: "blue" });
+		try {
+			const r = await freightCosts(ctx.db, month);
+			const t = r.truck;
+			const saved = t.carrier - t.cost;
+			scr.text(5, 2, `COMPANY TRUCK  ${t.loads} LOADS  ${t.miles} MI  ${t.weight} LB  COST ${money(t.cost)}` +
+				(t.miles ? `  $${(t.cost / t.miles).toFixed(2)}/MI` : ""), { color: "white" });
+			scr.text(6, 2, `CARRIERS WOULD HAVE CHARGED ${money(t.carrier)} - ` +
+				(saved >= 0 ? `THE TRUCK SAVED ${money(saved)}` : `THE TRUCK COST ${money(-saved)} MORE`), { color: saved >= 0 ? "green" : "yellow", bright: true });
+			scr.text(7, 2, r.carriers.length
+				? "CARRIERS  " + r.carriers.map((c) => `${c.carrier} ${c.shipments} SHIPMENTS ${money(c.cost)}`).join("   ")
+				: "CARRIERS  NO SHIPMENTS THIS MONTH", { color: "turquoise" });
+			const rows = costRows(ctx);
+			const top = Math.min(s.top ?? 0, Math.max(r.loads.length - rows, 0));
+			scr.text(9, 2, costLine("LOAD", "DAY", "TRUCK", "LB", "MILES", "MILES $", "DRIVER", "TOTAL", "$/MI", "CARRIER", "SAVED"), { color: "white", bright: true });
+			scr.text(10, 2, "-".repeat(scr.cols - 3), { color: "blue" });
+			r.loads.slice(top, top + rows).forEach((x, i) => {
+				const l = x.load;
+				scr.text(11 + i, 2, costLine(l.id, l.day.slice(5), l.truck_id, String(l.weight), String(l.actual_miles), String(l.cost_miles), String(l.cost_labor),
+					String(x.cost), x.per_mile.toFixed(2), String(l.cost_carrier), String(x.saved)), { color: x.saved >= 0 ? "green" : "yellow" });
+			});
+			if (r.loads.length === 0) scr.text(11, 4, `NO TRUCK LOADS CAME BACK IN ${month}`, { color: "yellow" });
+		} catch (e) {
+			msg = fail(e);
+		}
+		message(scr, msg);
+		keys(scr, "PF1=HELP  PF3=EXIT  PF4=LOADS  PF5=REFRESH  PF7=UP  PF8=DOWN  PF12=CANCEL");
+		scr.cursorTo("month");
+		return scr;
+	},
+
+	async handle(ctx, s, input) {
+		s.msg = s.errField = undefined;
+		const typed = (input.fields.month ?? "").trim();
+		if (input.modified.has("month") && typed !== (s.month || thisMonth())) {
+			s.month = typed;
+			s.top = 0;
+			if (typed && !/^\d{4}-(0[1-9]|1[0-2])$/.test(typed)) {
+				s.msg = "CUS1944E THE MONTH MUST BE YYYY-MM";
+				s.errField = "month";
+			}
+			if (input.aid === "ENTER") return s;
+		}
+		switch (input.aid) {
+			case "ENTER":
+				return s;
+			case pf(3):
+			case pf(12):
+				return s.back;
+			case pf(4):
+				return s.back.p === "loads" ? s.back : { p: "loads", back: s };
+			case pf(5):
+				s.msg = "CUS1945I FREIGHT COSTS REFRESHED";
+				return s;
+			case pf(7):
+			case pf(8):
+				scroll(s, input.aid, costRows(ctx), (await freightCosts(ctx.db, s.month || thisMonth()).catch(() => ({ loads: [] }))).loads.length);
 				return s;
 		}
 		s.msg = invalidKey(input.aid);

@@ -218,6 +218,8 @@ interface FieldDef {
 	label: string;
 	len: number;
 	numeric?: boolean;
+	cents?: boolean; // dollars and cents
+	initial?: string; // on a new one
 	hint?: string;
 }
 
@@ -230,6 +232,7 @@ const truckFields: FieldDef[] = [
 	{ name: "status", label: "STATUS", len: 1, hint: "A=ACTIVE  S=IN SHOP  R=RETIRED" },
 	{ name: "service_miles", label: "SERVICE DUE AT MI", len: 7, numeric: true },
 	{ name: "service_due", label: "OR ON", len: 10, hint: "YYYY-MM-DD, WHICHEVER COMES FIRST" },
+	{ name: "cost_per_mile", label: "COST PER MILE", len: 6, cents: true, initial: "1.00", hint: "DOLLARS: FUEL, TIRES, UPKEEP" },
 ];
 
 const driverFields: FieldDef[] = [
@@ -238,6 +241,7 @@ const driverFields: FieldDef[] = [
 	{ name: "cdl_class", label: "LICENSE CLASS", len: 1, hint: "A DRIVES ANY TRUCK, B A B OR C, C ONLY A C" },
 	{ name: "cdl_expires", label: "LICENSE EXPIRES", len: 10, hint: "YYYY-MM-DD" },
 	{ name: "status", label: "STATUS", len: 1, hint: "A=AVAILABLE  O=OFF  L=ON LEAVE" },
+	{ name: "hourly_rate", label: "HOURLY RATE", len: 6, cents: true, initial: "30.00", hint: "DOLLARS, WITH BENEFITS" },
 ];
 
 const defs = (s: FleetItemState) => (s.kind === "T" ? truckFields : driverFields);
@@ -281,7 +285,8 @@ export const fleetitem: Program<FleetItemState> = {
 			defs(s).forEach((f, i) => {
 				const row = 6 + i;
 				label(scr, row, 4, dots(f.label, 19));
-				const v = s.vals ? (s.vals[f.name] ?? "") : rec ? String((rec as unknown as Record<string, unknown>)[f.name] ?? "") : "";
+				const raw = rec ? (rec as unknown as Record<string, unknown>)[f.name] : undefined;
+				const v = s.vals ? (s.vals[f.name] ?? "") : raw === undefined ? f.initial ?? "" : f.cents ? Number(raw).toFixed(2) : String(raw);
 				if (editing) scr.input(row, 25, f.len, f.name, v, { numeric: f.numeric, bright: s.errField === f.name });
 				else value(scr, row, 25, f.name === "status" ? (s.kind === "T" ? truckStatusNames : driverStatusNames)[v] ?? v : v);
 				if (f.hint && editing) scr.text(row, 26 + f.len + 1, f.hint, { color: "blue" });

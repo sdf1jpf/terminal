@@ -12,6 +12,8 @@
 //	goods received (receipts)         Dr 1300 INVENTORY   Cr 2000 AP
 //	stock adjusted by hand, a gain    Dr 1300 INVENTORY   Cr 5100 ADJUSTMENTS
 //	                    ... a loss    Dr 5100 ADJUSTMENTS Cr 1300 INVENTORY
+//	a carrier's charge, once shipped  Dr 5200 FREIGHT     Cr 2100 ACCRUED FREIGHT
+//	a company truck load, once back   Dr 5210 TRUCK       Cr 2110 ACCRUED FLEET COSTS (fleet.ts)
 //
 // The first run also posts opening balances against retained earnings, for
 // the customers' balances and the stock that were on file before the
@@ -147,6 +149,10 @@ export async function journal(db: D1Database, by: string): Promise<{ period: str
 		...pair("1300", "2000", "quantity * unit_cost", "'R:' || seq", "po_id", "'RECEIVED ' || sku", "FROM receipts WHERE quantity * unit_cost > 0"),
 		...pair("1300", "5100", "amount", "'A:' || seq", "sku", adjustMemo, "FROM stock_adjustments WHERE amount > 0"),
 		...pair("5100", "1300", "-amount", "'A:' || seq", "sku", adjustMemo, "FROM stock_adjustments WHERE amount < 0"),
+		...pair("5200", "2100", "freight_cost", "'F:' || id", "id", "'FREIGHT ' || carrier || ' ' || invoice_id",
+			"FROM shipments WHERE status = 'S' AND carrier <> 'TRK' AND freight_cost > 0"),
+		...pair("5210", "2110", "cost_miles + cost_labor", "'L:' || id", "id", "'TRUCK ' || truck_id || ' ' || actual_miles || ' MI'",
+			"FROM loads WHERE status = 'C' AND cost_miles + cost_labor > 0"),
 	];
 
 	// Opening balances, once: what customers owed and the stock at cost
@@ -206,7 +212,11 @@ export async function trialBalance(db: D1Database, periodName = ""): Promise<Tri
 		   + (SELECT COUNT(*) FROM receipts r WHERE quantity * unit_cost > 0
 		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'R:' || r.seq))
 		   + (SELECT COUNT(*) FROM stock_adjustments a WHERE amount <> 0
-		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'A:' || a.seq)) AS unjournaled`,
+		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'A:' || a.seq))
+		   + (SELECT COUNT(*) FROM shipments h WHERE status = 'S' AND carrier <> 'TRK' AND freight_cost > 0
+		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'F:' || h.id))
+		   + (SELECT COUNT(*) FROM loads l WHERE status = 'C' AND cost_miles + cost_labor > 0
+		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'L:' || l.id)) AS unjournaled`,
 	).first<{ subledger: number; unjournaled: number }>();
 	return {
 		period, rows,
