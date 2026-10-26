@@ -221,6 +221,7 @@ and is plain HTML, CSS and JavaScript with no build step.
 ```
 GET    /v1/health
 POST   /v1/session              logon → {"userid"}
+GET    /v1/live                 WebSocket: pushes that tell a terminal to redraw
 GET    /v1/customers?prefix=K   list, ordered by name
 POST   /v1/customers            create
 GET    /v1/customers/{id}
@@ -252,6 +253,12 @@ GET    /v1/customers/{id}/statement   a 30-day statement, as a PDF
 GET    /v1/archive?name=X&kind=K      archived output and documents
 GET    /v1/archive/{key}        one entry; {key}.pdf and {key}.txt are its files
 POST   /v1/archive/restore      put an archived listing back on the spool: {"key"}
+GET    /v1/tables               the system tables, with their row counts
+GET    /v1/tables/{t}           a table's columns and rows
+PUT    /v1/tables/{t}/{key}     add or change a row
+DELETE /v1/tables/{t}/{key}     delete a row
+DELETE /v1/tables/{t}           put a table back to its defaults
+GET    /v1/monitor?minutes=N    transaction statistics: 5, 15, 60, 240 or 1440 minutes
 ```
 
 Posting an invoice (`I`) adds to the balance and a payment (`P`) takes from it,
@@ -325,7 +332,7 @@ its own submenu; PF3 goes back up, and PF3 on the primary menu logs off.
 | 2 | ORDERS | 1 Invoices, 2 Shipping, 3 EDI mailbox |
 | 3 | INVENTORY | 1 Products, 2 Purchase orders, 3 Vendors |
 | 4 | ACCOUNTING | 1 General ledger, 2 Reports (1 Dashboard, 2 Sales, 3 Aging, 4 Turns, 5 Credit exposure) |
-| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output |
+| 5 | OPERATIONS | 1 Batch jobs, 2 Console/SYSLOG, 3 Job schedule, 4 Held output, 5 Transaction monitor, 6 System tables |
 | T, X | | Tutorial, log off |
 
 A fast path such as `1.2` or `=1.2` goes straight to an option from any menu,
@@ -363,6 +370,22 @@ RETRV button in the browser) is RETRIEVE: it brings back the last command
 you entered, and pressing it again goes further back. A terminal left without
 a key pressed for 30 minutes logs itself off, as TSO does with an S522.
 
+Each logon is a TSO session (TSU00042), kept by a
+[Durable Object](https://developers.cloudflare.com/durable-objects/)
+(`worker/src/sessions.ts`) along with the records it holds:
+
+- **Record locking.** While you are changing or deleting a customer, or
+  changing a product, the record is yours. Anyone else who tries, or you on
+  another terminal, gets `CUS1201E RECORD IN USE BY IBMUSER ON TERM0001`.
+  Leaving the screen, logging off or timing out lets it go, and so does a
+  session that has not been seen for 30 minutes. The REST API refuses to
+  change a locked record with `423 Locked`.
+- **SEND.** Type TSO's SEND on any command line: `SEND 'LUNCH AT NOON?'
+  USER(JFRANK)`, several users as `USER(A,B)`, everyone signed on as
+  `USER(*)`, `LOGON` to keep it for someone who is not on yet, or no `USER`
+  to tell the operator (it goes in SYSLOG). It shows on their message line
+  with your userid, at once if their terminal is idle.
+
 ## Products and stock
 
 Menu option 3.1 opens the **PRODUCT LIST** (CUSP01): the product file with
@@ -394,6 +417,14 @@ An invoice goes OPEN, then BILLED, then PAID:
   line. Typing part of a SKU or description with a `?` (such as `GLOVE?`) and
   pressing Enter searches too, and so does a SKU that is not on file but
   matches some products.
+- **Addresses:** every invoice has its own bill-to and ship-to, copied from
+  the customer when it is opened (an EDI order's `N1*ST` loop sets the
+  ship-to). PF5 shows them on **INVOICE ADDRESSES** (CUSI04): overtype one and
+  press Enter, PF5 copies the bill-to to the ship-to, and PF6 resets them
+  from the customer. The ship-to can be changed until the invoice is released
+  to the warehouse, the bill-to until it is billed. The ship-to goes on the
+  invoice screen, the pick ticket, the shipment and the 856; both go on the
+  810. Changing the customer's address later does not change its invoices.
 - **PF10 bills it:** the total is posted to the customer's account as an
   invoice (`I`) transaction, and the lines can no longer be changed.
 - **PF11 marks it paid:** a payment (`P`) for the total is posted.
@@ -461,6 +492,12 @@ which also shows how many are on order.
   press Enter, or PF11 (or `R` on the list) to receive everything still due.
   Each receipt is kept for the ledger. The PO is `RECEIVED` once every line
   is in.
+- **History:** **VENDOR HISTORY** (CUSV04) numbers a vendor's events, newest
+  first: POs opened, sent and received in full, each receipt at cost, and
+  the EDI interchanges with its system. Fill in `PURCHASE ORDER` to see one
+  PO's events. Type a line number to open that PO or interchange. You can
+  open the history from option 3.4 (`3.4 V00002 PO00003`), with `H` beside a
+  vendor, or with PF5 on a PO.
 
 PF6 on the list submits **CUSREORD**, which orders every active product at
 or below its reorder point back up to twice that point, counting what is
@@ -480,11 +517,18 @@ just one status) opens **SHIPPING** (CUSS01), and `S` beside a shipment
 opens **SHIPMENT** (CUSS02): its pick ticket, with each line's bin, in bin
 order.
 
-- **Pack:** type the cartons and weight and press PF10 (`PACKED`).
-- **Ship:** type the carrier (`UPS`, `FDX` or `TRK`) and press PF10
-  (`SHIPPED`, with a tracking number). A customer that ordered by EDI is
-  sent an **856 ship notice** with the cartons, carrier, tracking number and
-  lines.
+- **Pack:** type the cartons and weight and press PF10 (`PACKED`). The
+  system then picks the carrier from the invoice's ship-to, the weight, the
+  heaviest carton and the order's value, using the **CARRIER** system table
+  (option 5.6). It takes the first carrier, by priority, whose service area
+  and limits fit, and the screen shows which one and why. The default table:
+  - `UPS` ground by default: up to 149 lb, 70 lb a carton and $4,999.
+  - `TRK` (company truck) for freight beyond that when the ship-to is in
+    the truck area: the warehouse's state (OH) and IN, KY, MI, PA, WV.
+  - `FDX` (FedEx Freight) for everything else.
+- **Ship:** press PF10 (`SHIPPED`, with a tracking number). A customer that
+  ordered by EDI is sent an **856 ship notice** with the cartons, carrier,
+  tracking number and lines.
 - **Bill:** PF11 on the shipment, or PF10 on the invoice. Billing an
   invoice that has not shipped is refused.
 
@@ -508,6 +552,11 @@ The ledger is fed in batch from the subledgers:
 | Payment posted | 1000 Cash | 1200 Accounts receivable |
 | Cost of a billed invoice (at product unit cost) | 5000 Cost of goods sold | 1300 Inventory |
 | Goods received on a purchase order | 1300 Inventory | 2000 Accounts payable |
+| Stock gained by hand (a new product's stock, or a higher on hand or unit cost on the product screen) | 1300 Inventory | 5100 Inventory adjustments |
+| Stock lost by hand (a lower on hand or unit cost) | 5100 Inventory adjustments | 1300 Inventory |
+
+Each hand edit that changes the stock's value at cost is recorded in
+`stock_adjustments`, and the product screen's message shows the amount.
 
 The first run also posts opening balances against 3000 Retained earnings
 for the customer balances and the stock that were on file before the
@@ -586,10 +635,12 @@ Menu option 5.2 opens the **OPERATOR CONSOLE** (CUSO01), which shows SYSLOG,
 the system log: jobs being submitted, starting and ending (`$HASP100`,
 `$HASP373`, `$HASP395`), abends, the scheduler releasing jobs, logons and
 logoffs, and operator commands with their responses. While it shows the end
-of the log, the screen asks the terminal to redraw it every 5 seconds (the
-`refresh` key in the [screen protocol](docs/screen-protocol.md)), so new
-lines appear as they are written. The terminal waits while you are typing a
-command. PF7 scrolls back and holds the display; PF8 back to the end, or PF5,
+of the log it is live: the terminals keep a WebSocket open to `GET /v1/live`,
+and a watcher in the TSO Durable Object tells them within a second when the
+log moves, so new lines appear as they are written. A terminal without the
+connection redraws every 5 seconds instead (the `refresh` key in the
+[screen protocol](docs/screen-protocol.md)). Either way it waits while you
+are typing a command. PF7 scrolls back and holds the display; PF8 back to the end, or PF5,
 follows it again.
 
 Commands go in the log with their responses, for every console to see:
@@ -601,6 +652,9 @@ Commands go in the log with their responses, for every console to see:
 | `D SCHED` | Display the job schedule |
 | `S jobname` | Submit a job |
 | `H jobname`, `A jobname` | Hold or release a job's schedule |
+| `D TS` | Display the TSO users: session, terminal, screen and idle time |
+| `D GRS` | Display the records locked for update, and by whom |
+| `SEND 'text' USER(id)` | Send a message (see [Session](#session)) |
 
 PF6 opens the **JOB SCHEDULE** (CUSO02). A Worker
 [cron trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
@@ -666,12 +720,51 @@ file and a PDF:
 | Each dunning letter | **CUSDUNN** | `letters/2026-10-26/000101-L2` |
 | The trial balance and aging of a closed month | **CUSCLOSE** (STEP040) | `month-end/2026-10/TRIALBAL` |
 
-Option 5.5 opens **ARCHIVE** (CUSQ03; PF6 from held output gets there too):
+Option 5.7 opens **ARCHIVE** (CUSQ03; PF6 from held output gets there too):
 filter by name or reference and by kind, `S` browses an entry (CUSQ04), `D`
 sends its PDF, and `R` restores an archived listing to the spool, held,
 under its old ID. The API is `GET /v1/archive?name=&kind=`,
 `GET /v1/archive/{key}` (`.pdf` and `.txt` for the files) and
 `POST /v1/archive/restore {"key"}`.
+## Transaction monitor
+
+Every request the Worker answers is timed and written to
+[Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/)
+(dataset `customer_transactions`). A screen request counts as the transaction
+of the screen it sends back (`CUSM00`, `CUSO01`), an API call as its route
+(`GET /v1/customers/:id`).
+
+Menu option 5.5 (or `MONITOR`) opens the **TRANSACTION MONITOR** (CUSO03),
+like CICS statistics: the total, transactions per minute, average and
+maximum response time and abends (status 500 and up) for the window, then
+by transaction with count, rate, average, 95th percentile and maximum. PF6
+switches to the rate over time with a bar per interval, PF10 and PF11
+shorten and lengthen the window (5 minutes to 24 hours), and the screen
+refreshes every 30 seconds. `GET /v1/monitor` returns the same figures.
+
+Writing needs only the binding. Reading uses the Analytics Engine SQL API,
+which needs an API token with **Account → Account Analytics → Read**, set as
+a Worker secret: `cd worker && npx wrangler secret put AE_API_TOKEN`. Until
+it is set, the screen says so and `GET /v1/monitor` answers 503.
+
+## System tables
+
+Small reference tables live in [Workers KV](https://developers.cloudflare.com/kv/)
+(namespace `customer-api-tables`, binding `TABLES`) so every request can read
+them from the edge cache:
+
+| Table | What it holds |
+| --- | --- |
+| `CARRIER` | Carriers: priority, service states, weight, carton and order value limits, base and per-pound charge, transit days. Carriers are tried by priority and the first whose limits all hold takes the order; the defaults are the shipping desk's routing (UPS up to 149 lb, 70 lb a carton and $4,999; freight beyond that on the truck in OH IN KY MI PA WV, FedEx Freight otherwise). |
+| `TAXCODE` | Sales tax rate by ship-to state, and whether freight is taxed. |
+| `HELP` | PF1 help text by `panel.field` (`BROWSE.FILTER`) or field name. A row replaces the built-in help for that field, keeping its list of valid values, or adds help where there is none. |
+
+Menu option 5.6 (or `TABLES`) opens **SYSTEM TABLES** (CUSO04). `S` shows a
+table's rows (CUSO05), where `U` changes a row (CUSO06), `D` deletes one,
+PF5 adds one and PF9 twice puts the table back to its defaults. Changes are
+logged on SYSLOG (`CUS0801I`-`CUS0803I`). A table nobody has changed is not
+stored and reads as its defaults. KV is eventually consistent, so another
+location can see the old row for up to a minute.
 
 ## Printing a screen
 

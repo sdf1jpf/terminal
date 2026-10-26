@@ -315,3 +315,38 @@ func TestSavesFilesTheHostSends(t *testing.T) {
 		t.Fatalf("foreign URL: %q", scr.Row(23))
 	}
 }
+
+func TestPushes(t *testing.T) {
+	s, _, _ := newSession(t)
+	pushed := func() bool {
+		select {
+		case <-s.Pushes():
+			return true
+		default:
+			return false
+		}
+	}
+	s.event("syslog")
+	if pushed() {
+		t.Fatal("syslog pushed for a screen that is not live")
+	}
+	s.event("message")
+	if !pushed() {
+		t.Fatal("a message did not push")
+	}
+	s.show(&api.Screen{Map: "CUSO01", Rows: 24, Cols: 80, Refresh: 5, Live: "syslog"})
+	s.event("syslog")
+	s.event("syslog") // coalesced with the first
+	if !pushed() || pushed() {
+		t.Fatal("want one push for a live screen")
+	}
+
+	// While listening, the refresh timer is only a fallback.
+	s.setListening(true)
+	if got := s.show(&api.Screen{Map: "CUSO01", Rows: 24, Cols: 80, Refresh: 5, Live: "syslog"}).Refresh(); got != liveFallback {
+		t.Fatalf("refresh while listening = %v, want %v", got, liveFallback)
+	}
+	if !s.request("REDRAW", nil).Live {
+		t.Fatal("request does not say the client is listening")
+	}
+}

@@ -105,7 +105,7 @@ export const archive: Program<ArchiveState> = {
 						s.msg = `CUS1501I ${fileName(key)}.PDF SENT TO YOUR TERMINAL`;
 						return withDownload(s, { url: `/v1/archive/${key}.pdf`, name: `${fileName(key)}.pdf` });
 					case "R": {
-						const o = await restoreArchive(ctx.db, ctx.archive, ctx.user, key);
+						const o = await restoreArchive(ctx.db, ctx.env.ARCHIVE, ctx.user, key);
 						s.msg = `CUS1504I ${o.id} RESTORED TO THE SPOOL, HELD - ${o.lines} LINES`;
 						return s;
 					}
@@ -135,7 +135,7 @@ export const archdoc: Program<ArchDocState> = {
 		let msg = s.msg ?? "";
 		try {
 			const e = await getEntry(ctx.db, s.key);
-			const lines = await archiveLines(ctx.archive, s.key);
+			const lines = await archiveLines(ctx.env.ARCHIVE, s.key);
 			label(scr, 3, 2, `${e.name}  ${e.ref}  ${kindNames[e.kind]}  ${e.title}`.slice(0, scr.cols - 26));
 			const rows = docRows(ctx);
 			const top = Math.min(s.top ?? 0, Math.max(lines.length - rows, 0));
@@ -163,7 +163,7 @@ export const archdoc: Program<ArchDocState> = {
 				return withDownload(s, { url: `/v1/archive/${s.key}.pdf`, name: `${fileName(s.key)}.pdf` });
 			case pf(7):
 			case pf(8): {
-				const total = await archiveLines(ctx.archive, s.key).then((l) => l.length, () => 0);
+				const total = await archiveLines(ctx.env.ARCHIVE, s.key).then((l) => l.length, () => 0);
 				scroll(s, input.aid, docRows(ctx), total);
 				return s;
 			}

@@ -111,6 +111,14 @@ export interface InvoiceState {
 	errField?: string;
 	msg?: string;
 }
+export interface InvAddrState {
+	p: "invaddr";
+	back: InvoiceState;
+	id: string;
+	vals?: Record<string, string>; // the address fields, kept across a failed change
+	errField?: string;
+	msg?: string;
+}
 export interface SkuSearchState {
 	p: "skusearch";
 	back: InvoiceState;
@@ -164,7 +172,7 @@ export interface ShipmentState {
 	back: State;
 	id: string;
 	top?: number;
-	vals?: Record<string, string>; // cartons, weight and carrier, kept across a failed step
+	vals?: Record<string, string>; // cartons and weight, kept across a failed step
 	confirm?: boolean; // PF9 was pressed once: press it again to cancel the shipment
 	errField?: string;
 	msg?: string;
@@ -179,6 +187,15 @@ export interface LedgerState {
 	msg?: string;
 }
 export interface GLAccountState { p: "glaccount"; back: State; account: string; period: string; top?: number; msg?: string }
+export interface VendHistState {
+	p: "vendhist";
+	back: State;
+	vendor?: string;
+	po?: string; // only this purchase order's events; "" for all the vendor's
+	top?: number;
+	errField?: string;
+	msg?: string;
+}
 export interface VendorsState { p: "vendors"; back: State; top?: number; errSel?: string; msg?: string }
 
 export interface ConsoleState {
@@ -224,6 +241,35 @@ export interface ArchiveState {
 }
 export interface ArchDocState { p: "archdoc"; back: State; key: string; top?: number; msg?: string }
 
+export interface MonitorState {
+	p: "monitor";
+	back: State;
+	minutes?: number; // the window shown; 15 by default
+	view?: "T" | "I"; // by transaction (the default) or by interval
+	top?: number;
+	msg?: string;
+}
+export interface TablesState { p: "tables"; back: State; names?: string[]; errSel?: string; msg?: string }
+export interface TableRowsState {
+	p: "tablerows";
+	back: State;
+	table: string;
+	keys?: string[]; // the rows shown, for the selection codes
+	top?: number;
+	confirm?: boolean; // PF9 was pressed once: press it again to reset the table
+	errSel?: string;
+	msg?: string;
+}
+export interface TableRowState {
+	p: "tablerow";
+	back: TableRowsState;
+	table: string;
+	key?: string; // the row changed; unset to add one
+	vals?: Record<string, string>; // operator input kept across a failed save
+	errField?: string;
+	msg?: string;
+}
+
 export interface SearchState {
 	p: "search";
 	back: State;
@@ -237,10 +283,10 @@ export interface SearchState {
 
 export type State =
 	| MenuState | BrowseState | DetailState | ReportState | ChartState | HelpState | ActivityState | EventState
-	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | SkuSearchState
-	| EdiState | EdiDocState | POsState | POState | VendorsState | ShipmentsState | ShipmentState
+	| JobsState | JobLogState | ProductsState | ProductState | InvoicesState | InvoiceState | InvAddrState | SkuSearchState
+	| EdiState | EdiDocState | POsState | POState | VendorsState | VendHistState | ShipmentsState | ShipmentState
 	| LedgerState | GLAccountState | ConsoleState | ScheduleState | SpoolState | OutputState | SearchState
-	| ArchiveState | ArchDocState;
+	| MonitorState | TablesState | TableRowsState | TableRowState | ArchiveState | ArchDocState;
 
 // Input is what the operator sent with the AID key.
 export interface Input {
@@ -259,6 +305,14 @@ export type Next = State | Logoff;
 export interface Program<S extends State> {
 	render(ctx: Ctx, s: S): Promise<Screen>;
 	handle(ctx: Ctx, s: S, input: Input): Promise<Next>;
+	// locks names the records the panel holds for update while it shows s,
+	// such as "CUSTOMER 000101". The session keeps exactly these (and those
+	// of the panels under it) locked, so another terminal is told the
+	// record is in use (screens/index.ts, sessions.ts).
+	locks?(s: S): string[];
+	// unlocked returns the panel without its locks, after it lost them to
+	// another session: back to inquiry, nothing saved.
+	unlocked?(s: S): State;
 }
 
 // Fill puts values in a panel's input fields the next time it is drawn,

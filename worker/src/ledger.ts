@@ -9,6 +9,8 @@
 //	payment posted (transactions P)   Dr 1000 CASH        Cr 1200 AR
 //	cost of a billed invoice          Dr 5000 COGS        Cr 1300 INVENTORY
 //	goods received (receipts)         Dr 1300 INVENTORY   Cr 2000 AP
+//	stock adjusted by hand, a gain    Dr 1300 INVENTORY   Cr 5100 ADJUSTMENTS
+//	                    ... a loss    Dr 5100 ADJUSTMENTS Cr 1300 INVENTORY
 //
 // The first run also posts opening balances against retained earnings, for
 // the customers' balances and the stock that were on file before the
@@ -100,6 +102,11 @@ export async function listAccounts(db: D1Database): Promise<Account[]> {
 const invoiceCost = `(SELECT COALESCE(SUM(l.quantity * p.unit_cost), 0) FROM invoice_lines l JOIN products p ON p.sku = l.sku
                       WHERE l.invoice_id = t.reference)`;
 
+// adjustMemo describes a stock adjustment: ADJUST BRG-6204 +5 or -5, and
+// AT $7 when the unit cost changed.
+const adjustMemo = `'ADJUST ' || sku || CASE WHEN quantity > 0 THEN ' +' || quantity WHEN quantity < 0 THEN ' ' || quantity ELSE '' END
+                    || CASE WHEN new_cost <> old_cost THEN ' AT $' || new_cost ELSE '' END`;
+
 // journal posts every source row not yet journaled into the open period,
 // and the opening balances the first time. A re-run posts nothing twice.
 export async function journal(db: D1Database, by: string): Promise<{ period: string; entries: number; byAccount: Map<string, { debit: number; credit: number }> }> {
@@ -119,6 +126,8 @@ export async function journal(db: D1Database, by: string): Promise<{ period: str
 		...pair("5000", "1300", invoiceCost, "'C:' || seq", "reference", "'COST OF ' || reference",
 			`FROM transactions t WHERE type = 'I' AND reference GLOB 'INV[0-9]*' AND ${invoiceCost} > 0`),
 		...pair("1300", "2000", "quantity * unit_cost", "'R:' || seq", "po_id", "'RECEIVED ' || sku", "FROM receipts WHERE quantity * unit_cost > 0"),
+		...pair("1300", "5100", "amount", "'A:' || seq", "sku", adjustMemo, "FROM stock_adjustments WHERE amount > 0"),
+		...pair("5100", "1300", "-amount", "'A:' || seq", "sku", adjustMemo, "FROM stock_adjustments WHERE amount < 0"),
 	];
 
 	// Opening balances, once: what customers owed and the stock at cost
@@ -132,6 +141,7 @@ export async function journal(db: D1Database, by: string): Promise<{ period: str
 			   - (SELECT COALESCE(SUM(CASE type WHEN 'I' THEN amount ELSE -amount END), 0) FROM transactions) AS ar,
 			   (SELECT COALESCE(SUM(on_hand * unit_cost), 0) FROM products)
 			   - (SELECT COALESCE(SUM(quantity * unit_cost), 0) FROM receipts)
+			   - (SELECT COALESCE(SUM(amount), 0) FROM stock_adjustments)
 			   + (SELECT COALESCE(SUM(${invoiceCost}), 0) FROM transactions t WHERE type = 'I' AND reference GLOB 'INV[0-9]*')
 			   + (SELECT COALESCE(SUM(l.quantity * p.unit_cost), 0) FROM invoice_lines l JOIN products p ON p.sku = l.sku
 			      JOIN invoices i ON i.id = l.invoice_id WHERE i.status = 'O') AS inv`,
@@ -175,7 +185,9 @@ export async function trialBalance(db: D1Database, periodName = ""): Promise<Tri
 		`SELECT (SELECT COALESCE(SUM(balance), 0) FROM customers) AS subledger,
 		   (SELECT COUNT(*) FROM transactions t WHERE NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'T:' || t.seq))
 		   + (SELECT COUNT(*) FROM receipts r WHERE quantity * unit_cost > 0
-		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'R:' || r.seq)) AS unjournaled`,
+		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'R:' || r.seq))
+		   + (SELECT COUNT(*) FROM stock_adjustments a WHERE amount <> 0
+		      AND NOT EXISTS (SELECT 1 FROM gl_entries WHERE source = 'A:' || a.seq)) AS unjournaled`,
 	).first<{ subledger: number; unjournaled: number }>();
 	return {
 		period, rows,

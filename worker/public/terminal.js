@@ -29,6 +29,7 @@ const state = {
 	lastAid: null, // for HOST NOT RESPONDING retries
 	pendingResize: false,
 	timer: null, // the refresh timer, for screens that show live data
+	live: "", // what the screen shows that GET /v1/live announces changes to
 	active: Date.now(), // when the operator last pressed a key or clicked
 };
 
@@ -42,7 +43,7 @@ async function send(aid) {
 	render();
 	const before = state.scr;
 	try {
-		const body = encodeRequest({ aid, scr: before, state: state.commarea, terminal: LU_NAME, system: SYSTEM });
+		const body = encodeRequest({ aid, scr: before, state: state.commarea, terminal: LU_NAME, system: SYSTEM, live: live.open });
 		const res = await fetch("/v1/screen", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -66,7 +67,11 @@ async function send(aid) {
 		state.scr = next.scr;
 		if (aid === "REDRAW") state.scr.carry(before);
 		state.lock = Lock.NONE;
-		schedule(next.refresh);
+		state.live = next.live;
+		// With the live connection up, pushes redraw the screen and the
+		// timer is only a fallback.
+		schedule(live.open && next.live ? Math.max(next.refresh, LIVE_FALLBACK_S) : next.refresh);
+		connectLive();
 		if (next.download) save(next.download);
 			} catch (e) {
 		console.error(e);
@@ -102,11 +107,57 @@ function schedule(seconds) {
 	clearTimeout(state.timer);
 	if (!seconds) return;
 	state.timer = setTimeout(() => {
-		const busy = state.lock !== Lock.NONE || state.message || Object.keys(state.scr.modifiedFields()).length > 0;
-		if (busy) schedule(seconds);
+		if (busy()) schedule(seconds);
 		else send("REDRAW");
 	}, seconds * 1000);
 }
+
+function busy() {
+	return state.lock !== Lock.NONE || state.message || Object.keys(state.scr.modifiedFields()).length > 0;
+}
+
+// --- Live screens --------------------------------------------------------
+
+// GET /v1/live is a WebSocket on which the host says when to redraw: when
+// what a live screen shows has changed (the console's SYSLOG), and when a
+// message has come for this user. A redraw waits while the operator is
+// busy; their next key brings the news instead.
+const LIVE_FALLBACK_S = 60;
+const live = { ws: null, open: false, backoff: 1000 };
+
+function connectLive() {
+	if (live.ws || !state.commarea) return;
+	const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/live`);
+	live.ws = ws;
+	ws.onopen = () => {
+		live.open = true;
+		live.backoff = 1000;
+		if (state.live) schedule(LIVE_FALLBACK_S);
+	};
+	ws.onmessage = (e) => {
+		let ev;
+		try {
+			ev = JSON.parse(e.data);
+		} catch {
+			return; // "pong"
+		}
+		if (ev.event !== "message" && ev.event !== state.live) return;
+		if (!busy() && state.commarea) send("REDRAW");
+	};
+	ws.onclose = () => {
+		const was = live.open;
+		live.ws = null;
+		live.open = false;
+		if (was && state.live) schedule(5); // back to polling until it reconnects
+		setTimeout(connectLive, live.backoff);
+		live.backoff = Math.min(live.backoff * 2, 60_000);
+	};
+}
+
+// A keepalive, so idle proxies leave the connection open.
+setInterval(() => {
+	if (live.open) live.ws.send("ping");
+}, 30_000);
 
 // idleCheck logs the session off once the operator has left it alone for
 // IDLE_MS. Nothing is sent while there is no session or the host is busy.
@@ -128,6 +179,8 @@ const two = (n) => String(n).padStart(2, "0");
 
 // loggedOff shows the host's farewell; Enter starts a new conversation.
 function loggedOff(message) {
+	state.live = "";
+	live.ws?.close();
 	state.scr = new Screen(state.scr.rows, state.scr.cols);
 	state.scr.text(2, 2, message || "LOGGED OFF", { color: "white" });
 	state.scr.text(4, 2, "PRESS ENTER TO LOG ON AGAIN", { color: "turquoise" });

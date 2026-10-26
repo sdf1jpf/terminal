@@ -86,6 +86,38 @@ describe("EDI with customers' systems", () => {
 		expect(events).toEqual(expect.arrayContaining(["EDI IN", "EDI OUT", "OPENED", "BILLED", "PAYMENT"]));
 	});
 
+	it("ships an 850 to its N1*ST ship-to and names both parties on the 856 and 810", async () => {
+		const raw = interchange("000110", "CUSTAPI", 201, "850", [
+			["BEG", "00", "SA", "JSL-77", "", "20261026"],
+			["N1", "ST", "JUNIPER LAB 2"], ["N3", "9 RESEARCH BLVD"], ["N4", "ROUND ROCK", "TX", "786819999"],
+			["PO1", "1", "2", "EA", "9", "", "VP", "BRG-6204"],
+			["CTT", "1"],
+		]);
+		const po = await deliver(raw);
+		expect(po.status).toBe("ACCEPTED");
+		const id = po.reference.split(" ")[2];
+		const { invoice } = await getInvoice(db, id);
+		expect(invoice).toMatchObject({
+			bill_name: "JUNIPER SOFTWARE LABS", bill_city: "AUSTIN",
+			ship_name: "JUNIPER LAB 2", ship_address: "9 RESEARCH BLVD", ship_city: "ROUND ROCK", ship_state: "TX", ship_zip: "78681",
+		});
+
+		const shipped = await shipInvoice(db, id);
+		expect(shipped.edi!.raw).toContain("N1*ST*JUNIPER LAB 2~\nN3*9 RESEARCH BLVD~\nN4*ROUND ROCK*TX*78681~");
+		const billed = await bill(db, "IBMUSER", id);
+		expect(billed.edi!.raw).toContain("N1*BT*JUNIPER SOFTWARE LABS*92*000110~\nN3*2400 CAMPUS DR~\nN4*AUSTIN*TX*78701~");
+		expect(billed.edi!.raw).toContain("N1*ST*JUNIPER LAB 2~");
+
+		// A ship-to that will not do rejects the order.
+		const bad = await deliver(interchange("000110", "CUSTAPI", 202, "850", [
+			["BEG", "00", "SA", "JSL-78", "", "20261026"],
+			["N1", "ST", "JUNIPER LAB 3"], ["N4", "ROUND ROCK", "TEXAS", "78681"],
+			["PO1", "1", "1", "EA", "9", "", "VP", "BRG-6204"],
+			["CTT", "1"],
+		]));
+		expect(bad).toMatchObject({ status: "REJECTED", note: "N1*ST SHIP-TO: SHIP-TO STATE MUST BE A TWO LETTER CODE" });
+	});
+
 	it("rejects a whole order when a line cannot be filled, and returns the stock", async () => {
 		const gloves = await onHand("SAF-GLV");
 		const po = await deliver(partnerPO("000111", 201, "K-77", [

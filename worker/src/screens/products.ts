@@ -205,6 +205,9 @@ export const product: Program<ProductState> = {
 		return scr;
 	},
 
+	locks: (s) => s.mode === "update" && s.prod?.sku ? [`PRODUCT ${s.prod.sku}`] : [],
+	unlocked: (s) => ({ ...s, mode: "inquiry", vals: undefined }),
+
 	async handle(ctx, s, input) {
 		s.msg = s.errField = undefined;
 		if (s.mode === "inquiry") return inquiry(ctx, s, input.aid, input.fields);
@@ -281,7 +284,13 @@ async function edit(ctx: Ctx, s: ProductState, aid: string, f: Record<string, st
 			? await createProduct(ctx.db, edit, ctx.user)
 			: await updateProduct(ctx.db, sku, edit, version, ctx.user);
 		const verb = s.mode === "add" ? "ADDED" : "UPDATED";
-		Object.assign(s, { prod: saved, vals: undefined, mode: "inquiry", msg: `CUS0407I PRODUCT ${saved.sku} ${verb}` });
+		// A change in the stock's value at cost goes to the ledger.
+		const before = s.mode === "add" ? { on_hand: 0, unit_cost: 0 } : s.prod!;
+		const qty = saved.on_hand - before.on_hand;
+		const worth = saved.on_hand * saved.unit_cost - before.on_hand * before.unit_cost;
+		const adj = worth === 0 ? ""
+			: ` - STOCK ${qty > 0 ? "+" : ""}${qty === 0 ? "REVALUED" : qty}, ${worth < 0 ? "-" : ""}${money(Math.abs(worth))} AT COST TO THE LEDGER`;
+		Object.assign(s, { prod: saved, vals: undefined, mode: "inquiry", msg: `CUS0407I PRODUCT ${saved.sku} ${verb}${adj}` });
 	} catch (e) {
 		if (isCode(e, "invalid")) {
 			s.errField = e.field;

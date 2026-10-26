@@ -4,13 +4,15 @@ import {
 	type POLine, type PurchaseOrder, type Vendor,
 } from "../purchasing";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx } from "./screen";
+import { newVendHist } from "./vendhist";
 import { fail, isCode, pf, type Next, type POState, type POsState, type Program, type State, type VendorsState } from "./program";
 
 // CUSV01 PURCHASE ORDERS lists purchase orders, newest first, for one
 // vendor or all, opens new ones and runs the reorder job (CUSREORD) and the
 // vendor simulator (VENDSIM). CUSV02 PURCHASE ORDER builds an open PO, sends
 // it to the vendor as an 850 and receives the goods into stock. CUSV03
-// VENDOR LIST lists the vendors.
+// VENDOR LIST lists the vendors. PF5 on a PO, or H beside a vendor, shows
+// the event history (CUSV04, vendhist.ts).
 
 const statusColor = (status: string): Color =>
 	status === "O" ? "white" : status === "T" ? "yellow" : status === "R" ? "green" : "turquoise";
@@ -256,10 +258,10 @@ export const po: Program<POState> = {
 
 		message(scr, msg);
 		keys(scr, open
-			? "ENTER=APPLY PF1=HELP PF3=EXIT PF7/8=SCROLL PF9=CANCEL PO PF10=SEND"
+			? "ENTER=APPLY PF1=HELP PF3=EXIT PF5=HISTORY PF7/8=SCROLL PF9=CANCEL PO PF10=SEND"
 			: rcv
-				? "ENTER=RECEIVE PF1=HELP PF3=EXIT PF7/8=SCROLL PF11=RECEIVE ALL PF12=CANCEL"
-				: "PF1=HELP  PF3=EXIT  PF7=UP  PF8=DOWN  PF12=CANCEL");
+				? "ENTER=RECEIVE PF1=HELP PF3=EXIT PF5=HISTORY PF7/8=SCROLL PF11=RECEIVE ALL"
+				: "PF1=HELP  PF3=EXIT  PF5=HISTORY  PF7=UP  PF8=DOWN  PF12=CANCEL");
 		if (s.errField && (open || rcv)) scr.cursorTo(s.errField);
 		else if (open) scr.cursorTo("sku");
 		else if (rcv) {
@@ -292,6 +294,13 @@ export const po: Program<POState> = {
 				const { lines } = await getPO(ctx.db, s.id).catch(() => ({ lines: [] }));
 				scroll(s, input.aid, lineRows(ctx), lines.length);
 				return s;
+			}
+			case pf(5): {
+				if (!status) break;
+				// Back to the history this came from, rather than another copy.
+				if (s.back.p === "vendhist") return s.back;
+				const { po } = await getPO(ctx.db, s.id);
+				return newVendHist(s, po.vendor_id, po.id);
 			}
 			case pf(9):
 				if (!confirm) {
@@ -431,7 +440,7 @@ export const vendors: Program<VendorsState> = {
 		}
 		const rows = listRows(ctx);
 		const top = Math.min(s.top ?? 0, Math.max(list.length - rows, 0));
-		scr.text(5, 2, "SELECT: S=SHOW ITS PURCHASE ORDERS     EDI ID IS THE VENDOR NUMBER", { color: "blue" });
+		scr.text(5, 2, "SELECT: S=SHOW ITS PURCHASE ORDERS  H=HISTORY     EDI ID IS THE VENDOR NUMBER", { color: "blue" });
 		const line = (id: string, name: string, where: string, lead: string, prods: string, open: string, st: string) =>
 			`${pad(id, 6)} ${pad(name, 26)} ${pad(where, 18)} ${lpad(lead, 4)} ${lpad(prods, 8)} ${lpad(open, 8)}  ${st}`;
 		scr.text(7, 2, "S " + line("VENDOR", "NAME", "LOCATION", "LEAD", "PRODUCTS", "OPEN POS", "ST"), { color: "white", bright: true });
@@ -455,6 +464,7 @@ export const vendors: Program<VendorsState> = {
 					const code = v.trim().toUpperCase();
 					if (!name.startsWith("sel:") || code === "") continue;
 					const id = name.slice(4);
+					if (code === "H") return newVendHist(s, id);
 					if (code !== "S") {
 						s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;
 						s.errSel = id;

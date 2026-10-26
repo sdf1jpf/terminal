@@ -31,10 +31,22 @@
   "workflows": [
     { "binding": "JOB_RUNNER", "name": "customer-job-runner", "class_name": "JobRunner" }
   ],
+  // The system tables: carrier rates, tax codes, help text (src/systables.ts).
+  "kv_namespaces": [{ "binding": "TABLES", "id": "5d7e445e101c4f219a4eecd27d3efab3" }],
+  // The transaction monitor writes a data point per request (src/monitor.ts).
+  // Reading them back needs the AE_API_TOKEN secret (see README).
+  "analytics_engine_datasets": [{ "binding": "TXN", "dataset": "customer_transactions" }],
+  // The TSO address space: signed-on sessions, record locks, SEND messages
+  // and the terminals' WebSockets for live screens (see src/sessions.ts).
+  "durable_objects": {
+    "bindings": [{ "name": "SESSIONS", "class_name": "Sessions" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sessions"] }],
   // Cloudflare Access guards every request; the Worker verifies its JWT.
   // Both values come from the Access application (see README).
   "vars": {
     "ACCESS_TEAM_DOMAIN": "parkerfrank.cloudflareaccess.com",
-    "ACCESS_AUD": "c457acd9b4bf7e5a727c091d870ae26ae95747d77cd47c44a55a21ba54997073"
+    "ACCESS_AUD": "c457acd9b4bf7e5a727c091d870ae26ae95747d77cd47c44a55a21ba54997073",
+    "CF_ACCOUNT_ID": "d64e67ce2f5262eef1178cd4d08c5380"
   }
 }

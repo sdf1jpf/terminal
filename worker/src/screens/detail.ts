@@ -106,6 +106,9 @@ export const detail: Program<DetailState> = {
 		return scr;
 	},
 
+	locks: (d) => (d.mode === "update" || d.mode === "delete") && d.cust?.id ? [`CUSTOMER ${d.cust.id}`] : [],
+	unlocked: (d) => ({ ...d, mode: "inquiry", vals: undefined }),
+
 	async handle(ctx, d, input) {
 		d.msg = "";
 		d.errField = undefined;

@@ -1,8 +1,10 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import {
-	addLine, billInvoice, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice, setPO,
+	addLine, addressOf, billInvoice, cancelInvoice, changeLine, createInvoice, deleteLine, getInvoice, listInvoices, payInvoice,
+	setAddress, setPO,
 } from "../src/invoices";
+import { pickTickets, release } from "../src/shipping";
 import { HttpError } from "../src/http";
 import { accessJWT } from "./access";
 import { shipInvoice } from "./ship";
@@ -113,6 +115,55 @@ describe("invoices", () => {
 	});
 });
 
+describe("invoice addresses", () => {
+	const dock = { name: "delta marine - dock 4", address: "1 pier rd", city: "pascagoula", state: "ms", zip: "39567" };
+
+	it("starts with the customer's address and keeps its own copy", async () => {
+		const inv = await createInvoice(db, "IBMUSER", "000104");
+		const home = { name: "DELTA MARINE SUPPLY", address: "310 HARBOR DR", city: "MOBILE", state: "AL", zip: "36602" };
+		expect(addressOf(inv, "bill")).toEqual(home);
+		expect(addressOf(inv, "ship")).toEqual(home);
+
+		const changed = await setAddress(db, inv.id, "ship", dock);
+		expect(addressOf(changed, "ship")).toEqual({ name: "DELTA MARINE - DOCK 4", address: "1 PIER RD", city: "PASCAGOULA", state: "MS", zip: "39567" });
+		expect(addressOf(changed, "bill")).toEqual(home);
+
+		// Moving the customer leaves its invoices where they were.
+		await db.prepare("UPDATE customers SET city = 'DAPHNE' WHERE id = '000104'").run();
+		expect((await getInvoice(db, inv.id)).invoice.bill_city).toBe("MOBILE");
+		expect((await createInvoice(db, "IBMUSER", "000104")).bill_city).toBe("DAPHNE");
+		await db.prepare("UPDATE customers SET city = 'MOBILE' WHERE id = '000104'").run();
+	});
+
+	it("checks an address like the customer file", async () => {
+		const inv = await createInvoice(db, "IBMUSER", "000104");
+		expect(await refused(() => setAddress(db, inv.id, "ship", { ...dock, name: " " }))).toMatchObject({ field: "sname", message: "ship-to name is required" });
+		expect(await refused(() => setAddress(db, inv.id, "bill", { ...dock, city: "" }))).toMatchObject({ field: "bcity" });
+		expect(await refused(() => setAddress(db, inv.id, "bill", { ...dock, state: "M" }))).toMatchObject({ field: "bstate" });
+		expect(await refused(() => setAddress(db, inv.id, "ship", { ...dock, zip: "3956" }))).toMatchObject({ field: "szip" });
+		expect(await refused(() => setAddress(db, inv.id, "ship", { ...dock, address: "X".repeat(31) }))).toMatchObject({ field: "saddr" });
+		expect((await refused(() => setAddress(db, "INV99999", "ship", dock))).status).toBe(404);
+	});
+
+	it("freezes the ship-to on release and the bill-to on billing, and puts the ship-to on the pick ticket", async () => {
+		const inv = await createInvoice(db, "IBMUSER", "000104");
+		await addLine(db, inv.id, "BRG-6204", 1);
+		await setAddress(db, inv.id, "ship", dock);
+		const shp = await release(db, "IBMUSER", inv.id);
+		const ticket = (await pickTickets(db)).lines.join("\n");
+		expect(ticket).toContain(`PICK TICKET ${shp.id}`);
+		expect(ticket).toMatch(new RegExp(`PICK TICKET ${shp.id}.*\\n  SHIP TO 000104 DELTA MARINE - DOCK 4\\n +1 PIER RD\\n +PASCAGOULA, MS 39567`));
+
+		expect((await refused(() => setAddress(db, inv.id, "ship", dock))).message).toMatch(/released to the warehouse on SHP\d{5} - cancel the shipment/);
+		await setAddress(db, inv.id, "bill", { ...dock, name: "DELTA MARINE AP DEPT" });
+		await db.prepare("DELETE FROM shipments WHERE id = ?").bind(shp.id).run();
+		await shipInvoice(db, inv.id);
+		await billInvoice(db, "IBMUSER", inv.id);
+		expect((await refused(() => setAddress(db, inv.id, "bill", dock))).message).toMatch(/is billed - its addresses can no longer be changed/);
+		expect((await getInvoice(db, inv.id)).invoice.bill_name).toBe("DELTA MARINE AP DEPT");
+	});
+});
+
 describe("invoices API", () => {
 	const worker = (exports as unknown as { default: Fetcher }).default;
 	async function call(method: string, path: string, body?: unknown) {
@@ -133,6 +184,13 @@ describe("invoices API", () => {
 		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 3 })).body.quantity).toBe(3);
 		expect((await call("DELETE", `/v1/invoices/${id}/lines/2`)).status).toBe(204);
 		expect((await call("PUT", `/v1/invoices/${id}`, { po_number: "rest-2" })).body.po_number).toBe("REST-2");
+		const moved = await call("PUT", `/v1/invoices/${id}`, {
+			ship_to: { name: "site 9", address: "", city: "reno", state: "nv", zip: "89501" },
+		});
+		expect(moved.body).toMatchObject({ po_number: "REST-2", ship_name: "SITE 9", ship_city: "RENO", ship_state: "NV" });
+		expect((await call("PUT", `/v1/invoices/${id}`, { bill_to: { name: "x", city: "y", state: "zz", zip: "1" } })).body)
+			.toMatchObject({ error: { code: "invalid", field: "bzip" } });
+		expect((await call("PUT", `/v1/invoices/${id}`, { bill_to: { name: "x", county: "y" } })).status).toBe(400);
 		const short = await call("POST", `/v1/invoices/${id}/lines`, { sku: "vlv-0100", quantity: 1 });
 		expect(short).toMatchObject({ status: 422, body: { error: { field: "qty" } } });
 
@@ -142,7 +200,7 @@ describe("invoices API", () => {
 		expect(shp.status).toBe(201);
 		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 2 })).body.error.message).toMatch(/released to the warehouse/);
 		expect((await call("POST", `/v1/shipments/${shp.body.id}/pack`, { cartons: 2, weight: 80 })).body.status).toBe("K");
-		expect((await call("POST", `/v1/shipments/${shp.body.id}/ship`, { carrier: "ups" })).body.shipment.status).toBe("S");
+		expect((await call("POST", `/v1/shipments/${shp.body.id}/ship`)).body.shipment.status).toBe("S");
 		expect((await call("POST", `/v1/invoices/${id}/bill`)).body.invoice.status).toBe("B");
 		expect((await call("PUT", `/v1/invoices/${id}/lines/1`, { quantity: 1 })).status).toBe(422);
 		expect((await call("POST", `/v1/invoices/${id}/pay`)).body.transaction.type).toBe("P");

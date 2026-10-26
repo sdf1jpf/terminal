@@ -4,6 +4,7 @@
 //	GET    /v1/health
 //	POST   /v1/session    logon: -> {"userid"}
 //	POST   /v1/screen     the application's screens; see docs/screen-protocol.md
+//	GET    /v1/live       WebSocket: when to redraw the screen (live.go)
 //
 // The Worker also serves /v1/customers for other clients; the terminal
 // reaches the data only through the screens. Everything except health is
@@ -43,6 +44,7 @@ type ScreenRequest struct {
 	Terminal string            `json:"terminal,omitempty"`
 	System   string            `json:"system,omitempty"`
 	TZOffset int               `json:"tz_offset"`
+	Live     bool              `json:"live,omitempty"` // listening on GET /v1/live
 }
 
 // ScreenResponse holds the next screen and the commarea to send back with
@@ -74,6 +76,10 @@ type Screen struct {
 	// Refresh, in seconds, asks the client to redraw the screen this often
 	// while the operator leaves it alone. Zero never does.
 	Refresh int `json:"refresh"`
+	// Live names what the screen shows that GET /v1/live announces changes
+	// to, such as "syslog". While listening, the client redraws on those
+	// events and Refresh is only a fallback.
+	Live string `json:"live"`
 }
 
 // Field is an output field (Text) or, when Name is set, an input field of

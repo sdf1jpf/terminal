@@ -46,6 +46,7 @@ signed in through Cloudflare Access on its own, like the rest of the API.
 | `rows`, `cols` | Size of the presentation space. The Worker lays the screen out for it, no smaller than 24x80. |
 | `terminal`, `system` | The terminal (LU) name and system name to show on screens. Optional. |
 | `tz_offset` | The client's offset from UTC in minutes (east positive), so times show in local time. Optional, default 0. |
+| `live` | `true` while the client is connected to `GET /v1/live` (see Live screens). Optional. |
 
 ## Response
 
@@ -134,6 +135,26 @@ way as `/v1/screen`, and saves or opens it as `name`. A client ignores a
 name. The screen's message line says what was sent; the Go terminal
 replaces it with where it saved the file (its `-print-dir`), and the
 browser hands the file to its downloads. It comes with one screen only.
+### Live screens
+
+A screen whose data changes on its own also carries `"live"`, naming what
+it follows: today only `"syslog"`, on the operator console while it follows
+the end of the log. A client can open a WebSocket to `GET /v1/live` (behind
+Access like the rest) and get a push instead of polling:
+
+```json
+{"event": "syslog", "seq": 1234}
+{"event": "message"}
+```
+
+`syslog` means the log has moved: redraw (send `REDRAW`) if the screen's
+`live` is `"syslog"`. `message` means a SEND has come for this user: redraw
+whatever is showing, and the message appears on the message line. Both
+follow the refresh rule above: a redraw waits while the operator is busy.
+While connected the client sends `live: true`, may stretch `refresh` to a
+slow fallback (the clients use 60 seconds), and should send the text `ping`
+every 30 seconds or so; the answer is `pong`. If the socket drops, go back
+to `refresh` and reconnect with a backoff.
 
 ### Cursor
 
@@ -170,6 +191,28 @@ The clients keep a few things to themselves:
   the Worker logs the session off (SYSLOG records it as an S522, TSO's
   time-out abend). The Go client's `-idle` flag changes the limit; 0 turns
   it off.
+
+## Sessions, locks and messages
+
+The commarea carries a TSO session id (TSU00042) given out at `START`. The
+Worker keeps the sessions in a Durable Object (`worker/src/sessions.ts`),
+which ends one after 30 minutes without a request, as the idle limit does.
+
+- **Record locks.** A panel that changes a record (customer update or
+  delete, product update) names it as a lock, such as `CUSTOMER 000101`,
+  and holds it for as long as it, or a panel opened over it like help, is
+  showing. Another session that tries gets `CUS1201E RECORD IN USE BY
+  JFRANK ON TERM0002 - CUSTOMER 000101` and stays where it was; so does the
+  same user on a second terminal. Leaving the panel, logging off or timing
+  out releases it. REST `PUT` and `DELETE` on a record locked by another
+  user get `423` with code `locked`. Batch jobs do not wait for locks; the
+  record's `version` still catches their changes.
+- **SEND.** Any command line takes TSO's SEND:
+  `SEND 'LUNCH AT NOON?' USER(JFRANK)`, `USER(A,B)`, `USER(*)` for everyone
+  signed on, `LOGON` to keep it for a user who is not, and no `USER` for the
+  operator (it goes in SYSLOG). The receiver sees it on the message line of
+  their next screen, with the sender's userid.
+- **Console.** `D TS` lists the TSO users and `D GRS` the locked records.
 
 ## In the Worker
 

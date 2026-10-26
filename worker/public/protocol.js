@@ -4,8 +4,8 @@
 import { Screen } from "./screen.js";
 
 // encodeRequest builds the POST /v1/screen body for an AID key.
-/** @param {{aid: string, scr: Screen, state?: string | null, terminal?: string, system?: string}} req */
-export function encodeRequest({ aid, scr, state, terminal, system }) {
+/** @param {{aid: string, scr: Screen, state?: string | null, terminal?: string, system?: string, live?: boolean}} req */
+export function encodeRequest({ aid, scr, state, terminal, system, live }) {
 	const fields = {};
 	scr.buf.forEach((c, i) => {
 		if (c.attr && !c.attr.protected && c.attr.name) fields[c.attr.name] = scr.fieldText(i);
@@ -25,14 +25,16 @@ export function encodeRequest({ aid, scr, state, terminal, system }) {
 		tz_offset: -new Date().getTimezoneOffset(),
 	};
 	if (aid !== "START" && state != null) body.state = state;
+	if (live) body.live = true; // listening on GET /v1/live
 	return body;
 }
 
-// decodeScreen turns a response into {state, scr, refresh, download} or
-// {logoff}. refresh is how often, in seconds, to redraw the screen while
-// the operator leaves it alone; 0 never. download, if the host sent a
-// file along, is {url, name}: an API path to fetch and the name to save it
-// as. Anything but an API path on this host is ignored.
+// decodeScreen turns a response into {state, scr, refresh, live, download}
+// or {logoff}. refresh is how often, in seconds, to redraw the screen while
+// the operator leaves it alone; 0 never. live names what GET /v1/live
+// announces changes to, such as "syslog", or is "". download, if the host
+// sent a file along, is {url, name}: an API path to fetch and the name to
+// save it as. Anything but an API path on this host is ignored.
 export function decodeScreen(res) {
 	if (res.v !== 1) throw new Error(`unsupported screen protocol version ${res.v}`);
 	if (res.logoff) return { logoff: res.logoff.message ?? "" };
@@ -67,5 +69,5 @@ export function decodeScreen(res) {
 	const d = res.download;
 	const download = d && typeof d.url === "string" && /^\/v1\/[^/]/.test(d.url) && typeof d.name === "string"
 		? { url: d.url, name: d.name.replace(/[^\w.-]/g, "_") } : null;
-	return { state: res.state, scr, refresh: m.refresh > 0 ? m.refresh : 0, download };
+	return { state: res.state, scr, refresh: m.refresh > 0 ? m.refresh : 0, live: m.live ?? "", download };
 }

@@ -3,7 +3,9 @@
 // helpers the panels share. The Go client draws these with the same
 // semantics as its tn3270.Screen.Text and Input.
 
+import type { Env } from "../index";
 import type { JobMessage } from "../jobs";
+import type { Sessions } from "../sessions";
 
 export const MIN_ROWS = 24;
 export const MIN_COLS = 80;
@@ -34,22 +36,27 @@ export type Cursor = { field: string } | { row: number; col: number };
 
 // Ctx is what a panel knows about the request it is answering.
 export interface Ctx {
+	env: Env; // the bindings, for what has no field of its own here
 	db: D1Database;
+	tables: KVNamespace; // the system tables
 	jobs: Queue<JobMessage>; // the batch job input queue
-	archive: R2Bucket; // archived output and documents (archive.ts)
+	tso: DurableObjectStub<Sessions>; // sessions, locks and messages
 	user: string; // the Access userid
+	sid: string; // the TSO session, TSU00042
 	rows: number;
 	cols: number;
 	system: string;
 	terminal: string;
 	host: string; // the API's host, for display
 	tzOffset: number; // minutes east of UTC
+	live: boolean; // the client is listening on GET /v1/live
 }
 
 export class Screen {
 	readonly fields: Field[] = [];
 	cursor?: Cursor;
 	refresh?: number; // seconds: the client redraws the screen this often while idle
+	live?: "syslog"; // what the screen shows that GET /v1/live announces changes to
 
 	constructor(
 		readonly map: string,
@@ -91,7 +98,7 @@ export class Screen {
 	}
 
 	toJSON() {
-		return { map: this.map, rows: this.rows, cols: this.cols, fields: this.fields, cursor: this.cursor, refresh: this.refresh };
+		return { map: this.map, rows: this.rows, cols: this.cols, fields: this.fields, cursor: this.cursor, refresh: this.refresh, live: this.live };
 	}
 }
 
@@ -156,6 +163,14 @@ export function message(scr: Screen, msg: string): void {
 	const id = msg.split(" ")[0];
 	const color: Color = id.endsWith("E") ? "red" : id.endsWith("W") ? "yellow" : "white";
 	scr.text(scr.rows - 1, 2, msg.slice(0, scr.cols - 2), { color, bright: true });
+}
+
+// breakIn puts a message another user sent on the message line, in place
+// of the panel's own, the way TSO breaks in on a screen.
+export function breakIn(scr: Screen, from: string, text: string): void {
+	const row = scr.rows - 1;
+	scr.fields.splice(0, scr.fields.length, ...scr.fields.filter((f) => f.row !== row));
+	scr.text(row, 2, `${text}  FROM ${from}`.slice(0, scr.cols - 2), { color: "white", bright: true, highlight: "reverse" });
 }
 
 // keys draws the PF key legend on the last row.

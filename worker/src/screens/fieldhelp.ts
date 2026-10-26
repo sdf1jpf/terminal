@@ -8,8 +8,8 @@
 // ISPF prompts do: S beside one puts it in the field.
 
 import { jobLibrary } from "../jobs";
+import { helpText } from "../systables";
 import { listVendors } from "../purchasing";
-import { carriers } from "../shipping";
 import { hitTypes } from "../search";
 import { menuValues } from "./menu";
 import type { Ctx } from "./screen";
@@ -343,17 +343,16 @@ const help: Record<string, FieldHelp> = {
 	},
 	weight: {
 		title: "WEIGHT",
-		lines: ["The shipment's total weight in whole pounds, 1 to 99999."],
-	},
-	carrier: {
-		title: "CARRIER",
 		lines: [
-			"Who takes the shipment. PF10 ships it, gives it a tracking number and,",
-			"if the customer ordered by EDI, sends its system an 856 ship notice.",
-			"The invoice can be billed once it has shipped: PF11 here, or PF10 on",
-			"the invoice.",
+			"The shipment's total weight in whole pounds, 1 to 99999.",
+			"",
+			"Packing it chooses the carrier from the CARRIER system table (option",
+			"5.6): the first carrier, by priority, whose service area and weight,",
+			"carton and value limits take it. As shipped, that is UPS ground up to",
+			"149 lb, 70 lb a carton and $4999; freight beyond that on our own truck",
+			"(TRK) to the states around the warehouse, and FedEx Freight (FDX) for",
+			"the rest. PF10 then ships it.",
 		],
-		values: async () => Object.entries(carriers).map(([code, desc]) => ({ code, desc })),
 	},
 	"ledger.period": {
 		title: "PERIOD",
@@ -373,8 +372,34 @@ const help: Record<string, FieldHelp> = {
 	},
 	"vendors.sel": {
 		title: "SELECTION CODE",
-		lines: ["Type S beside a vendor and press Enter to list its purchase orders."],
-		values: v(["S", "LIST ITS PURCHASE ORDERS"]),
+		lines: [
+			"Type a code beside a vendor and press Enter:",
+			"  S  list its purchase orders",
+			"  H  its event history: orders, receipts and EDI",
+		],
+		values: v(["S", "LIST ITS PURCHASE ORDERS"], ["H", "EVENT HISTORY"]),
+	},
+	"vendhist.vendor": {
+		title: "VENDOR NUMBER",
+		lines: [
+			"The vendor whose history to show, such as V00002 or just 2. The history",
+			"lists its purchase orders opened, sent and received in full, each",
+			"receipt of goods at cost, and the EDI interchanges with its system.",
+		],
+	},
+	"vendhist.po": {
+		title: "PURCHASE ORDER",
+		lines: [
+			"Shows only this purchase order's events, such as PO00003 or just 3.",
+			"Leave it blank for all of the vendor's orders.",
+		],
+	},
+	"vendhist.line": {
+		title: "SHOW LINE",
+		lines: [
+			"Type an event's number and press Enter to open it: the purchase order",
+			"for an order or a receipt, the X12 segments for an EDI interchange.",
+		],
 	},
 	"console.cmd": {
 		title: "OPERATOR COMMAND",
@@ -382,12 +407,15 @@ const help: Record<string, FieldHelp> = {
 			"An operator command. It goes in the log with its response, for every",
 			"console to see. S jobname submits a job, such as S CUSAGING, H jobname",
 			"holds its schedule and A jobname releases it. PF24 (RETRIEVE) brings",
-			"back the last commands entered.",
+			"back the last commands entered. SEND 'text' USER(userid) sends a",
+			"message to another user, or to everyone with USER(*).",
 		],
 		values: v(
 			["D T", "DISPLAY THE TIME, LOCAL AND UTC"],
 			["D J", "DISPLAY THE JOBS THAT ARE QUEUED OR EXECUTING"],
 			["D SCHED", "DISPLAY THE JOB SCHEDULE"],
+			["D TS", "DISPLAY THE TSO USERS SIGNED ON"],
+			["D GRS", "DISPLAY THE RECORDS LOCKED FOR UPDATE"],
 			["SCHED", "OPEN THE JOB SCHEDULE (PF6)"],
 		),
 	},
@@ -465,6 +493,111 @@ const help: Record<string, FieldHelp> = {
 			["R", "RESTORE A LISTING TO THE SPOOL, HELD, UNDER ITS ORIGINAL ID"],
 		),
 	},
+	"invaddr.bname": {
+		title: "BILL-TO NAME",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"Required, up to 30 characters.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.baddr": {
+		title: "BILL-TO ADDRESS",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"The street address, up to 30 characters. Optional.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.bcity": {
+		title: "BILL-TO CITY",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"Required, up to 18 characters.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.bstate": {
+		title: "BILL-TO STATE",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"The two letter state code, such as OH.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.bzip": {
+		title: "BILL-TO ZIP",
+		lines: [
+			"Who the invoice is billed to: it goes on the 810 sent by EDI. It",
+			"starts as the customer's address.",
+			"",
+			"The five digit zip code.",
+			"It can be changed until the invoice is billed.",
+		],
+	},
+	"invaddr.sname": {
+		title: "SHIP-TO NAME",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"Required, up to 30 characters.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.saddr": {
+		title: "SHIP-TO ADDRESS",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"The street address, up to 30 characters. Optional.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.scity": {
+		title: "SHIP-TO CITY",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"Required, up to 18 characters.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.sstate": {
+		title: "SHIP-TO STATE",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"The two letter state code, such as OH.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
+	"invaddr.szip": {
+		title: "SHIP-TO ZIP",
+		lines: [
+			"Where the order is delivered: it prints on the pick ticket and goes on",
+			"the 856 ship notice. It starts as the customer's address, or the N1*ST",
+			"ship-to of an EDI order.",
+			"",
+			"The five digit zip code.",
+			"It can be changed until the invoice is released to the warehouse.",
+		],
+	},
 	"jobs.sel": {
 		title: "SELECTION CODE",
 		lines: ["Type S beside a job and press Enter to view its output."],
@@ -502,9 +635,22 @@ export async function fieldValues(ctx: Ctx, fh: FieldHelp, s: State): Promise<Va
 	return Array.isArray(fh.values) ? fh.values : fh.values(ctx, s);
 }
 
-// fieldHelp returns the help for the field the cursor was in, if any.
+// fieldHelp returns the built-in help for the field the cursor was in, if
+// any.
 export function fieldHelp(s: State, field: string): FieldHelp | undefined {
 	if (!field) return undefined;
-	const name = field.startsWith("sel") ? "sel" : field.split(":")[0];
+	const name = helpName(field);
 	return help[`${s.p}.${name}`] ?? help[name];
+}
+
+const helpName = (field: string) => (field.startsWith("sel") ? "sel" : field.split(":")[0]);
+
+// helpFor returns the help for a field with the HELP system table applied:
+// a row there replaces the built-in title and text, and keeps its list of
+// valid values.
+export async function helpFor(kv: KVNamespace, s: State, field: string): Promise<FieldHelp | undefined> {
+	const builtIn = fieldHelp(s, field);
+	if (!field) return undefined;
+	const custom = await helpText(kv, s.p, helpName(field));
+	return custom ? { ...builtIn, title: custom.title, lines: custom.lines } : builtIn;
 }
