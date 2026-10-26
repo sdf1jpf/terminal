@@ -12,6 +12,7 @@
 //	GET    /v1/customers/{id}/transactions   activity, newest first
 //	POST   /v1/customers/{id}/transactions   post an invoice or payment
 //	GET    /v1/customers/{id}/history        change history, newest first
+//	GET    /v1/search?q=X&type=T    customers, invoices, POs, shipments, vendors, products matching X
 //	GET    /v1/products?prefix=X    product file, ordered by SKU
 //	GET    /v1/products?q=X         active products whose SKU or description contains X
 //	POST   /v1/products             add a product
@@ -84,6 +85,7 @@ import { getJob, listJobs, startJobs, submitJob, type JobMessage } from "./jobs"
 import { deleteSchedule, listSchedules, putSchedule, tick } from "./scheduler";
 import { getOutput, listOutput, printOutput, printText, purgeOutput } from "./spool";
 import { recent } from "./syslog";
+import { hitTypes, search, type HitType } from "./search";
 import { createProduct, getProduct, listProducts, parseProduct, productFields, searchProducts, updateProduct } from "./products";
 import {
 	addPOLine, cancelPO, createPO, deletePOLine, getPO, getVendor, listPOs, listVendors, receivePO, sendPO,
@@ -156,6 +158,13 @@ app.post("/v1/customers/:id/transactions", signedOn, async (c) =>
 	json(201, await postTransaction(c.env.DB, c.get("user"), c.req.param("id"), parsePosting(await readJSON(c.req.raw, transactionFields)))),
 );
 app.get("/v1/customers/:id/history", signedOn, async (c) => json(200, await customerHistory(c.env.DB, c.req.param("id"))));
+
+app.get("/v1/search", signedOn, async (c) => {
+	const types = (c.req.query("type") ?? "").toUpperCase().split(",").filter(Boolean);
+	const bad = types.find((t) => !(t in hitTypes));
+	if (bad) throw new HttpError(400, "bad_request", `unknown type "${bad}": use ${Object.keys(hitTypes).join(", ")}`);
+	return json(200, await search(c.env.DB, c.req.query("q") ?? "", types as HitType[]));
+});
 
 app.get("/v1/products", signedOn, async (c) => {
 	const q = c.req.query("q");
@@ -348,6 +357,7 @@ for (const path of [
 	"/v1/customers/:id",
 	"/v1/customers/:id/transactions",
 	"/v1/customers/:id/history",
+	"/v1/search",
 	"/v1/products",
 	"/v1/products/:sku",
 	"/v1/invoices",

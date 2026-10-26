@@ -6,6 +6,8 @@ import { Lock, MIN_COLS, MIN_ROWS, Screen } from "./screen.js";
 import { decodeScreen, encodeRequest } from "./protocol.js";
 
 const LU_NAME = "WEBTERM1";
+const SYSTEM = "SYS1";
+const IDLE_MS = 30 * 60 * 1000; // log off after this long without a key, as TSO does
 const BASE_FONT_PX = 16;
 const MIN_FONT_PX = 6;
 
@@ -27,6 +29,7 @@ const state = {
 	lastAid: null, // for HOST NOT RESPONDING retries
 	pendingResize: false,
 	timer: null, // the refresh timer, for screens that show live data
+	active: Date.now(), // when the operator last pressed a key or clicked
 };
 
 // --- Host conversation ---------------------------------------------------
@@ -39,7 +42,7 @@ async function send(aid) {
 	render();
 	const before = state.scr;
 	try {
-		const body = encodeRequest({ aid, scr: before, state: state.commarea, terminal: LU_NAME });
+		const body = encodeRequest({ aid, scr: before, state: state.commarea, terminal: LU_NAME, system: SYSTEM });
 		const res = await fetch("/v1/screen", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -85,6 +88,24 @@ function schedule(seconds) {
 		else send("REDRAW");
 	}, seconds * 1000);
 }
+
+// idleCheck logs the session off once the operator has left it alone for
+// IDLE_MS. Nothing is sent while there is no session or the host is busy.
+function idleCheck() {
+	if (Date.now() - state.active < IDLE_MS) return;
+	if (!state.commarea || state.lock !== Lock.NONE || state.retry) return;
+	state.active = Date.now();
+	clearTimeout(state.timer);
+	send("TIMEOUT");
+}
+
+// tickClock redraws the status line's clock on the minute.
+function tickClock() {
+	render();
+	setTimeout(tickClock, 60_000 - (Date.now() % 60_000));
+}
+
+const two = (n) => String(n).padStart(2, "0");
 
 // loggedOff shows the host's farewell; Enter starts a new conversation.
 function loggedOff(message) {
@@ -237,6 +258,9 @@ function oia() {
 	const put = (col, text) => [...text].forEach((ch, i) => col - 1 + i < cols && (line[col - 1 + i] = ch));
 	const lock = state.message ? "X SYSTEM" : state.lock;
 	put(9, lock);
+	put(32, SYSTEM);
+	const now = new Date();
+	put(42, `${two(now.getHours())}:${two(now.getMinutes())}`);
 	if (state.insert) put(cols - 28, "^");
 	put(cols - 23, LU_NAME);
 	const [r, c] = s.rowCol(s.cursor);
@@ -391,6 +415,9 @@ function onKeyBar(e) {
 
 // --- Start ---------------------------------------------------------------
 
+for (const ev of ["keydown", "mousedown", "touchstart"]) {
+	document.addEventListener(ev, () => (state.active = Date.now()), { capture: true, passive: true });
+}
 document.addEventListener("keydown", onKey);
 document.addEventListener("paste", onPaste);
 el.screen.addEventListener("mousedown", onClick);
@@ -405,3 +432,5 @@ window.addEventListener("resize", () => {
 fit();
 state.started = true;
 send("START");
+setInterval(idleCheck, 30_000);
+setTimeout(tickClock, 60_000 - (Date.now() % 60_000));

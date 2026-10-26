@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -26,6 +27,7 @@ func main() {
 		sysName = flag.String("system", "SYS1", "system name shown on screens")
 		lu      = flag.String("lu", "TERM0001", "terminal name shown in the status line")
 		latency = flag.Duration("latency", 0, "extra delay added to every host response, for effect")
+		idle    = flag.Duration("idle", 30*time.Minute, "log off after this long without a key pressed (0 never)")
 		prints  = flag.String("print-dir", defaultPrintDir(), "where the PRINT key (Ctrl+P) saves screens")
 	)
 	flag.Parse()
@@ -34,7 +36,9 @@ func main() {
 		SystemName: *sysName,
 		Backend:    api.NewClient(*apiURL, access(*apiURL)),
 	}, *lu)
-	term := tn3270.New(sess, tn3270.Options{LUName: *lu, Latency: *latency, PrintDir: *prints})
+	term := tn3270.New(sess, tn3270.Options{
+		LUName: *lu, SystemName: *sysName, Latency: *latency, PrintDir: *prints, IdleTimeout: *idle,
+	})
 	p := tea.NewProgram(term, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

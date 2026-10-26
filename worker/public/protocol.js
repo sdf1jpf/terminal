@@ -4,8 +4,8 @@
 import { Screen } from "./screen.js";
 
 // encodeRequest builds the POST /v1/screen body for an AID key.
-/** @param {{aid: string, scr: Screen, state?: string | null, terminal?: string}} req */
-export function encodeRequest({ aid, scr, state, terminal }) {
+/** @param {{aid: string, scr: Screen, state?: string | null, terminal?: string, system?: string}} req */
+export function encodeRequest({ aid, scr, state, terminal, system }) {
 	const fields = {};
 	scr.buf.forEach((c, i) => {
 		if (c.attr && !c.attr.protected && c.attr.name) fields[c.attr.name] = scr.fieldText(i);
@@ -21,6 +21,7 @@ export function encodeRequest({ aid, scr, state, terminal }) {
 		rows: scr.rows,
 		cols: scr.cols,
 		terminal,
+		system,
 		tz_offset: -new Date().getTimezoneOffset(),
 	};
 	if (aid !== "START" && state != null) body.state = state;
@@ -45,6 +46,9 @@ export function decodeScreen(res) {
 		};
 		if (f.highlight) attr.highlight = f.highlight;
 		if (f.name !== undefined) {
+			// A field can come with its modified tag set, to be sent back as
+			// if typed: input kept across help, or a picked value.
+			if (f.modified) attr.modified = true;
 			scr.input(f.row, f.col, f.length ?? 0, f.name, f.value ?? "", attr);
 		} else {
 			scr.text(f.row, f.col, f.text ?? "", attr);

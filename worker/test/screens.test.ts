@@ -11,7 +11,7 @@ const worker = (exports as unknown as { default: Fetcher }).default;
 
 interface Field {
 	row: number; col: number; text?: string; name?: string; length?: number; value?: string;
-	color?: string; bright?: boolean; numeric?: boolean;
+	color?: string; bright?: boolean; numeric?: boolean; modified?: boolean;
 }
 interface Screen { map: string; rows: number; cols: number; fields: Field[]; cursor?: { field?: string; row?: number; col?: number } }
 
@@ -56,7 +56,10 @@ class Terminal {
 		this.vals = {};
 		this.modified.clear();
 		this.cursorField = "";
-		for (const f of this.scr.fields) if (f.name) this.vals[f.name] = f.value ?? "";
+		for (const f of this.scr.fields) {
+			if (f.name) this.vals[f.name] = f.value ?? "";
+			if (f.name && f.modified) this.modified.add(f.name);
+		}
 		return this;
 	}
 
@@ -552,6 +555,140 @@ describe("search and field help", () => {
 		// Outside a field PF1 is the tutorial.
 		await t.send("PF1");
 		expect(t.scr.map).toBe("CUSH00");
+	});
+
+	it("picks a value from a field's list and keeps what was typed", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF4");
+		t.fill("city", "fre");
+		t.cursorField = "status";
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH01");
+		expect(t.row(6)).toContain("VALID VALUES");
+		expect(t.row(8)).toContain("H  ON HOLD");
+
+		await t.fill("pick:1", "x").send("ENTER");
+		expect(t.message).toMatch(/^CUS0103E/);
+		await t.fill("pick:1", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSM01");
+		expect(t.field("status")).toMatchObject({ value: "H", modified: true });
+		expect(t.field("city")).toMatchObject({ value: "FRE", modified: true });
+		expect(t.scr.cursor).toEqual({ field: "status" });
+		await t.send("ENTER");
+		expect(t.row(4)).toContain("ROW 1 TO 1 OF 1");
+		expect(t.row(9)).toContain("REDWOOD ELECTRIC");
+	});
+
+	it("scrolls a long list of values, and returns without one", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF4");
+		t.cursorField = "state";
+		await t.send("PF1");
+		expect(t.row(6)).toContain("ROW 1 TO 15 OF 51");
+		await t.send("PF8");
+		expect(t.row(6)).toContain("ROW 16 TO 30 OF 51");
+		await t.send("PF8");
+		await t.send("PF8");
+		expect(t.row(6)).toContain("ROW 37 TO 51 OF 51");
+		await t.send("PF8");
+		expect(t.message).toMatch(/^CUS0102W/);
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSM01");
+		expect(t.field("state")?.value).toBeUndefined();
+	});
+
+	it("lists the menu's options for the option field", async () => {
+		const t = await Terminal.logon();
+		t.cursorField = "option";
+		await t.send("PF1");
+		expect(t.row(15)).toContain("1  CUSTOMERS - CUSTOMER MASTER");
+		await t.fill("pick:0", "/").send("ENTER");
+		expect(t.field("option")).toMatchObject({ value: "1", modified: true });
+		await t.send("ENTER");
+		expect(t.scr.map).toBe("CUSM10");
+	});
+
+	it("lists the vendors for a vendor field", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "3.2").send("ENTER");
+		t.cursorField = "vendor";
+		await t.send("PF1");
+		expect(t.scr.map).toBe("CUSH01");
+		const rows = [...Array(t.scr.rows).keys()].map((r) => t.row(r + 1)).join("\n");
+		expect(rows).toContain("V00002  GREAT LAKES BEARING CO, TOLEDO OH");
+	});
+});
+
+describe("global search", () => {
+	it("finds a customer by name from any command line and opens it", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "find oceanic cannery").send("ENTER");
+		expect(t.scr.map).toBe("CUSF01");
+		expect(t.field("q")?.value).toBe("OCEANIC CANNERY");
+		expect(t.row(9)).toMatch(/CUSTOMER\s+000115\s+OCEANIC CANNERY, ASTORIA OR/);
+		await t.fill("sel:C:000115", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSM02");
+		expect(t.field("id")?.value ?? t.row(4)).toContain("000115");
+		await t.send("PF3");
+		expect(t.scr.map).toBe("CUSF01");
+	});
+
+	it("finds by number and narrows by type", async () => {
+		const t = await Terminal.logon();
+		await t.fill("option", "1.5").send("ENTER");
+		expect(t.row(9)).toContain("TYPE A NAME OR NUMBER");
+		await t.fill("q", "brg", "type", "p").send("ENTER");
+		expect(t.row(9)).toMatch(/PRODUCT\s+BRG-6204\s+BALL BEARING/);
+		expect(t.row(6)).toContain("ROW 1 TO 2 OF 2");
+		await t.fill("sel:P:BRG-6204", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSP02");
+		await t.send("PF3");
+
+		await t.fill("q", "115", "type", "c").send("ENTER");
+		expect(t.row(9)).toContain("000115");
+		await t.fill("type", "z").send("ENTER");
+		expect(t.message).toMatch(/^CUS1001E/);
+		await t.fill("q", "great lakes", "type", "").send("ENTER");
+		expect(t.row(9)).toMatch(/VENDOR\s+V00002/);
+		await t.fill("sel:V:V00002", "s").send("ENTER");
+		expect(t.scr.map).toBe("CUSV01");
+	});
+
+	it("is on the REST API too", async () => {
+		const token = await accessJWT();
+		const res = await worker.fetch("https://api.test/v1/search?q=bearing&type=V,P", { headers: { "Cf-Access-Jwt-Assertion": token } });
+		expect(res.status).toBe(200);
+		const hits = await res.json<{ type: string; key: string }[]>();
+		expect(hits.map((h) => h.type + h.key)).toEqual(expect.arrayContaining(["VV00002", "PBRG-6204"]));
+		const bad = await worker.fetch("https://api.test/v1/search?q=x&type=Q", { headers: { "Cf-Access-Jwt-Assertion": token } });
+		expect(bad.status).toBe(400);
+	});
+});
+
+describe("session", () => {
+	it("retrieves earlier commands with PF24, newest first", async () => {
+		const t = await Terminal.logon();
+		await t.send("PF24");
+		expect(t.message).toBe("CUS1101I NO COMMANDS TO RETRIEVE");
+		await t.fill("option", "1").send("ENTER");
+		await t.send("PF3");
+		await t.fill("option", "3").send("ENTER");
+		await t.send("PF3");
+		await t.send("PF24");
+		expect(t.field("option")).toMatchObject({ value: "3", modified: true });
+		await t.send("PF24");
+		expect(t.field("option")?.value).toBe("1");
+		await t.send("PF24");
+		expect(t.field("option")?.value).toBe("3");
+		await t.send("PF24");
+		await t.send("ENTER");
+		expect(t.scr.map).toBe("CUSM10");
+	});
+
+	it("logs off an idle terminal", async () => {
+		const t = await Terminal.logon();
+		await t.send("TIMEOUT");
+		expect(t.logoff).toMatch(/^IKJ56470I IBMUSER LOGGED OFF AT .* SESSION IDLE TOO LONG \(S522\)$/);
 	});
 });
 
