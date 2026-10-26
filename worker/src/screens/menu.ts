@@ -7,6 +7,7 @@ import { newPOs } from "./purchasing";
 import { newShipments } from "./shipping";
 import { newLedger } from "./ledger";
 import { newSearch } from "./search";
+import { newVendHist } from "./vendhist";
 import { invalidKey, header, keys, label, message, newScreen, time, type Ctx } from "./screen";
 import { pf, type MenuState, type Next, type Program, type State } from "./program";
 
@@ -74,6 +75,10 @@ const menus: Record<string, Menu> = {
 			{ key: "1", name: "PRODUCTS", desc: "Products and stock", go: (_ctx, m, arg) => ({ p: "products", back: m, filter: arg }) },
 			{ key: "2", name: "PURCHASING", desc: "Purchase orders", aliases: ["P", "PO"], go: (_ctx, m, arg) => newPOs(m, arg) },
 			{ key: "3", name: "VENDORS", desc: "Vendor list", go: (_ctx, m) => ({ p: "vendors", back: m }) },
+			{
+				key: "4", name: "VHISTORY", desc: "Vendor and PO history", aliases: ["VH", "POHIST"],
+				go: (_ctx, m, arg, rest) => newVendHist(m, arg, rest.split(/\s+/)[1] ?? ""),
+			},
 		],
 	},
 	"4": {

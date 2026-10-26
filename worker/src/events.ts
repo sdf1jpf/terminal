@@ -79,3 +79,57 @@ export async function customerEvents(db: D1Database, id: string): Promise<Custom
 	const order = { A: 0, D: 1, E: 2, V: 3, S: 4, T: 5 };
 	return events.sort((a, b) => b.at.localeCompare(a.at) || order[b.kind] - order[a.kind] || Number(b.key.replace(/\D/g, "")) - Number(a.key.replace(/\D/g, "")));
 }
+
+// A vendor's event history, or one purchase order's: POs opened, sent and
+// received in full, each receipt of goods, and the EDI interchanges with
+// the vendor's system (850s out, 855s and 856s in, and the 997s).
+export interface VendorEvent {
+	kind: "P" | "R" | "E"; // purchase order, receipt, EDI interchange
+	key: string; // the PO or interchange ID, or the receipt seq
+	po: string; // the purchase order it concerns, if any
+	at: string; // RFC 3339, UTC
+	by: string;
+	event: string; // OPENED, SENT, RECEIPT, RECEIVED, EDI IN, EDI OUT
+	text: string;
+	amount?: number; // at cost
+}
+
+export async function vendorEvents(db: D1Database, vendor: string, po = ""): Promise<VendorEvent[]> {
+	const [orders, receipts, edi] = await db.batch<Record<string, string | number>>([
+		db.prepare("SELECT * FROM purchase_orders WHERE vendor_id = ?1 AND (?2 = '' OR id = ?2) ORDER BY id DESC LIMIT 500").bind(vendor, po),
+		db.prepare(
+			`SELECT r.* FROM receipts r JOIN purchase_orders p ON p.id = r.po_id
+			 WHERE p.vendor_id = ?1 AND (?2 = '' OR r.po_id = ?2) ORDER BY r.seq DESC LIMIT 500`,
+		).bind(vendor, po),
+		db.prepare(
+			`SELECT id, direction, type, status, reference, created, created_by FROM edi
+			 WHERE partner = ?1 AND (?2 = '' OR instr(reference, ?2) > 0) ORDER BY id DESC LIMIT 500`,
+		).bind(vendor, po),
+	]);
+	const events: VendorEvent[] = [];
+	for (const r of orders.results) {
+		const id = String(r.id);
+		events.push({
+			kind: "P", key: id, po: id, at: String(r.created), by: String(r.created_by), event: "OPENED",
+			text: `${id}${r.origin ? ` BY ${r.origin}` : ""}`,
+		});
+		if (r.sent) events.push({ kind: "P", key: id, po: id, at: String(r.sent), by: "", event: "SENT", text: id, amount: Number(r.total) });
+		if (r.received) events.push({ kind: "P", key: id, po: id, at: String(r.received), by: "", event: "RECEIVED", text: `${id} IN FULL` });
+	}
+	for (const r of receipts.results) {
+		events.push({
+			kind: "R", key: String(r.seq), po: String(r.po_id), at: String(r.at), by: String(r.by), event: "RECEIPT",
+			text: `${r.po_id} ${r.quantity} ${r.sku}`, amount: Number(r.quantity) * Number(r.unit_cost),
+		});
+	}
+	for (const r of edi.results) {
+		events.push({
+			kind: "E", key: String(r.id), po: String(r.reference).match(/PO\d{5}/)?.[0] ?? "", at: String(r.created), by: String(r.created_by),
+			event: r.direction === "I" ? "EDI IN" : "EDI OUT", text: `${r.type} ${r.status} ${r.reference}`,
+		});
+	}
+	// Newest first; at the same instant, the later step first (received
+	// after the receipt, sent after opened).
+	const step: Record<string, number> = { OPENED: 0, SENT: 1, "EDI OUT": 2, "EDI IN": 3, RECEIPT: 4, RECEIVED: 5 };
+	return events.sort((a, b) => b.at.localeCompare(a.at) || step[b.event] - step[a.event] || Number(b.key.replace(/\D/g, "")) - Number(a.key.replace(/\D/g, "")));
+}

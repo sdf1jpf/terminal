@@ -369,8 +369,34 @@ const help: Record<string, FieldHelp> = {
 	},
 	"vendors.sel": {
 		title: "SELECTION CODE",
-		lines: ["Type S beside a vendor and press Enter to list its purchase orders."],
-		values: v(["S", "LIST ITS PURCHASE ORDERS"]),
+		lines: [
+			"Type a code beside a vendor and press Enter:",
+			"  S  list its purchase orders",
+			"  H  its event history: orders, receipts and EDI",
+		],
+		values: v(["S", "LIST ITS PURCHASE ORDERS"], ["H", "EVENT HISTORY"]),
+	},
+	"vendhist.vendor": {
+		title: "VENDOR NUMBER",
+		lines: [
+			"The vendor whose history to show, such as V00002 or just 2. The history",
+			"lists its purchase orders opened, sent and received in full, each",
+			"receipt of goods at cost, and the EDI interchanges with its system.",
+		],
+	},
+	"vendhist.po": {
+		title: "PURCHASE ORDER",
+		lines: [
+			"Shows only this purchase order's events, such as PO00003 or just 3.",
+			"Leave it blank for all of the vendor's orders.",
+		],
+	},
+	"vendhist.line": {
+		title: "SHOW LINE",
+		lines: [
+			"Type an event's number and press Enter to open it: the purchase order",
+			"for an order or a receipt, the X12 segments for an EDI interchange.",
+		],
 	},
 	"console.cmd": {
 		title: "OPERATOR COMMAND",
