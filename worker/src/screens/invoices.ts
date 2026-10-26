@@ -8,6 +8,7 @@ import { bill } from "../edi";
 import { release, shipmentFor, shipStatusNames, type Shipment } from "../shipping";
 import { searchProducts } from "../products";
 import { padID } from "./detail";
+import { newTimeline } from "./timeline";
 import { newSkuSearch, searchText } from "./skusearch";
 import { dots, header, invalidKey, keys, label, lpad, message, money, newScreen, pad, right, stamp, value, type Color, type Ctx, type Screen } from "./screen";
 import { fail, isCode, pf, withDownload, type InvAddrState, type InvoiceState, type InvoicesState, type Next, type Program, type State } from "./program";
@@ -68,7 +69,7 @@ export const invoices: Program<InvoicesState> = {
 		if (list.length > 0) {
 			scr.text(6, right(scr, 58), `ROW ${top + 1} TO ${Math.min(top + rows, list.length)} OF ${list.length}`, { color: "white" });
 		}
-		scr.text(6, 2, "SELECT: S=SHOW  P=MARK PAID", { color: "blue" });
+		scr.text(6, 2, "SELECT: S=SHOW  P=MARK PAID  T=TIMELINE", { color: "blue" });
 		scr.text(7, 2, "S " + listLine("INVOICE", "CUST NO", "PO NUMBER", "STATUS", "TOTAL", "CREATED"), { color: "white", bright: true });
 		scr.text(8, 2, "-".repeat(scr.cols - 3), { color: "blue" });
 		const shown = list.slice(top, top + rows);
@@ -108,6 +109,7 @@ export const invoices: Program<InvoicesState> = {
 					if (!name.startsWith("sel:") || code === "") continue;
 					const id = name.slice(4);
 					if (code === "S") return { p: "invoice", back: s, id };
+					if (code === "T") return newTimeline(s, id);
 					s.errSel = id;
 					if (code !== "P") {
 						s.msg = `CUS0103E INVALID SELECTION CODE "${code}"`;

@@ -293,16 +293,34 @@ export async function closeStep(db: D1Database, job: { name: string }): Promise<
 
 export { dunningLevels } from "./documents";
 
+// holdAccount puts an active account on hold, recording the change in its
+// history. It reports whether the account was active.
+export async function holdAccount(db: D1Database, cust: string, ts: string, by: string): Promise<boolean> {
+	const active = "id = ? AND status = 'A'";
+	const [, hold] = await db.batch([
+		db.prepare(
+			`INSERT INTO audit (customer_id, action, field, old_value, new_value, at, by)
+			 SELECT id, 'CHANGE', 'STATUS', 'A', 'H', ?, ? FROM customers WHERE ${active}`,
+		).bind(ts, by, cust),
+		db.prepare(`UPDATE customers SET status = 'H', version = version + 1, updated = ?, updated_by = ? WHERE ${active}`)
+			.bind(ts, by, cust),
+	]);
+	return hold.meta.changes > 0;
+}
+
 // dunningLetters is CUSDUNN's step: a letter to each customer with an
 // invoice that has reached a new dunning level, printed and filed in the
 // archive as a PDF. A final notice also puts an active account on hold,
-// recorded in the change history.
+// recorded in the change history. Invoices with a lifecycle are dunned by
+// it (lifecycle.ts), so the job only writes about the ones without.
 export async function dunningLetters(db: D1Database, job: { name: string; submitted_by?: string }, archive?: R2Bucket): Promise<StepResult> {
 	const at = Date.now();
 	const { results } = await db.prepare(
 		`SELECT i.id, i.customer_id, i.total, i.billed, i.po_number, c.name, c.address, c.city, c.state, c.zip, c.status
 		 FROM invoices i JOIN customers c ON c.id = i.customer_id
-		 WHERE i.status = 'B' AND i.billed <> '' AND i.billed < ? ORDER BY i.customer_id, i.billed`,
+		 WHERE i.status = 'B' AND i.billed <> '' AND i.billed < ?
+		   AND NOT EXISTS (SELECT 1 FROM order_flows f WHERE f.kind = 'I' AND f.ref = i.id)
+		 ORDER BY i.customer_id, i.billed`,
 	).bind(new Date(at - 30 * DAY).toISOString()).all<{
 		id: string; customer_id: string; total: number; billed: string; po_number: string;
 		name: string; address: string; city: string; state: string; zip: string; status: string;
@@ -342,18 +360,7 @@ export async function dunningLetters(db: D1Database, job: { name: string; submit
 				created: ts, archived_by: job.name,
 			}, text, letterPdf(letter));
 		}
-		if (letter.level === 3 && status === "A") {
-			const active = "id = ? AND status = 'A'";
-			const [, hold] = await db.batch([
-				db.prepare(
-					`INSERT INTO audit (customer_id, action, field, old_value, new_value, at, by)
-					 SELECT id, 'CHANGE', 'STATUS', 'A', 'H', ?, ? FROM customers WHERE ${active}`,
-				).bind(ts, job.name, cust),
-				db.prepare(`UPDATE customers SET status = 'H', version = version + 1, updated = ?, updated_by = ? WHERE ${active}`)
-					.bind(ts, job.name, cust),
-			]);
-			held += hold.meta.changes;
-		}
+		if (letter.level === 3 && status === "A" && (await holdAccount(db, cust, ts, job.name))) held++;
 	}
 	if (letters.size === 0) lines.push("", "NO INVOICES HAVE REACHED A NEW DUNNING LEVEL");
 	lines.push("", `${letters.size} DUNNING LETTERS PRINTED, ${held} ACCOUNTS PLACED ON HOLD`);

@@ -625,9 +625,48 @@ ledger began. Each source row is journaled once.
   invoice billed more than 30 days ago (terms net 30). Each invoice gets a
   reminder, a second notice once it is 30 days past due, and a final notice
   after 60, which also puts the account on hold. Each level goes out once,
-  and the letters show in the customer's event history.
+  and the letters show in the customer's event history. Invoices with an
+  [order lifecycle](#order-lifecycles) are dunned by it instead, on the day
+  each letter is due, so the job only writes about invoices without one.
 
 The trial balance and entries are also at `/v1/ledger`.
+
+## Order lifecycles
+
+Each invoice's life, from order to cash, runs as one `OrderLifecycle`
+[Workflow](https://developers.cloudflare.com/workflows/) named after the
+invoice (`src/lifecycle.ts`):
+
+1. Opened, on a screen, by REST or by a customer's 850.
+2. Released to the warehouse, picked and packed, shipped (an 856 for EDI orders).
+3. **Billed when it ships**, as `CUSORDER` (an 810 for EDI orders). Billing by
+   hand with PF10 still works; the lifecycle sees it and carries on. If the
+   customer is on hold, billing waits until the account is active again.
+4. Waits for payment, by hand or by a customer's 820.
+5. If unpaid, a **reminder** when payment is due (net 30), a **second notice**
+   30 days later and a **final notice** 30 days after that, which puts the
+   account on hold. Each letter is filed in the archive as a PDF and mailed
+   if mail is set up. The workflow sleeps until each date rather than waiting
+   for a nightly run.
+6. Paid, or cancelled: the lifecycle is complete.
+
+D1 stays the record. The screens and REST endpoints change invoices and
+shipments as before and read status from D1, and each turn of the workflow
+reads the same rows, records what happened on the order's timeline and
+does what the order is waiting on the system for. Every step can run twice.
+
+Changes reach the workflows through an outbox. Triggers on `invoices`,
+`shipments` and `customers` (migration 0027) add a row to `order_signals` on
+every change, however it was made, and the cron trigger delivers them every
+minute: an order's first signal starts its workflow, the rest wake it, and a
+workflow that failed is restarted. The migration signalled every invoice
+that was open or billed at the time, so those picked up from where they were.
+
+Menu option 2.4 `TIMELINE` (or `T` beside an invoice on the list) opens
+**ORDER TIMELINE** (CUSL01): where the lifecycle is, what it waits for and
+by when, and every event it has seen: opened, released, packed, shipped,
+each EDI document, billed, each letter, paid. PF4 opens the invoice. The
+same is at `GET /v1/invoices/{id}/timeline`.
 
 ## Reports and dashboard
 
@@ -671,7 +710,7 @@ step is a durable workflow step that is retried if it fails. The job shows as
 | `CUSPICK` | Pick tickets for every shipment waiting in the warehouse, lines in bin order. |
 | `CUSTRIAL` | Journal the latest activity into the open period and print the trial balance. RC 0004 if the AR control account and the customer accounts disagree. |
 | `CUSCLOSE` | Month-end close: STEP010 journal, STEP020 trial balance, STEP030 close the period and open the next. |
-| `CUSDUNN` | Dunning letters for invoices more than 30 days old; final notices put the account on hold. RC 0004 if any letters were printed. |
+| `CUSDUNN` | Dunning letters for invoices more than 30 days old that have no [order lifecycle](#order-lifecycles); final notices put the account on hold. RC 0004 if any letters were printed. |
 
 In the terminal, menu option 5.1 opens **BATCH JOBS** (CUSJ01). Type a job name
 at `SUBMIT JOB ===>` and press Enter, and the job is listed with its status,
@@ -682,7 +721,7 @@ output, explains the failure (see [Asking the system](#asking-the-system)).
 The deploy job creates the queue the first time, which needs
 **Account → Queues → Edit** on the `CLOUDFLARE_API_TOKEN`. You can also
 create it yourself with `npx wrangler queues create customer-jobs`. Wrangler
-creates the workflow when it deploys.
+creates the workflows when it deploys.
 
 ## Operator console and job scheduler
 

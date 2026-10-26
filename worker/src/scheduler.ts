@@ -9,6 +9,7 @@ import { CronError, matches, nextRun, normalize, parseCron } from "./cron";
 import { HttpError } from "./http";
 import type { Env } from "./index";
 import { jobLibrary, submitJob, type Job } from "./jobs";
+import { deliverSignals } from "./lifecycle";
 import { logStmt, prune, syslog } from "./syslog";
 
 export const SCHEDULER = "SCHEDULR";
@@ -122,10 +123,16 @@ export async function runSchedules(env: Env, at: Date): Promise<Job[]> {
 	return submitted;
 }
 
-// tick is the cron trigger's handler: it runs the schedules, keeps the
-// HELP facility's index current and, once an hour, trims the log.
+// tick is the cron trigger's handler: it runs the schedules, passes the
+// minute's order changes to their lifecycles, keeps the HELP facility's
+// index current and, once an hour, trims the log.
 export async function tick(env: Env, at: Date): Promise<void> {
 	await runSchedules(env, at);
+	try {
+		await deliverSignals(env);
+	} catch (e) {
+		console.error("delivering order signals:", e);
+	}
 	try {
 		if (await syncIndex(env)) await syslog(env.DB, SCHEDULER, "CUS1210I HELP FACILITY INDEX UPDATED");
 	} catch (e) {

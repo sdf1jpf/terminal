@@ -163,7 +163,7 @@ export async function ship(db: D1Database, user: string, id: string): Promise<{ 
 // can be changed again.
 export async function cancelShipment(db: D1Database, id: string): Promise<void> {
 	const res = await db.prepare("DELETE FROM shipments WHERE id = ? AND status IN ('P', 'K')").bind(id).run();
-	if (res.meta.changes === 1) return;
+	if (res.meta.changes > 0) return; // with the order signal its trigger adds (lifecycle.ts)
 	await why(db, id, "", "cancelled");
 }
 
